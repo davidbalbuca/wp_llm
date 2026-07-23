@@ -1,0 +1,13 @@
+# Secretos
+.env
+
+# Binarios compilados
+/dist/
+bot
+bot.exe
+
+# Logs
+*.log
+
+# Base de datos SQLite
+/data/

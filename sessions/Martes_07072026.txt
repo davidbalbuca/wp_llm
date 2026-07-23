@@ -1,0 +1,545 @@
+DAILY REVISION AVANCES
+mar, 7 jul 2026
+
+0:00 - David Eduardo Balbuca Castillo
+you Thank you very much. Bye.
+
+32:48 - Juan Carlos Solano Minchalo
+How's it going, friends?
+
+32:52 - David Eduardo Balbuca Castillo
+How's it going, friends? All good. Hey, the session today is with the insurance guys.
+
+33:02 - Juan Carlos Solano Minchalo
+Yes, a lot of those people. Hey, I just wrote to Angel if Monica is going to that meeting too, because I only got about three names.
+
+33:14 - David Eduardo Balbuca Castillo
+Yes, Monica is going.
+
+33:17 - Juan Carlos Solano Minchalo
+And Ali too, or just...
+
+33:20 - David Eduardo Balbuca Castillo
+Ah, fuck, I'm going to ask that to Moni, but as far as I know, Monica is going.
+
+33:23 - Juan Carlos Solano Minchalo
+Yes, I'm going to ask Monica too, because I only Yes, yes, yes, yes.
+
+33:54 - David Eduardo Balbuca Castillo
+And David, what happened? He doesn't say anything.
+
+33:59 - Orador no identificado
+What's up, friends?
+
+34:04 - David Eduardo Balbuca Castillo
+Hey, you see, as I'm looking at the subject, I don't know, Juan, if you agree, the idea would be, you see, right now the angel has the process as fully armed, he did it fully, he asks questions and does things to Ramón. I see that, I mean, he already knows him and he kind of puts him together, I don't know if you want to do this, I think what is defined is that Moni is going to be the first filter, she is going to explain, answer questions and everything. And now the afternoon, in turn, is going to be how they work functionally, in the system, make a case, the function and everything.
+
+34:39 - Juan Carlos Solano Minchalo
+And Angelia already has all that, that line that she must follow to do well.
+
+34:43 - David Eduardo Balbuca Castillo
+Yes, Moni, as you had asked her, So what is the input that we have to generate is that this user story is tied to the graph. What does it mean? The graph has an action. The action says, ah, I need an input, that consumes an SP, the SP of the table, the table is such and returns, and continues to the next point, or it goes like this, the graph is extended. What we need from this is to achieve, for example, let's see, if we to the point that what we did works for the IAEA, the work is there. Do you understand? Because if I upload that to the IAEA and I upload more or less the file like the one that David showed us, David, there you will go from that file to the IAEA so that they are working with that from there, to see more or less how, because I think it is a very good input for the IAEA, because on the other hand, if we pass the contract, that we can pass as as a formal document. But I see that if, for example, the IA understands all that from there... Hey, Alfredo, anyone will understand you, right? Let's move on then. For now, how are you, friends? Tell me, who first? Hey...
+
+36:12 - Juan Carlos Solano Minchalo
+Yesterday I was already doing some modifications but I'm going to show you See you when I share with you. I have a good one and a bad one, which one do you want? The good one is that this number is already added and the whatsapp thing is working again In fact, there you can go doing tests and the mine is already working.
+
+37:34 - David Eduardo Balbuca Castillo
+Here... With info.
+
+37:35 - David Eduardo Balbuca Castillo
+Where was it?
+
+37:35 - David Eduardo Balbuca Castillo
+Where was it? Sakisili? Did you put something there?
+
+37:39 - Juan Carlos Solano Minchalo
+Sakisili?
+
+37:41 - David Eduardo Balbuca Castillo
+Those examples of yours of the gas of the valley and where you are located, I'm there.
+
+37:45 - Juan Carlos Solano Minchalo
+Ah, you can't do that kind of thing. This here, I'm just correcting it right now, it's already integrated with the and I'm making changes so that right now I want it to work in a hybrid way. For example, there are some things that the WhatsApp bot will have by default to tell the AI what to do, and there are things that I am asking it to look for from the backend. In fact, the name is one of the changes that I asked for the name, it will now come from the backend. Topics related to right now If there is a new product tomorrow, it will also go down to the backend. I was putting this type of integration. Now, the good part, as I told you, is that it already works. The bad part is that it says Hewell. I don't know why. I already put the name, but it doesn't listen to me. It's right here. The man I told you about. Hey, yes, it's called UBI, but there are several parts where you have to put it, and some... I got it as AppHereWare, AppHereWare, that's why I told you, friend, it's UBI. I mean, no, it's like UBI, but somewhere I've left it as HereWare, so since yesterday I've been asking Meta to verify that from there, but I think it's because the page doesn't exist, it doesn't verify me, because I was reading that the man, as it is a business account, is supposed to have a business page. No, the VCI page too.
+
+39:24 - David Eduardo Balbuca Castillo
+No, I saw it before it changed. The domain expired.
+
+39:28 - Juan Carlos Solano Minchalo
+I sent? The domain expired. Ah, then maybe that's why it doesn't validate me yet, but as I say, I already sent it several times to Meta to change, There is still no answer to that.
+
+39:48 - David Eduardo Balbuca Castillo
+No, leave it, leave it as a joke, don't tell me right now if you are raise going the web to fall again and or that's what you it. That on are the doing, one hand, let right me now buy I the am domain also again, I asking this of the AI to make some changes.
+
+40:07 - Juan Carlos Solano Minchalo
+For example, I'm asking him to put... Did I send it? No, no, it's still on the phone. Ah, yeah.
+
+40:12 - David Eduardo Balbuca Castillo
+One of the most important things is to change the boot to work with Go and the VGO to keep working in the same way.
+
+40:18 - Juan Carlos Solano Minchalo
+This man has the structure of a I asked him to review the structure of a general project and I think Google handles it like this, very similar to Django, but with other names. It has the part, for example, of the CMD, which is basically where the configuration file is, which sends the whole project, and it has a folder called internal, which is very similar to the core folder of Django. So in internal it has Here in Google it's called Dominius. I asked him to go with me, putting these things here.
+
+41:08 - Orador no identificado
+Hey, the audio is gone, I don't know if...
+
+41:10 - Orador no identificado
+Juan went to the bathroom.
+
+41:13 - Juan Carlos Solano Minchalo
+Wait, I'll connect to the cell.
+
+41:15 - David Antonio Espinoza Farfan
+Juan already went to the bathroom.
+
+41:19 - Juan Carlos Solano Minchalo
+Hey, David, I'll take advantage of you.
+
+41:24 - David Eduardo Balbuca Castillo
+What did you say to Zamora?
+
+41:26 - David Eduardo Balbuca Castillo
+He's flooded, he says it's possible for him to disappear.
+
+41:31 - David Antonio Espinoza Farfan
+No, Zamora, it's more than 30 minutes, man. It's like you're going to Yanzaza. There it is. Simon, there was a landslide. Fucking hell, man. It flooded the whole town. Define it.
+
+41:43 - David Eduardo Balbuca Castillo
+If it continues like this, it's going to take everything.
+
+41:48 - David Antonio Espinoza Farfan
+Simon, it's just that those guys had a little town next to the river and it was low. The river was so low, man. And a mountain has fallen. It's just that a mountain has fallen, like a piece of the mountain.
+
+41:59 - David Eduardo Balbuca Castillo
+mountain and that whore was pulling everything because she did everything crazy disappeared half a town and if we have made you a bitch and when we continue then what you are showing is the topic of there but it does not break the back the back continues to be only consumes the other is the project of the boat or right now Como te digo, algunas cosas que no estaban funcionando ahorita ya modificó el bot, ya lo reestructuró y también ya reestructuró el UVG.
+
+42:37 - Juan Carlos Solano Minchalo
+Ahorita se ve visualmente similar porque le pedí que mantenga algunas cosas, pero vaya quitando internamente algunas. Por ejemplo, hay algunas tablas que no se usaban, hay algunas tablas que estaban redundantes. Había uno de archivos que ni siquiera se estaban utilizando, entonces le pedí que todo ese tipo de things we are correcting. Right now, as I told you, this man is already functional. Did you try the APIs? Of course, I'm not saying, the boot is already integrating with this man. In fact, you can already make a request, some things will still be valid, they will give you a list of corrections. And the map? The who? The map, the route, the shortest route. Where did you see that?
+
+43:31 - David Eduardo Balbuca Castillo
+What happens is that you see, I'll explain the flow to you, nothing else. You make the order, right? You send your latitude and longitude, then you send a point cardinal, nothing else, right? So what you do is you make a cardinal point and there is a method of comparison where you are located, then it calls the the geocircles that are there, right? There are geocircles, there are several, right? So this geocircle, what it does is say, let's see, it is in such a geocircle. So it only looks for the conductors that are in that geocircle. Once it finds the conductors, it looks for which one is closest to it. And he was assigned to order.
+
+44:20 - Juan Carlos Solano Minchalo
+I mean, that part there, I don't know where you were verifying it in the flow, or you just knew...
+
+44:25 - David Eduardo Balbuca Castillo
+No, that was there, it's in the back. There was one of Javier's...
+
+44:27 - Juan Carlos Solano Minchalo
+Well, no, that's there, because I did find a part, but I rather thought that here, internally on the map, you saw it and said, in this part?
+
+44:42 - David Eduardo Balbuca Castillo
+No, it doesn't locate you. It would be cool if it located you where you were a while ago. The drivers send their location every 5 seconds. From the mobile application, they are launching their location. So, their location is saved in a trace. I think it's in a Memcache right now. But it's not uploaded in Memcache. That keeps the location and from that it is based to know where the last location is because I can't save the whole day all the locations that he sent me every five seconds, the base is statured.
+
+45:18 - Juan Carlos Solano Minchalo
+I mean, it's not statured, because after all, Memcached is not for that kind of thing, Memcached is more related to things that you want it to respond super fast, from the base you can store whatever you want.
+
+45:33 - David Eduardo Balbuca Castillo
+But imagine 300 drivers sending the location every five seconds, all day. It's going to fill the length of each driver. That's nothing for the base. A base can support much more. With that location, you don't do anything. What we need is, unless we take care of that there, like, what are the routes that each one drives, I don't know, but no, what they do is drive, the objective is to break that, They have to follow the route that we give them, right? Yes, that's right. Now, with what are you doing the configuration of the route? I'm still using the same methods that were there currently.
+
+46:17 - Juan Carlos Solano Minchalo
+But he used the map that was there.
+
+46:19 - David Eduardo Balbuca Castillo
+Open the browser and look for OpenRoadService.
+
+46:30 - Juan Carlos Solano Minchalo
+¿En dónde?
+
+46:32 - David Eduardo Balbuca Castillo
+No, no, en navegación, en internet. Ellos te dan un app aquí para que manejes esto, como el de Cloud Homes abajo está. Es gratuito, es... No sé si no es.
+
+46:51 - Juan Carlos Solano Minchalo
+¿No es este? No.
+
+46:55 - David Eduardo Balbuca Castillo
+Es un... Sí, este es. Ya te pasaste. Arriba.
+
+46:59 - Juan Carlos Solano Minchalo
+Yes, it's the same.
+
+47:02 - David Eduardo Balbuca Castillo
+No, there it is.
+
+47:04 - David Eduardo Balbuca Castillo
+This one?
+
+47:10 - David Eduardo Balbuca Castillo
+Yes. What this does is create an account, and it gives you so that you can use various methods. So here, obviously, you can generate, if you do it by hand, it could be the shortest distance, No, pero eso le hace un radio y te ve quiénes están ahí. Pero este de acá te generaba la distancia más corta acorde al mapa. ¿Te cachas? Porque el uno le va a tocar irse a dar la vuelta, no sé, por algún lado, mientras que el otro está más cerca. Y puede estar más cerca, pero le toca ir a dar una vuelta. Entonces, te mande aquí y te da la... Ya te da la ruta, te da los puntos. Por donde debéis es para dibujar en la aplicación móvil, porque tú expones un Google. Cuando ya le generas el pedido, tienes que exponer un Google. That the app consumes to locate, to draw the route. Do you have it? So, we used this one here, but it filled our capacity, because it only gives you like a thousand daily requests, something like that.
+
+48:13 - Juan Carlos Solano Minchalo
+So, which one are you using, if you don't use this one anymore?
+
+48:18 - David Eduardo Balbuca Castillo
+It was the name of the one we were using, the one we picked up and said, that was consuming the ball and there was no way to enter.
+
+48:29 - Juan Carlos Solano Minchalo
+Oh, how was it?
+
+48:31 - David Eduardo Balbuca Castillo
+O-R-S-M, something like that, Open Road.
+
+48:34 - Juan Carlos Solano Minchalo
+I mean, this was something local.
+
+48:40 - David Eduardo Balbuca Castillo
+Yes, in the end, he kept a project in JIT that passed him and it worked. Because this one here consumes the services of OpenStreetMap. I haven't seen OpenStreetMap. You have to see, suddenly that one there is not so good, but in AWS the virtual machine was with the name of that one there.
+
+49:06 - Juan Carlos Solano Minchalo
+But right now, the purpose of using this is simply to tell you what is the shortest route the client and the distributor, nothing more.
+
+49:18 - David Eduardo Balbuca Castillo
+I mean, that's what I'm telling you, if you catch me from the flow, the flow is simple, right? I ask for the gas, you have to do the simplest thing to do it. We do the logic behind and that's the problem of how we do it, rather for that, you were telling me to understand the logic and maybe the changes. The logic is, I ask for a gas, right?
+
+49:36 - Juan Carlos Solano Minchalo
+You have to follow the logic of the mockups, you saw the mockups, No, no, I haven't seen it yet, but I just had that doubt, because if the goal is just to see which is the shortest route between a distributor and me as a client, I think it's just a mathematical calculation. That, that, I think some of us have seen it.
+
+50:00 - David Eduardo Balbuca Castillo
+Of course, the shortest route is going to be just a straight line.
+
+50:06 - David Antonio Espinoza Farfan
+on the streets, on the streets, if it's a double track, if it's like that, everything is new, it's the map at the end.
+
+50:11 - David Eduardo Balbuca Castillo
+Of course, if we do it like that, it's just like the man is going to look for the closest one, which is not bad either, because the man first has to, I ask, I explain the flow to you, I ask for the gas, I say hello, I need a gas, right? In the application you can show the mocaps, in the Figma, you have there David? Yes, Mo. We'll continue in a second, so you can understand it. There was everything. You'll see. This is user registration, there must be an API for terms and conditions, where it is based on the law of data protection, blah, blah, blah. Let's go to the second one, which is the one from Suho, which Juan is telling you about. So, if you see, first, there must be an API for them to send you the location So what do they do? They send the location in real time, every 5 seconds, and we connect this with Firebase. Firebase is the one that consumes the API to have this squared and everything else. If it was free, I don't know if it's going to work. I don't know how good everything is. Why Firebase? For push, for example. For example, to know that you are close, and things like that. Firebase was like the proxy of all that. The mobile application is faster to consume from Firebase. You can consume from anything. You're going to tell it, go connect to the bug, and the bug is going to deliver the latitude and longitude of all the 300 drivers at that time, when instead you make it simpler for the bug to tell it to save this in Firebase, every five seconds, every time there is a driver, every time it sends, right? It sends and saves in Firebase, and the app consumes from Firebase. It's a kind of webhook, like this, that the guy is waiting for... That, yes, both of them catch it.
+
+52:17 - David Antonio Espinoza Farfan
+Yes, I've liked Firebase.
+
+52:21 - David Eduardo Balbuca Castillo
+So, it's the same, it also works for Push and for pull calls. I'll explain it to you so you can understand. This is the initial screen, the first one. You haven't ordered anything, so what you'll see are the trucks everywhere, where they are. So, first, the app should show only those that are near it. Do you understand? Because if you show everything, Cuenca le vas a matar al celular porque va a jalar un montón de datos de todo Cuenca porque además es hecho para a nivel de Azua y está Chaucha, Molleturo, están full geocercas entonces debe jalar solo los de la geocerca. Habían las APIs de dirección entonces que hacía el API de dirección él decía yo mando como cliente mi dirección y él tiene que ver como que en un radio de 50 meters where I am, right? To say, what happens if you, tomorrow, Juan, you move, I don't know, to your mom's house and you want to ask for a gas there, he must detect that you changed location. Yes, so for this he has to say, let's see, this is your location, which I have saved, your latitude and longitude, with that I generate the location, I generate a radio and the radio, if you are within the, in an area of 100 meters, radio, 50 meters of radio, it's not going to ask you to change, because obviously the position is never fixed. You are at home and you move two steps and your latitude and longitude have already changed. So, rather, it is so that it is not changing all the time, only when you have already changed house, there it tells you, no, you are already out of the radio, then you are going to save this location as a new location. Follow him, please.
+
+54:16 - Juan Carlos Solano Minchalo
+Hey, and who does the geocercas? Because you are mentioning that I have to identify where I am.
+
+54:21 - David Eduardo Balbuca Castillo
+The geocercas are up there.
+
+54:25 - Juan Carlos Solano Minchalo
+I heard you say something.
+
+54:26 - David Eduardo Balbuca Castillo
+The geocercas, if you go to the map, where you were, there were the geocercas up there.
+
+54:33 - Juan Carlos Solano Minchalo
+But that's not a geocerca, those are the zones. Do you choose that?
+
+54:36 - David Eduardo Balbuca Castillo
+Of course, the zones are the polygons. At the end of the day, the polygon is the geocerca, you know? Because the geocerca... You have to draw a polygon and say, this is your geocercas. So, what I uploaded are the maps of the municipality, where all the geocercas are already divided. I mean, all the polygons. The polygons of Mona and the polygons of Zininka and the polygons of Ricaurte and so on, all the polygons. Each of these polygons has an ID. It is saved with an ID. So, the logic is only that if the user is in this geocercas, is in the geocircuit and looks for all the drivers that are currently stored in the geocircuit against them it makes the search for the closest driver, so that's what it does.
+
+55:18 - Juan Carlos Solano Minchalo
+Only there, that is, it no longer applies the word geocircuit, it is simply a search, which is the same, but a geocircuit, on the other hand, is a geocircuit that establishes it by itself, it can put any the zones are already fixed and never change.
+
+55:39 - David Eduardo Balbuca Castillo
+Sure, it won't change, but that's a geocircle, you don't need it, because I could have drawn the map. In the center, for example, the center has a very small geocircle, it has three geocircles, three polygons just for the center. And it's like each polygon in the center is designed for like three blocks and it died. So it's very big. Mm-hmm. Yeah. Yeah. Choose the quantity and choose the color. I choose yellow. So if it's yellow, it's going to look for distributors that are unique. Because here it's for distributors. The Duragas distributor is the only one that distributes yellow. The distributor of, what are the whites called?
+
+57:18 - David Antonio Espinoza Farfan
+Austrogas.
+
+57:19 - David Eduardo Balbuca Castillo
+Austrogas. So they look for them. Only the Austrogas are going to look for them. Let's see. Here there are distributors, there are two falsetas and the pirates and the El pirata te distribuye lo que se le da la gana. Los otros, en cambio, por ejemplo, un conductor, no es lo mismo que un distribuidor, un conductor te puede distribuir únicamente blancos, por ejemplo, de auto-gas. Si tú escoges el que está aliado al color, es el distribuidor. El distribuidor dura-gas es amarillo, the Australian gas distributor is white, the distributor with gas is tomato, it is orange, well. Yes, so what you already have this here mapped, so you know it is a driver, you assign it to a distributor, you know that he, do you understand how concatenation is, entity-relation? Yes. If I assign it to a driver, I assign it to be an Australian gas distributor, ¿Qué va a pasar? Cael, cuando necesite buscar un distribuidor para ese color de cilindro, le va a buscar entre todos ellos. Es como que el mapeo de todos ellos. No solo va a buscar el que está más cerca, sino, por ejemplo, ¿qué pasa si el que está más cerca es de Ostrogaz y solo distribuye blancos, pero tú pediste un amarillo? Ya no le debe tomar en cuenta. ¿Entiendes?
+
+58:54 - Juan Carlos Solano Minchalo
+Too much.
+
+58:55 - David Eduardo Balbuca Castillo
+Yeah. Entonces, una vez que está ahí, sigue la, ya le coges diez, no sé, dos gases y pones continuar. A lo que él pone eso, ya le dice, a ver, voy a entregar acá, el método de pago es en efectivo, bla, bla, y listo, pones confirmar y te sale solicituda exitosa y te manda el pedido, ya te sale ese, como ese ticket de pedido, es decir. Now, if you look at the bottom, I think it's on the left, to see the map. No, this is something else. There are some mockups that show the way.
+
+59:38 - David Antonio Espinoza Farfan
+Ah, but that's the driver.
+
+59:44 - David Eduardo Balbuca Castillo
+Yes, the driver. Where is the driver?
+
+59:46 - David Antonio Espinoza Farfan
+Down here, I think it's the driver.
+
+59:49 - David Eduardo Balbuca Castillo
+This one, right? Well, it's one of the two. We are type uber the same I don't see I don't see the subject of the route and it's fine the client is not like that, it goes to the right, to it the goes right it was. If you see, it was right there, beyond nothing else.
+
+1:00:15 - Orador no identificado
+There.
+
+1:00:16 - David Eduardo Balbuca Castillo
+Ah, Simon. Go up, it's If you see, that was what got stuck too, when we tried to do it, we never could. That's what David told you, go down and look there where it says below. Yes, Simon. This one here. It comes out like this. But that one there didn't start, so you just have to do a math, just the route from here to here, not even touch the route, just time and distance, right? If I have time by distance, this guy is going to graph me. So that could never be done, but if you look at the bottom, I already have the route drawn, so he has to draw the route, this is what is in the user. Well, the driver also He does the same thing, but the driver also has a button next to it that says Google Maps in Excel, it delivers the client's latitude and longitude, and he clicks and you can go to Waze, to Google Maps, to Maps.me, to Apple maps, whatever. But here the logic is this, if you understand me, that is, there is already this API, that is, that's why I was telling you, check the APIs or send it to Cloud to check the APIs and So, first, there has to be a driver. Did you send the API to generate a driver? Did you send it to save a driver? The location? Yes, it's right here. Si no hay, te escucho.
+
+1:02:28 - Juan Carlos Solano Minchalo
+Sí, se escucha ahí.
+
+1:02:32 - David Eduardo Balbuca Castillo
+Hello. Sí, ahí se escucha todo bien.
+
+1:02:36 - Juan Carlos Solano Minchalo
+Ya, ahora sí, que ya la pregunta de recursos se fue, no sé, como que se quedó muteado, no escuchaba ni creo que se escuchaba.
+
+1:02:43 - David Eduardo Balbuca Castillo
+Si vos dices a un postman con las APIs, en el postman tú puedes elegir, por ejemplo, el conductor, él te dice, a ver, dame el ID del conductor, o la cédula, perdón, la cédula del conductor, Entonces, en el postman tú pones cédula y pones latitude y longitude. Entonces, a lo que vos lanzas ese postman, ese post day, él va a coger internamente y le va a guardar al conductor y va a guardar su última ubicación. Entonces, sin eso, él jamás podría haber generado un pedido. ¿Entiendes? Porque él, ¿a quién le asignó? Entonces, esa era la primera que debía hacer. O sea, para hacer una prueba, siempre debemos mandar conductores para que incluso nosotros, después hay un API que He shows you all the drivers, so you call Lapi and he shows you, yes, I have a driver. Because automatically, Lapi responds and tells you, hey, I don't have a driver nearby, you need to schedule the order and things like that. But for now, what I mean is, he should, by law, how is this, he should, by law, do first, conductor ingresa y después hacer el flujo que te dije, ¿no? Si él está cerca, le va a asignar el pedido a él conforme la que usé. Y todo eso sí estaba funcionando. No sé cómo le hiciste eso para que te genere el pedido. Obviamente, por eso te decía que él necesita el memcache para encontrar primero, para guardar. No sé si hay más bien, mi idea era más bien meterle un Redis ahora y el Redis, ¿por qué no? I don't need the locations only of the last minute, do you understand me? It's more, I don't know, because it doesn't help you much to have the locations always, but you only need to get the last location of such and such driver and with that you work. Now, every time he generates, he generates the route, I asked this one who told you, No, si se prendía, sino pasaba full. Foreign foreign No, it's just like ORS. Is the name of the service. OSRM.
+
+1:05:50 - Juan Carlos Solano Minchalo
+data in the application.
+
+1:05:51 - David Eduardo Balbuca Castillo
+Ah, this is the OpenStreetMap. Because the only thing you do is deploy the docker and you expose the routes. You expose NAPI, sorry. And you consume that API. Here is the chat. The advantage is that it is free. If we just want to do tests, you can use the Open Road Service. We avoid launching a server right now, right? You can use the Open Road Service, cuenta y te da exactamente lo mismo. Este de acá le pusimos más que nada porque no servía más rápido porque solo del Jeep era solo para levantar. Y te daba lo mismo. ¿Ves cómo está dibujado el mapa? Te dibuja así el mapa todito. O sea, ¿cuál es la ruta del conductor? Porque eso es el tema. Ya tú le calculas, ¿y quién te dibuja la ruta a Juan ahorita, por ejemplo? ¿Quién te da la ruta del chofer?
+
+1:07:12 - Juan Carlos Solano Minchalo
+I don't understand who gives me the route.
+
+1:07:17 - David Eduardo Balbuca Castillo
+If you say, I mean, if it were just a calculation and not occupy that, for example, you already tell the driver, Pepito Pérez, come on, leave Juan Solán a gas. But this Pepito Pérez is in the industrial park. Who tells you, you have to go this way, you have to go down this street, right here, you look to the left, to the right, ¿Quién le dibuja esa ruta?
+
+1:07:43 - Juan Carlos Solano Minchalo
+No, pues eso ya no es función del back. Eso ya entendería que más bien... No sé si la aplicación tuya ocupaba Google Maps y solo lo incrustaba.
+
+1:07:53 - David Eduardo Balbuca Castillo
+Lo que pasa es que eso en Google Maps te cuesta un montón de plata.
+
+1:07:57 - Juan Carlos Solano Minchalo
+Sí, pero eso ya no es del back.
+
+1:08:03 - David Eduardo Balbuca Castillo
+El back hace eso ahorita. O sea, el back lo que hace es simplemente conectarte a este OSRM y le dices, a ver, I have this starting location and this one at the end. Give me the route.
+
+1:08:11 - David Eduardo Balbuca Castillo
+Sure, but that's it.
+
+1:08:13 - Juan Carlos Solano Minchalo
+That's it, that's it. It's not from the back anymore. That's a separate service. I'm sending it to the OSRM, the starting point, the end point, and there the back dies. From there, what the OSRM does is something else. The same thing I'm telling you, but with Google. It makes sense, yes. But well, in the end, the OSRM returns to the back a pool of coordinates, right?
+
+1:08:37 - David Eduardo Balbuca Castillo
+You send that and automatically the app draws that there.
+
+1:08:44 - Juan Carlos Solano Minchalo
+But I don't think it sends the OSRM back to the back, but rather sends it to the front, or to the app in this case.
+
+1:08:51 - David Eduardo Balbuca Castillo
+No, the OSRM is an internal service, it can't, it's just a satellite from which you consume services. You tell it, this is my starting latitude and this is the end one. And the OSRM says, this is your route, this is your set of points where you have to go. So you take that and you upload it to an API. And it's done, just like I told you. And with that, the application, the front, takes those points and draws that map as is. Even here I have, let me see, tal es como estaba funcionando anteriormente. Claro, pero todo lo que te estoy contando ya está hecho. No es algo que tenemos que crearlo. Más bien aquí el tema es que hay que modelar, improve the theme of the app. And also the app, that's why I told David, I said, hey, I'm going to do it again, because at the end of the day, I don't know how well it will be done and things like that.
+
+1:10:11 - Juan Carlos Solano Minchalo
+But it was working.
+
+1:10:14 - David Eduardo Balbuca Castillo
+Yes, but it was lagging, it gave bugs and everything like that.
+
+1:10:20 - Juan Carlos Solano Minchalo
+I don't know if it was lagging because of the lack of capacity of the server that you mention.
+
+1:10:26 - David Eduardo Balbuca Castillo
+No, the thing is that it was already sending you the location. Yeah, but the thing is, The sources are already there, David has them all from here. I don't know if David, did you decide to stay with Ragnatik itself or are you going to switch to Flutter? But well, first let's finish with this, Juan. Do you understand him, Juan?
+
+1:11:11 - Juan Carlos Solano Minchalo
+Do you have any doubt in that? I mean, I would have to start again with the food, because I was not very clear about this type of thing. I sent him basic data and with those basics he managed to make the order, but it may be que no está validando los puntos que me mencionaste.
+
+1:11:31 - David Eduardo Balbuca Castillo
+¿Y a quién te asignó?
+
+1:11:34 - Juan Carlos Solano Minchalo
+No me asignó, solo me registré en el sistema y ya tengo un pedido.
+
+1:11:39 - David Eduardo Balbuca Castillo
+Tiene que registrarte una vez que ya le busca el conductor y antes de asignar tienes que buscarte una ubicación cerca de donde va a ser el pedido. Porque él tiene que mandar la ubicación.
+
+1:11:55 - Juan Carlos Solano Minchalo
+Claro, sí mando todo eso, pero no me ha sido nadie como tú.
+
+1:12:02 - David Eduardo Balbuca Castillo
+Entonces ahorita lo que se necesita es lanzar la ubicación. A ver, ¿qué podríamos hacer? La aplicación todavía, la que subimos con Esteban, está todavía en línea. Si quieres, puedes exponerle y usar mandando la ubicación. No, pero mucho lejos. Andale, ahorita buscas una coordenada que esté cerca de tu casa, por ejemplo, así, y le pones y le guardas al conductor ahí. Entonces, él ya con eso sí va a tener un conductor a quien asignarle el pedido. Y una vez que le asigne el pedido, él debe encontrar la ruta más corta entre estos dos puntos. Entonces, ahí es donde él dibuja estos dos puntos, ¿me entiendes? Dibuja todo y tú le dices al OSRM, He says, hey, give me this location, these points. So, he asks him and he gives him back one. Yes, that part is fast, right? I mean, I tell you, this flow of this here, it didn't take more than two seconds to deliver and return. And the app already drew all that for you. Obviously, it was like, there, I slowed down the image, more or less, how I was drawing, did you see it? Yes, mom. Yes. So, more or less, that's how it was. I was already assigning you, I was already sending you on the route. All that you have there in that package, now look at this from here. Well, certain things were missing here, such as, for example, the issue of time, which was not, I don't know if there was time, but it was not controlled, it always gave you the same time, something like that. Time, for example, is a calculation, nothing more, but you have to have more variables, the topic of time and all that, but hey, for now it's this here. That's it, friends. Hey, Juan's thing, I don't know if you have it, you don't have to do this or that.
+
+1:13:56 - Juan Carlos Solano Minchalo
+No, I mean, no, no, and as I say, I have more left, but rather I put you to review these points so so that it integrates correctly and I'll let you know. Sure.
+
+1:14:12 - David Eduardo Balbuca Castillo
+That would be cool. I'll go there and you'll let me know. So, Ivo, how did it go?
+
+1:14:17 - David Antonio Espinoza Farfan
+Hey, you see, I was creating it crazy in React, but with another architecture, as I told you. Well, today I'm going to review what happened to me, to see what else it has, how it is, to see how they have made that application. You can fix the app and it will be better.
+
+1:14:37 - David Eduardo Balbuca Castillo
+Sure, that's what I want to see, because it may be that it can be fixed.
+
+1:14:41 - David Antonio Espinoza Farfan
+I was already doing it, I had already mapped the architecture, if you see all this bullshit, I tell you here, what is done so that all the parts, all the components are divided always in things from the smallest to the biggest, man. So, it doesn't matter, the screens, everything, it all depends, put that, I was telling you, in Flutters, in fact, Flutters is a more complicated chance, because if you don't divide it well and you don't have it well organized, you're still a fucking single barber, man. So, I already did this to him, and you'll see, I was already lifting some screens, I was testing with Because I did it like an expo, man. Let me...
+
+1:15:42 - David Eduardo Balbuca Castillo
+I don't have the phone. You and Juan should be connected there, because obviously... Juan is going to change the background as he does it, and you're consuming it. Sure.
+
+1:15:56 - David Antonio Espinoza Farfan
+Right now, as I told you, Juan was creating some screens to be able to first do the architecture and then see the components and all that is done responsively and well done. Yes.
+
+1:16:37 - Juan Carlos Solano Minchalo
+Hey, I didn't know there was a phone share too.
+
+1:16:43 - David Antonio Espinoza Farfan
+Yeah, you can see the app there. Well, more or less, I was already doing it with...
+
+1:16:55 - David Eduardo Balbuca Castillo
+You've done it with one of the mockups.
+
+1:16:57 - David Antonio Espinoza Farfan
+Yeah, I was doing it with this thing... What's it called? Codex? But still sending it like that, because what you have to get is everything, the elements of the Figma, the logos, the font type, all that shit.
+
+1:17:13 - David Eduardo Balbuca Castillo
+But it's all there.
+
+1:17:14 - David Antonio Espinoza Farfan
+Yes, that's why I'm telling you, but you have to take it out one by one, I can't just send it to the screen and say that I'm doing it like that. You have to specify it. That's it, I got there, but because he was first doing the ... How is the ... All the architecture, very well done that shit.
+
+1:17:38 - Juan Carlos Solano Minchalo
+Hey, and do you directly make the application for idos?
+
+1:17:45 - Orador no identificado
+What?
+
+1:17:45 - Juan Carlos Solano Minchalo
+And do you directly make the application for idos?
+
+1:17:50 - David Antonio Espinoza Farfan
+No, I mean, it is done, is that when you use Expo, it generates this query code and in There is an application where you download the IOS or the iPhone and you scan the QR code and it passes to you, obviously you have to be in the same network where you are programming and the application passes to you there, but you can already try how it comes out to see the design and all that bullshit, so more or less there you go seeing how it works, it still gives you the errors if you run it on IOS and some bullshit is wrong, you can remove the IOS errors and you can fix it. You can test it on both platforms. Simon, that's the advantage of using Expo. With Expo it's fresh because you don't need to be connected, you just scan it and you can fix it. You can remove the errors, if something doesn't compile, the screen doesn't open and the red error appears on the phone and you can check it. Simon, That's crazy, so today I'm going to check what you told me to see...
+
+1:18:53 - David Eduardo Balbuca Castillo
+Check it, because according to what you've done, I see you faster like this or what do you say? Because analyzing a code and sometimes solving it takes more time. Sure, it takes time sometimes.
+
+1:19:03 - David Antonio Espinoza Farfan
+Sure, but I'm going to give it a look to see how it's been, and if not, we'll keep doing it like this. Sure, no, no, I mean, here the most is to consume the APIs and I'm going to try everything from the beginning to make sure there are no bugs as you say. I have to try everything from the login, from the registry and things like that. But I'm still going to check it because I still have to check it more or less to have some logic or something that I need to see from there or some bullshit, I can also rely on You see, with Codex you have the chance to create your own client to compile in the cloud.
+
+1:19:53 - David Eduardo Balbuca Castillo
+What, that you had passed me again? Yes, Mon.
+
+1:19:55 - David Antonio Espinoza Farfan
+Ah, but you said that it was a project that was, I think, in Github, right? No, no, that one there, Because I was alone in the codec I was being crazy.
+
+1:21:18 - David Eduardo Balbuca Castillo
+Let me just put it on the screen.
+
+1:21:19 - David Antonio Espinoza Farfan
+That's what I was telling you. I was working on the normal codex, but still, this thing also dies sometimes when you ask a lot and you tell it to do a lot of things. Light of the chat gpt you use the same account of the chat gpt because I am going to review it but if it is not doing it, it is not doing it well because if there are some things that are details so that the visuals let's say and if it is taking it well, that is, towards the first one, no, but I already have What language are you sending it in? What thing? The application with code. In what language is it being sent? In React, of course.
+
+1:22:44 - David Eduardo Balbuca Castillo
+Oh, the React itself? Yes, Monk.
+
+1:22:47 - David Antonio Espinoza Farfan
+The thing is that I wanted to do it in Flutter, because I already saw a cool architecture, but the thing is that... I don't know much about Flutter, and let's say we download the app, and there's a bug or something that you have to solve by yourself, because sometimes you can't tell the IO that this is happening and that it will fix it. It may fix it, it may not. And you have to get into it yourself. But React is fresher, because in the end it's TypeScript, Calas. But Flutter is Dart, and Dart is much more complicated, man.
+
+1:23:25 - David Eduardo Balbuca Castillo
+Well, that's what makes it easier for you, in that sense, to go to Flutter once to be able to get out, because you have to get out with that thing. It's nothing, but if you're working with WhatsApp That's the whole point. One is the bug and the other is the problem.
+
+1:23:41 - David Antonio Espinoza Farfan
+Sure.
+
+1:23:43 - David Antonio Espinoza Farfan
+Simo, I'm telling you, with X it's even fresher to be able to test it on both platforms and have it already in there. Say I want to create two more screens and then make everything... Let's say...
+
+1:23:56 - David Eduardo Balbuca Castillo
+And against what are those screens against?
+
+1:24:03 - David Antonio Espinoza Farfan
+How did you get it? From the back? No, not yet. I want to make two more screens and make it responsive. I want to make a library of scales, so you can take it and put it on any phone, so you can take the width and height of the screens and render the buttons proportionally to the screens. So I want to do that first on a few screens, so they look good. I'll test it on iPhone, Android in different screens and that it is already good, that is the base for all the screens and from there if I start to make the screens and put a small flow and from there if I start to test login and everything that is registered, I imagine that it must be working well and from there we are moving forward.
+
+1:24:50 - David Eduardo Balbuca Castillo
+That too Juan, don't forget that the back also registers the user.
+
+1:24:56 - David Antonio Espinoza Farfan
+Hey, Is there a Google and Facebook registration? Is there an API for that?
+
+1:25:05 - David Eduardo Balbuca Castillo
+No, that is given to you by Google directly, but it is something that we did not use at the beginning. We wanted to use it, but...
+
+1:25:09 - David Antonio Espinoza Farfan
+Yes, because I was just looking at the Figma that, let's say, there is that part, that screen that I made for registration, but that is like a registration that, let's say, normal, right? That you put, you registered, not with Facebook or with Google. You just register and it sends you to register manually, right? Sure.
+
+1:25:27 - David Eduardo Balbuca Castillo
+You go to the mobile app and it doesn't ask you to register. It's like catching the client, but generally people get angry because they say, I have to register. And that rather makes the flow of requesting, and when you are going to request, it tells you, enter your data. Because here it is in this flow, it is like this, you choose user, distributor, and there it says, Login and from there is the registration.
+
+1:25:58 - David Antonio Espinoza Farfan
+That part I don't know how the flow is right now.
+
+1:26:02 - David Eduardo Balbuca Castillo
+That's what I'm telling you, first you log in, you see the initial screen, you choose the color of the gas, it puts your location and everything, but when you go to make the request, you put request, there it tells you to put your data, just there, so as not to make a mistake. Generally, people, when you log in to an app and it asks you for registration, you vote. It's like... It's tedious to get it out.
+
+1:26:31 - David Antonio Espinoza Farfan
+Because here... But here the flow isn't like this. Where? In the Figma.
+
+1:26:39 - David Eduardo Balbuca Castillo
+Yes, it's like this. Let's see, show me the Figma.
+
+1:26:41 - David Antonio Espinoza Farfan
+No, because, you see, it's... That's what I'm telling you.
+
+1:26:43 - David Eduardo Balbuca Castillo
+It's just that there's a flow of someone who's already registered, you see.
+
+1:26:47 - David Antonio Espinoza Farfan
+Look, look, that's why I'm telling you. You see, here's the record, so I don't know... I don't know where it starts, you open the app and where does it send you? Here first, to this profile.
+
+1:26:58 - David Eduardo Balbuca Castillo
+You open the app and you go to user and distributor.
+
+1:27:02 - David Antonio Espinoza Farfan
+That's why it's here. And from there you put user and what does it send you? Start session?
+
+1:27:10 - David Eduardo Balbuca Castillo
+No, it sends you the one below. Here? The number the one below. 3 directly below.
+
+1:27:19 - David Antonio Espinoza Farfan
+And what is this for? For the driver? No, that's to register your voice.
+
+1:27:28 - David Eduardo Balbuca Castillo
+First you pass the flow below, you see 3, 3, 1, 3, going to give the And this This says start from That's in case of the driver.
+
+1:27:47 - David Antonio Espinoza Farfan
+Oh, I got it. That's cool.
+
+1:27:48 - David Eduardo Balbuca Castillo
+That's the start of the session.
+
+1:27:49 - David Antonio Espinoza Farfan
+The client doesn't need to start the session again. He can save his session as something from the app.
+
+1:27:57 - David Eduardo Balbuca Castillo
+He can save it as a session or something like that. Oh, I got it. So you do 1, 2, 3 until here, and from there you go to the car.
+
+1:28:13 - David Antonio Espinoza Farfan
+I'm going to watch this from here. But first I'm going to create the screens and from there... Hey, what if I launch that app? Will it work?
+
+1:28:41 - David Eduardo Balbuca Castillo
+No, it won't work because it's attached to the bag and the bag doesn't exist yet.
+
+1:28:47 - David Antonio Espinoza Farfan
+But to change it to the new bag?
+
+1:28:51 - David Eduardo Balbuca Castillo
+But the new bag, Juan is still making the changes because the new bag wasn't as it was. But now Juan is making several changes. I wanted to see the flows more, but I'm here, what did you tell me?
+
+1:29:06 - David Antonio Espinoza Farfan
+I'm going to do the same, I'm going to consult you, but I'm going to do it more than anything at the beginning of the first screens so that it becomes very responsive and from there I am occupying the services.
+
+1:29:17 - David Eduardo Balbuca Castillo
+See you at the CONCAST session to see what they count there at 11 and a half I think. Tell me.
+
+1:29:36 - Juan Carlos Solano Minchalo
+Jose, I was going to ask you, how are we with the issue of dollars with the insurers? Because I already have a meeting with them in the afternoon with Louis and Celis.
+
+1:29:46 - David Eduardo Balbuca Castillo
+Hey, I'm going to be late today because we're going to try the migration of... Don't worry about that. The migration of... I mean, keep doing what you're doing, but today I wanted to meet with him to... To do the issue of...
+
+1:30:03 - Juan Carlos Solano Minchalo
+Sure, because just yesterday Luis sent me a file of what he had requested. I was going to comment on it, but I don't know if I can do it in the afternoon. Rather, I'll pass it to you, because I think that's what you said you need to send to Ashur.
+
+1:30:19 - David Eduardo Balbuca Castillo
+Yes, I'll pass it to you. Today afternoon is the session with Ashur and them. I told him to do it. Today afternoon he said to meet.
+
+1:30:26 - Juan Carlos Solano Minchalo
+Oh, because I imagine this. Every time there are meetings, the bands wait for advances. I ask you this because, as you said, I don't know how many hours you have with them to invest in more activities or...
+
+1:30:39 - David Eduardo Balbuca Castillo
+I mean, I have to give them a chance, brother. I mean, to go doing things calmly, the things they have been asking for. Nothing less than, ah, I need it.
+
+1:30:53 - Juan Carlos Solano Minchalo
+Yeah, yeah, yeah.
+
+1:30:56 - David Eduardo Balbuca Castillo
+It's one thing for hours and another for hours. So, that doesn't work. But today I'm going to try that with him. I don't know if it's going to work out.
+
+1:31:09 - Juan Carlos Solano Minchalo
+Yeah, I'm done. I'm done. I'm happy with the bus and the app. The app, the backend. Yes, my friend. See you at two o'clock.
+
+1:31:17 - David Eduardo Balbuca Castillo
+See you. Bye, guys. Bye.
