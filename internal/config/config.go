@@ -23,6 +23,11 @@ type Config struct {
 	// ChannelSecret autentica al bot como canal de confianza ante el backend
 	// (verificación tipo Camino B). Opcional hasta que David lo habilite.
 	ChannelSecret string
+	// CatalogUser/CatalogPassword son las credenciales de una cuenta de servicio para
+	// leer el catálogo cuando el backend corre con DEBUG=False (los GET exigen JWT).
+	// Opcionales: si están vacías, el catálogo se pide sin token (DEV con DEBUG=True).
+	CatalogUser     string
+	CatalogPassword string
 	// DBPath es la ruta del archivo SQLite para persistir el historial.
 	// Si está vacía, el bot usa el almacén en memoria (desarrollo).
 	DBPath string
@@ -56,6 +61,8 @@ func Load() Config {
 		GraphAPIVersion: "v21.0",
 		BackendURL:      strings.TrimRight(optional("BACKEND_URL", "http://127.0.0.1:8000"), "/"),
 		ChannelSecret:   os.Getenv("BACKEND_CHANNEL_SECRET"),
+		CatalogUser:     os.Getenv("CATALOG_USER"),
+		CatalogPassword: os.Getenv("CATALOG_PASSWORD"),
 		DBPath:          os.Getenv("DB_PATH"),
 	}
 }

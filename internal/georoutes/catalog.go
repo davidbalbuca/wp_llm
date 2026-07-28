@@ -8,30 +8,61 @@ import (
 )
 
 // get hace un GET a path y devuelve el "resultado" del envoltorio, o un error con el
-// "mensaje" del backend. Los endpoints de catálogo (GET) no requieren JWT en DEBUG.
+// "mensaje" del backend. Adjunta el JWT de la cuenta de servicio cuando está configurada
+// (necesario en prod con DEBUG=False). Si el backend responde 401 con un token cacheado,
+// re-autentica una vez y reintenta (el JWT pudo haber vencido).
 func (c *Client) get(path string) (json.RawMessage, error) {
-	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
+	token, err := c.serviceToken(false)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.http.Do(req)
+
+	res, status, err := c.doGet(path, token)
 	if err != nil {
 		return nil, err
+	}
+	// 401 con token: probablemente venció → un reintento con login forzado.
+	if status == http.StatusUnauthorized && token != "" {
+		token, err = c.serviceToken(true)
+		if err != nil {
+			return nil, err
+		}
+		res, status, err = c.doGet(path, token)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if status < 200 || status >= 300 {
+		mensaje := strings.TrimSpace(res.Mensaje)
+		if mensaje == "" {
+			mensaje = fmt.Sprintf("error del backend (HTTP %d)", status)
+		}
+		return nil, fmt.Errorf("%s", mensaje)
+	}
+	return res.Resultado, nil
+}
+
+// doGet ejecuta un GET con un bearer opcional y devuelve el envoltorio y el status HTTP.
+func (c *Client) doGet(path, bearer string) (envelope, int, error) {
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return envelope{}, 0, err
+	}
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return envelope{}, 0, err
 	}
 	defer resp.Body.Close()
 
 	var env envelope
 	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		return nil, fmt.Errorf("respuesta no válida del backend (HTTP %d)", resp.StatusCode)
+		return envelope{}, resp.StatusCode, fmt.Errorf("respuesta no válida del backend (HTTP %d)", resp.StatusCode)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		mensaje := strings.TrimSpace(env.Mensaje)
-		if mensaje == "" {
-			mensaje = fmt.Sprintf("error del backend (HTTP %d)", resp.StatusCode)
-		}
-		return nil, fmt.Errorf("%s", mensaje)
-	}
-	return env.Resultado, nil
+	return env, resp.StatusCode, nil
 }
 
 // Color es un color/marca de cilindro (p. ej. Duragas=amarillo, Austrogas=blanco).

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,6 +34,16 @@ type envelope struct {
 type Client struct {
 	baseURL string
 	http    *http.Client
+
+	// Credenciales de una cuenta de servicio para leer el catálogo cuando el backend
+	// corre con DEBUG=False (los GET de catálogo exigen JWT). Si están vacías, el bot
+	// llama al catálogo sin token (comportamiento de DEV con DEBUG=True).
+	svcUser     string
+	svcPassword string
+
+	// svcToken es el JWT de servicio cacheado; svcMu lo protege del acceso concurrente.
+	svcMu    sync.Mutex
+	svcToken string
 }
 
 // NewClient crea el cliente apuntando a {backendURL}/georoutes.
@@ -41,6 +52,37 @@ func NewClient(backendURL string) *Client {
 		baseURL: strings.TrimRight(backendURL, "/") + "/georoutes",
 		http:    &http.Client{Timeout: 20 * time.Second},
 	}
+}
+
+// SetServiceAccount define las credenciales de la cuenta de servicio usada para leer el
+// catálogo con JWT (necesario en prod con DEBUG=False). Si user o password están vacíos,
+// el catálogo se pide sin token (DEV).
+func (c *Client) SetServiceAccount(user, password string) {
+	c.svcUser = user
+	c.svcPassword = password
+}
+
+// serviceToken devuelve el JWT de servicio cacheado, autenticando si hace falta. Si no
+// hay credenciales de servicio configuradas, devuelve "" (el catálogo se pedirá sin token).
+// Si force es true, ignora la caché y vuelve a hacer login (para recuperarse de un 401).
+func (c *Client) serviceToken(force bool) (string, error) {
+	if c.svcUser == "" || c.svcPassword == "" {
+		return "", nil
+	}
+
+	c.svcMu.Lock()
+	defer c.svcMu.Unlock()
+
+	if !force && c.svcToken != "" {
+		return c.svcToken, nil
+	}
+
+	tokens, err := c.Login(c.svcUser, c.svcPassword)
+	if err != nil {
+		return "", fmt.Errorf("login de cuenta de servicio (catálogo) falló: %w", err)
+	}
+	c.svcToken = tokens.Access
+	return c.svcToken, nil
 }
 
 // post envía JSON a path con un bearer opcional y devuelve el "resultado" crudo.
@@ -167,6 +209,36 @@ func (c *Client) Login(username, password string) (*Tokens, error) {
 		return nil, fmt.Errorf("tokens no válidos del backend: %w", err)
 	}
 	return &tokens, nil
+}
+
+// GetVerificationCode solicita que el backend envíe un código OTP al correo del
+// cliente autenticado. Requiere el JWT del cliente a verificar.
+func (c *Client) GetVerificationCode(jwt string) error {
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+"/getCodeVerification/", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	var env envelope
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		return fmt.Errorf("respuesta no válida (HTTP %d)", resp.StatusCode)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("%s", strings.TrimSpace(env.Mensaje))
+	}
+	return nil
+}
+
+// ValidateVerificationCode envía el código OTP que el cliente recibió por correo y
+// lo valida. Devuelve error si el código es incorrecto.
+func (c *Client) ValidateVerificationCode(jwt, codigo string) error {
+	_, err := c.post("/validateCodeVerification/", map[string]any{"codigo": codigo}, jwt)
+	return err
 }
 
 // DirectionInput es la dirección a registrar desde la ubicación de WhatsApp.

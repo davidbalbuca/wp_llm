@@ -40,7 +40,11 @@ type Agent struct {
 	catalog *catalog.Client
 	gr      *georoutes.Client
 	tools   []*genai.Tool
+	escalated bool
 }
+
+func (a *Agent) DidEscalate() bool { return a.escalated }
+func (a *Agent) ClearEscalated()   { a.escalated = false }
 
 // New crea un Agent con el cliente de Gemini y las herramientas declaradas.
 func New(ctx context.Context, cfg config.Config, store conversation.Store, catalogClient *catalog.Client, grClient *georoutes.Client) (*Agent, error) {
@@ -78,16 +82,16 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 		Parameters: &genai.Schema{
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
-				"identificacion":     {Type: genai.TypeString, Description: "Cédula o identificación del cliente (obligatoria)."},
-				"nombres_completos":  {Type: genai.TypeString, Description: "Nombres y apellidos del cliente (obligatorio)."},
-				"correo_electronico": {Type: genai.TypeString, Description: "Correo electrónico del cliente (obligatorio)."},
-				"direccion":          {Type: genai.TypeString, Description: "Dirección de entrega (obligatoria)."},
-				"referencia":         {Type: genai.TypeString, Description: "Referencia del domicilio (opcional)."},
+				"identificacion":     {Type: genai.TypeString, Description: "Cédula o identificación del cliente. Si el cliente ya está registrado (ver DATOS DEL CLIENTE), no hace falta volver a pedirla."},
+				"nombres_completos":  {Type: genai.TypeString, Description: "Nombres y apellidos del cliente. Si el cliente ya está registrado, no hace falta volver a pedirlos."},
+				"correo_electronico": {Type: genai.TypeString, Description: "Correo electrónico del cliente. Si el cliente ya está registrado, no hace falta volver a pedirlo."},
+				"direccion":          {Type: genai.TypeString, Description: "Dirección de entrega en texto (opcional). NO es necesaria: la entrega se guía por la ubicación GPS de WhatsApp. Si el cliente no la da, se usa la ubicación compartida."},
+				"referencia":         {Type: genai.TypeString, Description: "Referencia del domicilio para que el repartidor ubique mejor (opcional; ej: color de casa, local cercano)."},
 				"color":              {Type: genai.TypeString, Description: "Color/marca del cilindro que desea el cliente. Debe coincidir con uno de los colores disponibles en la INFORMACIÓN DEL SERVICIO."},
 				"cantidad":           {Type: genai.TypeInteger, Description: "Cantidad de cilindros solicitados."},
 				"telefono":           {Type: genai.TypeString, Description: "Teléfono del cliente. Si no lo indica, se usa su número de WhatsApp."},
 			},
-			Required: []string{"identificacion", "nombres_completos", "correo_electronico", "direccion", "color", "cantidad"},
+			Required: []string{"color", "cantidad"},
 		},
 	}
 
@@ -108,6 +112,15 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 	// productos, colores o precios sin reiniciar el agente.
 	contexto, disponible := a.catalog.Get()
 	systemPrompt := strings.TrimSpace(behaviorPrompt) + "\n\nINFORMACIÓN DEL SERVICIO:\n" + renderServiceInfo(contexto, disponible)
+
+	// Si ya conocemos al cliente (pidió antes), inyectamos sus datos para que el bot NO se
+	// los vuelva a pedir. La IA los reutiliza directamente al registrar el pedido.
+	if perfil, ok := a.store.GetProfile(from); ok && perfil.Identificacion != "" {
+		systemPrompt += fmt.Sprintf("\n\nDATOS DEL CLIENTE (ya registrado, NO se los vuelvas a pedir; úsalos "+
+			"directamente al registrar el pedido):\n- Cédula/identificación: %s\n- Nombres: %s\n- Correo: %s\n"+
+			"Salúdalo por su nombre. Para un nuevo pedido solo necesitas: color/marca, cantidad y su ubicación de WhatsApp.",
+			perfil.Identificacion, perfil.Nombres, perfil.Correo)
+	}
 
 	cfg := &genai.GenerateContentConfig{
 		SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: systemPrompt}}},
@@ -164,12 +177,17 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 func (a *Agent) runTool(from, name string, args map[string]any) string {
 	switch name {
 	case "escalar_al_dueno":
+		a.escalated = true
 		motivo, _ := args["motivo"].(string)
 		resumen, _ := args["resumen"].(string)
 		return escalation.NotifyOwner(a.cfg, from, motivo, resumen)
 
 	case "registrar_pedido":
-		return a.registrarPedido(from, args)
+		result := a.registrarPedido(from, args)
+		if strings.Contains(result, "dueño") || strings.Contains(result, "Deriva") {
+			a.escalated = true
+		}
+		return result
 	}
 	return "Función desconocida: " + name
 }
@@ -199,8 +217,26 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 	if telefono == "" {
 		telefono = from
 	}
-	if identificacion == "" || nombres == "" || correo == "" || direccion == "" {
-		return "Faltan datos del cliente (cédula, nombre, correo o dirección). Pídeselos antes de registrar el pedido."
+	// Cliente recurrente: si la IA no repitió los datos personales, los tomamos del perfil
+	// guardado. Así un cliente que ya pidió no tiene que dar cédula/nombre/correo otra vez.
+	if perfil, ok := a.store.GetProfile(from); ok {
+		if identificacion == "" {
+			identificacion = perfil.Identificacion
+		}
+		if nombres == "" {
+			nombres = perfil.Nombres
+		}
+		if correo == "" {
+			correo = perfil.Correo
+		}
+	}
+	// La dirección de texto es opcional: la entrega se guía por el GPS de WhatsApp. Si el
+	// cliente no la dio, la rellenamos con la ubicación compartida para tener un rótulo legible.
+	if direccion == "" {
+		direccion = fmt.Sprintf("Ubicación compartida por WhatsApp (%.6f, %.6f)", loc.Latitude, loc.Longitude)
+	}
+	if identificacion == "" || nombres == "" || correo == "" {
+		return "Faltan datos del cliente (cédula, nombre o correo). Pídeselos antes de registrar el pedido."
 	}
 
 	// Catálogo: mapear el color elegido a (producto, color) y elegir la forma de pago.
@@ -241,6 +277,18 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 	account.Refresh = tokens.Refresh
 	a.store.SetAccount(from, account)
 
+	// Si el cliente no está verificado, solicitamos el código OTP y pausamos el pedido.
+	if !tokens.EstaValidado {
+		if err := a.gr.GetVerificationCode(tokens.Access); err != nil {
+			return "No se pudo enviar el código de verificación al correo del cliente " +
+				"(motivo: " + err.Error() + "). Deriva al dueño."
+		}
+		a.store.SetPendingVerification(from, account)
+		return "Por seguridad, hemos enviado un código de verificación al correo electrónico del cliente. " +
+			"Pídele que revise su bandeja de entrada (y spam) y que te comparta el código por WhatsApp para " +
+			"poder procesar el pedido. Cuando lo tenga, dímelo y lo valido."
+	}
+
 	// Dirección del pedido desde la ubicación compartida.
 	direccionCreada, err := a.gr.CreateDirection(tokens.Access, georoutes.DirectionInput{
 		Direccion:  direccion,
@@ -265,6 +313,16 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 		return "No se pudo registrar el pedido (motivo: " + err.Error() + "). " +
 			"Informa al cliente del inconveniente y deriva al dueño para atención manual."
 	}
+
+	// Guardar el perfil del cliente para no volver a pedir estos datos en pedidos futuros.
+	a.store.SetProfile(from, conversation.Profile{
+		Identificacion: identificacion,
+		Nombres:        nombres,
+		Correo:         correo,
+	})
+
+	// Pedido exitoso: limpiamos historial para que el proximo arranque fresco.
+	a.store.ClearHistory(from)
 
 	mensaje := fmt.Sprintf("Pedido registrado correctamente: %d x %s (%s).", cantidad, producto.Nombre, color.Nombre)
 	if resultado.ConductorAsignado != "" {
@@ -422,4 +480,19 @@ func renderServiceInfo(contexto *catalog.Context, disponible bool) string {
 	texto.WriteString("\nPara concretar un pedido necesitas del cliente: cédula, nombre completo, correo, " +
 		"el color/marca deseado, la cantidad y su ubicación de WhatsApp (📎 → Ubicación).\n")
 	return texto.String()
+}
+
+// HandleVerification procesa el código OTP que el cliente envió por WhatsApp.
+// Valida el código contra el backend y si es correcto, limpia el estado de
+// verificación para que el flujo del agente continúe.
+func (a *Agent) HandleVerification(from, codigo string) string {
+	account, ok := a.store.GetPendingVerification(from)
+	if !ok {
+		return ""
+	}
+	if err := a.gr.ValidateVerificationCode(account.JWT, codigo); err != nil {
+		return "El código que ingresaste no es válido o ya expiró. Revisa tu correo (incluye spam)."
+	}
+	a.store.ClearPendingVerification(from)
+	return "Código verificado correctamente ✅. Tu cuenta ya está activa. Ahora dime qué necesitas para tu pedido."
 }

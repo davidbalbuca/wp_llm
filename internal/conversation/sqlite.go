@@ -66,6 +66,28 @@ CREATE TABLE IF NOT EXISTS accounts (
     jwt        TEXT,
     refresh    TEXT,
     created_at INTEGER NOT NULL
+);
+
+-- Datos personales del cliente (cédula, nombre, correo). Durables: se guardan tras el
+-- primer pedido para no volver a pedírselos en pedidos siguientes.
+CREATE TABLE IF NOT EXISTS profiles (
+    phone          TEXT    PRIMARY KEY,
+    identificacion TEXT,
+    nombres        TEXT,
+    correo         TEXT,
+    updated_at     INTEGER NOT NULL
+);
+
+-- Cuentas pendientes de verificación OTP. Transitorias: se guardan cuando el bot
+-- solicita el código de verificación y se limpian al validarlo.
+CREATE TABLE IF NOT EXISTS pending_verif (
+    phone      TEXT    PRIMARY KEY,
+    username   TEXT    NOT NULL,
+    password   TEXT    NOT NULL,
+    user_id    INTEGER,
+    jwt        TEXT,
+    refresh    TEXT,
+    created_at INTEGER NOT NULL
 );`
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
@@ -118,6 +140,12 @@ func (s *sqliteStore) appendTurn(phone, role, text string) {
             OR id NOT IN (SELECT id FROM turns WHERE phone = ? ORDER BY id DESC LIMIT ?)
         )`, phone, minTime, phone, maxTurns); err != nil {
 		log.Printf("[sqlite] limpieza turnos %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) ClearHistory(phone string) {
+	if _, err := s.db.Exec(`DELETE FROM turns WHERE phone = ?`, phone); err != nil {
+		log.Printf("[sqlite] ClearHistory %s: %v", phone, err)
 	}
 }
 
@@ -179,3 +207,65 @@ func (s *sqliteStore) GetAccount(phone string) (Account, bool) {
 	}
 	return account, true
 }
+
+func (s *sqliteStore) SetProfile(phone string, profile Profile) {
+	if _, err := s.db.Exec(`
+        INSERT INTO profiles(phone, identificacion, nombres, correo, updated_at)
+        VALUES(?, ?, ?, ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET
+            identificacion=excluded.identificacion,
+            nombres=excluded.nombres,
+            correo=excluded.correo,
+            updated_at=excluded.updated_at`,
+		phone, profile.Identificacion, profile.Nombres, profile.Correo, time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] SetProfile %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) GetProfile(phone string) (Profile, bool) {
+	var profile Profile
+	err := s.db.QueryRow(
+		`SELECT identificacion, nombres, correo FROM profiles WHERE phone = ?`, phone).
+		Scan(&profile.Identificacion, &profile.Nombres, &profile.Correo)
+	if err == sql.ErrNoRows {
+		return Profile{}, false
+	}
+	return profile, true
+}
+
+func (s *sqliteStore) SetPendingVerification(phone string, account Account) {
+	if _, err := s.db.Exec(`
+        INSERT INTO pending_verif(phone, username, password, user_id, jwt, refresh, created_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET
+            username=excluded.username,
+            password=excluded.password,
+            user_id=excluded.user_id,
+            jwt=excluded.jwt,
+            refresh=excluded.refresh`,
+		phone, account.Username, account.Password, account.UserID, account.JWT, account.Refresh, time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] SetPendingVerification %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) GetPendingVerification(phone string) (Account, bool) {
+	var account Account
+	err := s.db.QueryRow(
+		`SELECT username, password, user_id, jwt, refresh FROM pending_verif WHERE phone = ?`, phone).
+		Scan(&account.Username, &account.Password, &account.UserID, &account.JWT, &account.Refresh)
+	if err == sql.ErrNoRows {
+		return Account{}, false
+	}
+	if err != nil {
+		log.Printf("[sqlite] GetPendingVerification %s: %v", phone, err)
+		return Account{}, false
+	}
+	return account, true
+}
+
+func (s *sqliteStore) ClearPendingVerification(phone string) {
+	if _, err := s.db.Exec(`DELETE FROM pending_verif WHERE phone = ?`, phone); err != nil {
+		log.Printf("[sqlite] ClearPendingVerification %s: %v", phone, err)
+	}
+}
+

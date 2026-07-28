@@ -13,6 +13,8 @@ type memStore struct {
 	data      map[string][]*genai.Content
 	locations map[string]Location
 	accounts  map[string]Account
+	profiles  map[string]Profile
+	pendingVerif map[string]Account // pending OTP verification accounts
 }
 
 // NewMemStore crea un almacén en memoria vacío.
@@ -21,6 +23,8 @@ func NewMemStore() Store {
 		data:      make(map[string][]*genai.Content),
 		locations: make(map[string]Location),
 		accounts:  make(map[string]Account),
+		profiles:  make(map[string]Profile),
+		pendingVerif: make(map[string]Account),
 	}
 }
 
@@ -75,4 +79,42 @@ func (s *memStore) GetAccount(phone string) (Account, bool) {
 	defer s.mu.Unlock()
 	account, ok := s.accounts[phone]
 	return account, ok
+}
+
+func (s *memStore) SetProfile(phone string, profile Profile) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.profiles[phone] = profile
+}
+
+func (s *memStore) ClearHistory(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.data, phone)
+}
+
+func (s *memStore) GetProfile(phone string) (Profile, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	profile, ok := s.profiles[phone]
+	return profile, ok
+}
+
+func (s *memStore) SetPendingVerification(phone string, account Account) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pendingVerif[phone] = account
+}
+
+func (s *memStore) GetPendingVerification(phone string) (Account, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	account, ok := s.pendingVerif[phone]
+	return account, ok
+}
+
+func (s *memStore) ClearPendingVerification(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.pendingVerif, phone)
 }

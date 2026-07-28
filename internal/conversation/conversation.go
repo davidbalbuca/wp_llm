@@ -11,7 +11,9 @@ package conversation
 import "google.golang.org/genai"
 
 // maxTurns es el máximo de turnos (Content) que se conservan por conversación.
-const maxTurns = 20
+// Con 6 turnos alcanza para un pedido completo (saludo → pedido → datos → confirmación)
+// sin enviar historial innecesario a la IA en cada llamada.
+const maxTurns = 6
 
 // Location es la última ubicación GPS que compartió un cliente por WhatsApp.
 // Se usa para registrar el pedido en el backend, que requiere latitude/longitude.
@@ -29,6 +31,15 @@ type Account struct {
 	UserID   int    `json:"user_id"`
 	JWT      string `json:"jwt"`
 	Refresh  string `json:"refresh"`
+}
+
+// Profile son los datos personales del cliente que se piden para un pedido. Se guardan
+// (durables) tras el primer pedido para NO volver a pedírselos en pedidos siguientes:
+// un cliente recurrente solo comparte ubicación y elige producto.
+type Profile struct {
+	Identificacion string `json:"identificacion"`
+	Nombres        string `json:"nombres"`
+	Correo         string `json:"correo"`
 }
 
 // Store es el almacén de estado conversacional por número de teléfono.
@@ -49,6 +60,22 @@ type Store interface {
 	SetAccount(phone string, account Account)
 	// GetAccount devuelve las credenciales georoutes del cliente (ok=false si no hay).
 	GetAccount(phone string) (Account, bool)
+	// ClearHistory elimina todo el historial de conversación de un cliente. Se usa
+	// cuando se deriva al dueño, para que el próximo mensaje arranque fresco sin que
+	// la IA repita "ya derivé al dueño" del historial anterior.
+	ClearHistory(phone string)
+	// SetProfile guarda los datos personales del cliente (durables) para no re-pedirlos.
+	SetProfile(phone string, profile Profile)
+	// GetProfile devuelve los datos personales del cliente (ok=false si no hay).
+	GetProfile(phone string) (Profile, bool)
+	// SetPendingVerification marca al cliente como pendiente de verificación OTP.
+	// Mientras esté en este estado, el bot trata el próximo mensaje como el código de
+	// verificación en lugar de pasarlo a la IA.
+	SetPendingVerification(phone string, account Account)
+	// GetPendingVerification devuelve los datos de verificación pendiente.
+	GetPendingVerification(phone string) (Account, bool)
+	// ClearPendingVerification elimina el estado de verificación pendiente.
+	ClearPendingVerification(phone string)
 }
 
 // turn es la forma serializable de un turno de conversación. Se usa para persistir
