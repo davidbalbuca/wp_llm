@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"google.golang.org/genai"
 
@@ -25,6 +26,42 @@ import (
 )
 
 const maxToolRounds = 5
+
+// mensajeSinCobertura es la instrucción para el modelo cuando el pedido no se puede
+// asignar por falta de repartidores/cobertura en la zona. Es una condición de negocio
+// (no un error técnico): se comunica con claridad y la conversación se cierra cordialmente,
+// SIN derivar al dueño y SIN reintentar en bucle.
+const mensajeSinCobertura = "IMPORTANTE: En este momento no hay repartidores disponibles en la zona del " +
+	"cliente, así que no se puede concretar el pedido automáticamente. Explícale con amabilidad que por " +
+	"ahora no tenemos cobertura/repartidores en su ubicación, que agradecemos su interés y que puede " +
+	"intentar más tarde. NO derives al dueño y NO le pidas de nuevo los datos ni la ubicación: cierra la " +
+	"conversación de forma cordial."
+
+// coberturaMarkers son fragmentos (en minúsculas) de los mensajes que el backend devuelve
+// cuando no hay conductor asignable por zona/cercanía. Se comparan contra el error para
+// distinguir "sin cobertura" (negocio) de un fallo técnico real.
+var coberturaMarkers = []string{
+	"no existen conductores",
+	"no hay conductores",
+	"fuera de la zona",
+	"fuera de zona",
+	"fuera de cobertura",
+	"sin cobertura",
+	"no se encontraron conductores",
+	"no existen conductores en el sector",
+}
+
+// esFalloDeCobertura indica si el mensaje de error del backend corresponde a "no hay
+// repartidores en la zona / fuera de cobertura" en lugar de un error técnico.
+func esFalloDeCobertura(mensaje string) bool {
+	m := strings.ToLower(mensaje)
+	for _, marker := range coberturaMarkers {
+		if strings.Contains(m, marker) {
+			return true
+		}
+	}
+	return false
+}
 
 // behaviorPrompt son las instrucciones de comportamiento del agente. Viven en un archivo
 // de plantilla (contenido, no lógica) embebido en el binario, para editarlas sin tocar código.
@@ -120,6 +157,16 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 			"directamente al registrar el pedido):\n- Cédula/identificación: %s\n- Nombres: %s\n- Correo: %s\n"+
 			"Salúdalo por su nombre. Para un nuevo pedido solo necesitas: color/marca, cantidad y su ubicación de WhatsApp.",
 			perfil.Identificacion, perfil.Nombres, perfil.Correo)
+
+		// Si tiene un pedido anterior, ofrécele repetir lo mismo: es más amigable que
+		// preguntarle todo desde cero.
+		if last, ok := a.store.GetLastOrder(from); ok && last.Cantidad > 0 {
+			systemPrompt += fmt.Sprintf("\n\nÚLTIMO PEDIDO DEL CLIENTE (del %s): %d x %s color/marca %s. "+
+				"Cuando quiera pedir, en vez de preguntarle todo desde cero, ofrécele de forma amable repetir "+
+				"este mismo pedido (ej: \"¿Deseas lo mismo de la última vez: %d %s %s? ¿O prefieres cambiar algo?\"). "+
+				"Si acepta repetir, solo necesitas confirmar y pedirle la ubicación.",
+				last.Fecha, last.Cantidad, last.Producto, last.Color, last.Cantidad, last.Producto, last.Color)
+		}
 	}
 
 	cfg := &genai.GenerateContentConfig{
@@ -239,6 +286,17 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 		return "Faltan datos del cliente (cédula, nombre o correo). Pídeselos antes de registrar el pedido."
 	}
 
+	// Persistimos el perfil en cuanto tenemos sus datos completos, ANTES de intentar el
+	// pedido. Así, si el pedido falla por cobertura o cualquier motivo, un cliente que ya
+	// dio cédula/nombre/correo no tiene que repetirlos en el próximo intento.
+	if _, ya := a.store.GetProfile(from); !ya {
+		a.store.SetProfile(from, conversation.Profile{
+			Identificacion: identificacion,
+			Nombres:        nombres,
+			Correo:         correo,
+		})
+	}
+
 	// Catálogo: mapear el color elegido a (producto, color) y elegir la forma de pago.
 	contexto, disponible := a.catalog.Get()
 	if !disponible || contexto == nil {
@@ -284,6 +342,9 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 				"(motivo: " + err.Error() + "). Deriva al dueño."
 		}
 		a.store.SetPendingVerification(from, account)
+		// Guardamos el pedido recopilado para RETOMARLO automáticamente cuando el cliente
+		// valide el código, sin depender de que la IA recuerde el color/cantidad.
+		a.store.SetOrderDraft(from, conversation.OrderDraft{Color: colorNombre, Cantidad: cantidad})
 		return "Por seguridad, hemos enviado un código de verificación al correo electrónico del cliente. " +
 			"Pídele que revise su bandeja de entrada (y spam) y que te comparta el código por WhatsApp para " +
 			"poder procesar el pedido. Cuando lo tenga, dímelo y lo valido."
@@ -298,8 +359,11 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 		Longitude:  loc.Longitude,
 	})
 	if err != nil {
+		if esFalloDeCobertura(err.Error()) {
+			return mensajeSinCobertura
+		}
 		return "No se pudo registrar la dirección del pedido (motivo: " + err.Error() + "). " +
-			"Puede estar fuera de la zona de cobertura; informa al cliente y deriva al dueño."
+			"Informa al cliente del inconveniente y deriva al dueño para atención manual."
 	}
 
 	// Pedido en el flujo real.
@@ -310,6 +374,12 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 		Cantidad:    cantidad,
 	}})
 	if err != nil {
+		// Sin repartidores en la zona / fuera de cobertura NO es un error técnico: es una
+		// condición normal de negocio. Se informa con un mensaje claro y NO se deriva al
+		// dueño ni se entra en bucle; la conversación se cierra cordialmente.
+		if esFalloDeCobertura(err.Error()) {
+			return mensajeSinCobertura
+		}
 		return "No se pudo registrar el pedido (motivo: " + err.Error() + "). " +
 			"Informa al cliente del inconveniente y deriva al dueño para atención manual."
 	}
@@ -319,6 +389,14 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 		Identificacion: identificacion,
 		Nombres:        nombres,
 		Correo:         correo,
+	})
+
+	// Guardar el resumen del pedido para poder ofrecerle repetir lo mismo la próxima vez.
+	a.store.SetLastOrder(from, conversation.LastOrder{
+		Producto: producto.Nombre,
+		Color:    color.Nombre,
+		Cantidad: cantidad,
+		Fecha:    time.Now().Format("02/01/2006"),
 	})
 
 	// Pedido exitoso: limpiamos historial para que el proximo arranque fresco.
@@ -483,16 +561,43 @@ func renderServiceInfo(contexto *catalog.Context, disponible bool) string {
 }
 
 // HandleVerification procesa el código OTP que el cliente envió por WhatsApp.
-// Valida el código contra el backend y si es correcto, limpia el estado de
-// verificación para que el flujo del agente continúe.
-func (a *Agent) HandleVerification(from, codigo string) string {
+// Valida el código contra el backend. Devuelve (respuesta, retomarPedido):
+//   - Si el código es inválido, devuelve el aviso y retomarPedido=false.
+//   - Si es válido y NO hay pedido en pausa, devuelve un saludo y retomarPedido=false.
+//   - Si es válido y HAY pedido en pausa, devuelve ("", true): el llamador debe retomar el
+//     pedido con ResumeOrder para que la IA redacte la confirmación final.
+func (a *Agent) HandleVerification(from, codigo string) (string, bool) {
 	account, ok := a.store.GetPendingVerification(from)
 	if !ok {
-		return ""
+		return "", false
 	}
 	if err := a.gr.ValidateVerificationCode(account.JWT, codigo); err != nil {
-		return "El código que ingresaste no es válido o ya expiró. Revisa tu correo (incluye spam)."
+		return "El código que ingresaste no es válido o ya expiró. Revisa tu correo (incluye spam). 📩", false
 	}
 	a.store.ClearPendingVerification(from)
-	return "Código verificado correctamente ✅. Tu cuenta ya está activa. Ahora dime qué necesitas para tu pedido."
+
+	if draft, hay := a.store.GetOrderDraft(from); hay && draft.Cantidad > 0 {
+		return "", true // hay pedido pendiente: el llamador lo retoma
+	}
+	return "¡Código verificado correctamente ✅! Tu cuenta ya está activa. Cuéntame, ¿qué cilindro " +
+		"necesitas y cuántos? 😊", false
+}
+
+// ResumeOrder retoma el pedido que quedó en pausa esperando el OTP, ahora que el cliente
+// ya está verificado. Concreta el pedido por el flujo normal (registrar_pedido) y deja que
+// la IA redacte la confirmación al cliente. Es determinista: no depende de que la IA
+// "recuerde" el color/cantidad, porque los toma del draft guardado.
+func (a *Agent) ResumeOrder(ctx context.Context, from string) (string, error) {
+	draft, ok := a.store.GetOrderDraft(from)
+	if !ok || draft.Cantidad <= 0 {
+		return "¡Tu cuenta ya está verificada ✅! Cuéntame, ¿qué cilindro necesitas y cuántos?", nil
+	}
+	a.store.ClearOrderDraft(from)
+
+	// Mensaje sintético (en nombre del cliente) para que la IA llame a registrar_pedido con
+	// el pedido ya conocido y redacte la respuesta con su estilo. Así el pedido se concreta
+	// de forma determinista y el texto final sale natural.
+	synthetic := fmt.Sprintf("Ya validé mi código de verificación. Procede a registrar mi pedido: "+
+		"%d cilindro(s) color/marca %s. Ya compartí mi ubicación antes.", draft.Cantidad, draft.Color)
+	return a.HandleMessage(ctx, from, synthetic)
 }

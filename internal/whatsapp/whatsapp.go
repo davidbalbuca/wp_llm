@@ -8,10 +8,36 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"strconv"
 	"time"
 
 	"wp-llm-gas/internal/config"
 )
+
+// coordsRe captura un par de coordenadas (lat, lng) dentro de un texto: enlaces de Google
+// Maps (`?q=-2.84,-78.99`, `@-2.84,-78.99`), pares "lat, lng" sueltos, etc. Muchos clientes
+// pegan la ubicación como URL en vez de usar el adjunto nativo de WhatsApp; así igual la tomamos.
+var coordsRe = regexp.MustCompile(`(-?\d{1,3}\.\d{3,})[,\s]+(-?\d{1,3}\.\d{3,})`)
+
+// ParseCoordsFromText intenta extraer coordenadas GPS de un texto (p. ej. un enlace de
+// Google Maps que el cliente pegó). Devuelve ok=false si no encuentra un par válido y
+// plausible (lat en [-90,90], lng en [-180,180]).
+func ParseCoordsFromText(text string) (lat, lng float64, ok bool) {
+	m := coordsRe.FindStringSubmatch(text)
+	if len(m) != 3 {
+		return 0, 0, false
+	}
+	lat, err1 := strconv.ParseFloat(m[1], 64)
+	lng, err2 := strconv.ParseFloat(m[2], 64)
+	if err1 != nil || err2 != nil {
+		return 0, 0, false
+	}
+	if lat < -90 || lat > 90 || lng < -180 || lng > 180 {
+		return 0, 0, false
+	}
+	return lat, lng, true
+}
 
 // SendText envía un mensaje de texto por WhatsApp vía la Graph API de Meta.
 func SendText(cfg config.Config, to, body string) error {

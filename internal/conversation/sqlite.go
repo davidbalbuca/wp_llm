@@ -78,6 +78,32 @@ CREATE TABLE IF NOT EXISTS profiles (
     updated_at     INTEGER NOT NULL
 );
 
+-- Último pedido exitoso del cliente. Durable: se guarda tras cada pedido para ofrecerle
+-- repetir lo mismo cuando vuelve (producto, color, cantidad y fecha legible).
+CREATE TABLE IF NOT EXISTS last_orders (
+    phone      TEXT    PRIMARY KEY,
+    producto   TEXT,
+    color      TEXT,
+    cantidad   INTEGER,
+    fecha      TEXT,
+    updated_at INTEGER NOT NULL
+);
+
+-- Marca de última actividad del cliente (unix). Para delimitar sesiones por inactividad.
+CREATE TABLE IF NOT EXISTS activity (
+    phone      TEXT    PRIMARY KEY,
+    last_at    INTEGER NOT NULL
+);
+
+-- Pedido en pausa a la espera de verificación OTP. Transitorio: se guarda cuando el bot
+-- pide el código y se limpia al validarlo (o al concretar/derivar).
+CREATE TABLE IF NOT EXISTS order_drafts (
+    phone      TEXT    PRIMARY KEY,
+    color      TEXT,
+    cantidad   INTEGER,
+    updated_at INTEGER NOT NULL
+);
+
 -- Cuentas pendientes de verificación OTP. Transitorias: se guardan cuando el bot
 -- solicita el código de verificación y se limpian al validarlo.
 CREATE TABLE IF NOT EXISTS pending_verif (
@@ -231,6 +257,89 @@ func (s *sqliteStore) GetProfile(phone string) (Profile, bool) {
 		return Profile{}, false
 	}
 	return profile, true
+}
+
+func (s *sqliteStore) SetLastOrder(phone string, order LastOrder) {
+	if _, err := s.db.Exec(`
+        INSERT INTO last_orders(phone, producto, color, cantidad, fecha, updated_at)
+        VALUES(?, ?, ?, ?, ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET
+            producto=excluded.producto,
+            color=excluded.color,
+            cantidad=excluded.cantidad,
+            fecha=excluded.fecha,
+            updated_at=excluded.updated_at`,
+		phone, order.Producto, order.Color, order.Cantidad, order.Fecha, time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] SetLastOrder %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) GetLastOrder(phone string) (LastOrder, bool) {
+	var order LastOrder
+	err := s.db.QueryRow(
+		`SELECT producto, color, cantidad, fecha FROM last_orders WHERE phone = ?`, phone).
+		Scan(&order.Producto, &order.Color, &order.Cantidad, &order.Fecha)
+	if err == sql.ErrNoRows {
+		return LastOrder{}, false
+	}
+	if err != nil {
+		log.Printf("[sqlite] GetLastOrder %s: %v", phone, err)
+		return LastOrder{}, false
+	}
+	return order, true
+}
+
+func (s *sqliteStore) LastActivity(phone string) (time.Time, bool) {
+	var unix int64
+	err := s.db.QueryRow(`SELECT last_at FROM activity WHERE phone = ?`, phone).Scan(&unix)
+	if err == sql.ErrNoRows {
+		return time.Time{}, false
+	}
+	if err != nil {
+		log.Printf("[sqlite] LastActivity %s: %v", phone, err)
+		return time.Time{}, false
+	}
+	return time.Unix(unix, 0), true
+}
+
+func (s *sqliteStore) TouchActivity(phone string) {
+	if _, err := s.db.Exec(`
+        INSERT INTO activity(phone, last_at) VALUES(?, ?)
+        ON CONFLICT(phone) DO UPDATE SET last_at=excluded.last_at`,
+		phone, time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] TouchActivity %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) SetOrderDraft(phone string, draft OrderDraft) {
+	if _, err := s.db.Exec(`
+        INSERT INTO order_drafts(phone, color, cantidad, updated_at) VALUES(?, ?, ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET
+            color=excluded.color, cantidad=excluded.cantidad, updated_at=excluded.updated_at`,
+		phone, draft.Color, draft.Cantidad, time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] SetOrderDraft %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) GetOrderDraft(phone string) (OrderDraft, bool) {
+	var draft OrderDraft
+	err := s.db.QueryRow(
+		`SELECT color, cantidad FROM order_drafts WHERE phone = ?`, phone).
+		Scan(&draft.Color, &draft.Cantidad)
+	if err == sql.ErrNoRows {
+		return OrderDraft{}, false
+	}
+	if err != nil {
+		log.Printf("[sqlite] GetOrderDraft %s: %v", phone, err)
+		return OrderDraft{}, false
+	}
+	return draft, true
+}
+
+func (s *sqliteStore) ClearOrderDraft(phone string) {
+	if _, err := s.db.Exec(`DELETE FROM order_drafts WHERE phone = ?`, phone); err != nil {
+		log.Printf("[sqlite] ClearOrderDraft %s: %v", phone, err)
+	}
 }
 
 func (s *sqliteStore) SetPendingVerification(phone string, account Account) {

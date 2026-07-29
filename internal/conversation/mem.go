@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"sync"
+	"time"
 
 	"google.golang.org/genai"
 )
@@ -14,6 +15,9 @@ type memStore struct {
 	locations map[string]Location
 	accounts  map[string]Account
 	profiles  map[string]Profile
+	lastOrders map[string]LastOrder
+	lastActivity map[string]time.Time
+	orderDrafts map[string]OrderDraft
 	pendingVerif map[string]Account // pending OTP verification accounts
 }
 
@@ -24,6 +28,9 @@ func NewMemStore() Store {
 		locations: make(map[string]Location),
 		accounts:  make(map[string]Account),
 		profiles:  make(map[string]Profile),
+		lastOrders: make(map[string]LastOrder),
+		lastActivity: make(map[string]time.Time),
+		orderDrafts: make(map[string]OrderDraft),
 		pendingVerif: make(map[string]Account),
 	}
 }
@@ -98,6 +105,51 @@ func (s *memStore) GetProfile(phone string) (Profile, bool) {
 	defer s.mu.Unlock()
 	profile, ok := s.profiles[phone]
 	return profile, ok
+}
+
+func (s *memStore) SetLastOrder(phone string, order LastOrder) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastOrders[phone] = order
+}
+
+func (s *memStore) GetLastOrder(phone string) (LastOrder, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	order, ok := s.lastOrders[phone]
+	return order, ok
+}
+
+func (s *memStore) LastActivity(phone string) (time.Time, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.lastActivity[phone]
+	return t, ok
+}
+
+func (s *memStore) TouchActivity(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastActivity[phone] = time.Now()
+}
+
+func (s *memStore) SetOrderDraft(phone string, draft OrderDraft) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.orderDrafts[phone] = draft
+}
+
+func (s *memStore) GetOrderDraft(phone string) (OrderDraft, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	draft, ok := s.orderDrafts[phone]
+	return draft, ok
+}
+
+func (s *memStore) ClearOrderDraft(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.orderDrafts, phone)
 }
 
 func (s *memStore) SetPendingVerification(phone string, account Account) {
