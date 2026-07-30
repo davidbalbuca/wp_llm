@@ -460,24 +460,34 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 			"poder procesar el pedido. Cuando lo tenga, dímelo y lo valido."
 	}
 
-	// Dirección del pedido desde la ubicación compartida.
-	direccionCreada, err := a.gr.CreateDirection(tokens.Access, georoutes.DirectionInput{
-		Direccion:  direccion,
-		Alias:      "WhatsApp",
-		Referencia: referencia,
-		Latitude:   loc.Latitude,
-		Longitude:  loc.Longitude,
-	})
-	if err != nil {
-		if esFalloDeCobertura(err.Error()) {
-			return mensajeSinCobertura
+	// Dirección del pedido. Igual que la app: primero buscamos si el cliente ya tiene una
+	// dirección guardada CERCANA a esta ubicación (nearby-direction, tolerancia del backend);
+	// si existe, la reutilizamos en vez de crear una nueva cada vez. Solo si no hay ninguna
+	// cercana creamos una. Si la consulta de cercanía falla técnicamente, caemos a crear
+	// (no bloqueamos el pedido por eso).
+	var direccionID int
+	if cercana, errNear := a.gr.NearbyDirection(tokens.Access, loc.Latitude, loc.Longitude); errNear == nil && cercana.Existe && cercana.IDDireccion != nil {
+		direccionID = *cercana.IDDireccion
+	} else {
+		direccionCreada, err := a.gr.CreateDirection(tokens.Access, georoutes.DirectionInput{
+			Direccion:  direccion,
+			Alias:      "WhatsApp",
+			Referencia: referencia,
+			Latitude:   loc.Latitude,
+			Longitude:  loc.Longitude,
+		})
+		if err != nil {
+			if esFalloDeCobertura(err.Error()) {
+				return mensajeSinCobertura
+			}
+			return "No se pudo registrar la dirección del pedido (motivo: " + err.Error() + "). " +
+				"Informa al cliente del inconveniente y deriva al dueño para atención manual."
 		}
-		return "No se pudo registrar la dirección del pedido (motivo: " + err.Error() + "). " +
-			"Informa al cliente del inconveniente y deriva al dueño para atención manual."
+		direccionID = direccionCreada.ID
 	}
 
 	// Pedido en el flujo real.
-	resultado, err := a.gr.StartOrder(tokens.Access, direccionCreada.ID, idtipopago, []georoutes.OrderProduct{{
+	resultado, err := a.gr.StartOrder(tokens.Access, direccionID, idtipopago, []georoutes.OrderProduct{{
 		IDCategoria: producto.IDCategoria,
 		IDProducto:  producto.IDProducto,
 		IDColor:     color.ID,

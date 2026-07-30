@@ -3,6 +3,7 @@ package georoutes
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // OrderProduct es una línea del pedido: producto + color + cantidad. Los IDs salen del
@@ -65,4 +66,35 @@ func (c *Client) RatingOrder(jwt string, idpedido, calificacion int, observacion
 		"observacion":  observacion,
 	}, jwt)
 	return err
+}
+
+// NearbyDir indica si el cliente ya tiene una dirección guardada cercana a una ubicación.
+type NearbyDir struct {
+	Existe      bool `json:"existe"`
+	IDDireccion *int `json:"iddireccion"`
+}
+
+// NearbyDirection consulta si el cliente (JWT) ya tiene una dirección guardada CERCANA a la
+// ubicación dada (GET /georoutes/nearby-direction/). El backend decide la cercanía por sector
+// + distancia geodésica (tolerancia DISTANCIA_DIRECCIONES). Sirve para reutilizar la dirección
+// en vez de crear una nueva por cada pedido, igual que la app. Usa el JWT del cliente (no el
+// token de servicio), por eso va por doGet con bearer explícito.
+func (c *Client) NearbyDirection(jwt string, latitude, longitude float64) (*NearbyDir, error) {
+	path := fmt.Sprintf("/nearby-direction/?latitude=%f&longitude=%f", latitude, longitude)
+	env, status, err := c.doGet(path, jwt)
+	if err != nil {
+		return nil, err
+	}
+	if status < 200 || status >= 300 {
+		mensaje := strings.TrimSpace(env.Mensaje)
+		if mensaje == "" {
+			mensaje = fmt.Sprintf("error del backend (HTTP %d)", status)
+		}
+		return nil, fmt.Errorf("%s", mensaje)
+	}
+	var nearby NearbyDir
+	if err := json.Unmarshal(env.Resultado, &nearby); err != nil {
+		return nil, fmt.Errorf("respuesta nearby-direction no válida del backend: %w", err)
+	}
+	return &nearby, nil
 }
