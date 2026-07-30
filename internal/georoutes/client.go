@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -120,6 +121,28 @@ func (c *Client) post(path string, payload any, bearer string) (json.RawMessage,
 		return nil, fmt.Errorf("%s", mensaje)
 	}
 	return env.Resultado, nil
+}
+
+// ClientInfo indica si ya existe un cliente con cierta cédula, y sus datos básicos.
+type ClientInfo struct {
+	Existe  bool   `json:"existe"`
+	Nombres string `json:"nombres"`
+	Correo  string `json:"correo"`
+}
+
+// ClientExists consulta (SOLO LECTURA, sin efectos secundarios) si ya existe un cliente
+// con esa cédula. A diferencia de UserExists, NO crea usuario ni envía código: sirve para
+// reconocer al cliente al inicio y saltarse el registro (nombre/correo).
+func (c *Client) ClientExists(identificacion string) (*ClientInfo, error) {
+	res, err := c.get("/clientExists/?identificacion=" + url.QueryEscape(identificacion))
+	if err != nil {
+		return nil, err
+	}
+	var info ClientInfo
+	if err := json.Unmarshal(res, &info); err != nil {
+		return nil, fmt.Errorf("respuesta de cliente no válida del backend: %w", err)
+	}
+	return &info, nil
 }
 
 // Account son las credenciales que el backend genera y devuelve para un cliente.
@@ -252,8 +275,8 @@ type DirectionInput struct {
 
 // Direction es la dirección creada; su ID se usa como "iddireccion" del pedido.
 type Direction struct {
-	ID       int    `json:"id"`
-	SectorID int    `json:"sector_id"`
+	ID        int    `json:"id"`
+	SectorID  int    `json:"sector_id"`
 	Direccion string `json:"direccion"`
 }
 

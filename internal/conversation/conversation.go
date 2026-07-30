@@ -64,6 +64,15 @@ type LastOrder struct {
 	Fecha    string `json:"fecha"`    // fecha del pedido, formato legible (dd/mm/aaaa)
 }
 
+// PendingRating indica que un pedido del cliente acaba de ser ENTREGADO y el bot le pidió
+// calificar al conductor. Mientras exista, si el cliente manda una calificación (1-5), el
+// bot la registra contra este pedido/conductor. Transitorio: se limpia al calificar o al
+// arrancar una sesión nueva.
+type PendingRating struct {
+	PedidoID  int    `json:"pedido_id"`
+	Conductor string `json:"conductor"`
+}
+
 // OrderDraft es un pedido ya recopilado que quedó EN PAUSA esperando la verificación OTP
 // del cliente. Se guarda (transitorio) para poder RETOMAR el pedido automáticamente en
 // cuanto el cliente valida su código, sin depender de que la IA recuerde el historial.
@@ -122,6 +131,19 @@ type Store interface {
 	GetPendingVerification(phone string) (Account, bool)
 	// ClearPendingVerification elimina el estado de verificación pendiente.
 	ClearPendingVerification(phone string)
+	// SetPendingRating marca que el cliente tiene un pedido recién entregado por calificar.
+	SetPendingRating(phone string, rating PendingRating)
+	// GetPendingRating devuelve el pedido pendiente de calificación (ok=false si no hay).
+	GetPendingRating(phone string) (PendingRating, bool)
+	// ClearPendingRating elimina el estado de calificación pendiente.
+	ClearPendingRating(phone string)
+	// SetOrderPhone recuerda con qué teléfono de WhatsApp se hizo un pedido. Se usa para
+	// contactar al cliente por el número CORRECTO cuando el backend avisa que se entregó,
+	// aunque el Cliente.telefono del backend sea distinto (p. ej. clientes que se registraron
+	// antes por la app con otro número).
+	SetOrderPhone(pedidoID int, phone string)
+	// GetOrderPhone devuelve el teléfono de WhatsApp asociado a un pedido (ok=false si no hay).
+	GetOrderPhone(pedidoID int) (string, bool)
 }
 
 // turn es la forma serializable de un turno de conversación. Se usa para persistir

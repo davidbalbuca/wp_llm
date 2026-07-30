@@ -10,28 +10,32 @@ import (
 // memStore es la implementación en memoria de Store.
 // NOTA: se pierde al reiniciar y no sirve con múltiples instancias; para eso está redisStore.
 type memStore struct {
-	mu        sync.Mutex
-	data      map[string][]*genai.Content
-	locations map[string]Location
-	accounts  map[string]Account
-	profiles  map[string]Profile
-	lastOrders map[string]LastOrder
-	lastActivity map[string]time.Time
-	orderDrafts map[string]OrderDraft
-	pendingVerif map[string]Account // pending OTP verification accounts
+	mu            sync.Mutex
+	data          map[string][]*genai.Content
+	locations     map[string]Location
+	accounts      map[string]Account
+	profiles      map[string]Profile
+	lastOrders    map[string]LastOrder
+	lastActivity  map[string]time.Time
+	orderDrafts   map[string]OrderDraft
+	pendingVerif  map[string]Account       // pending OTP verification accounts
+	pendingRating map[string]PendingRating // pedidos entregados por calificar
+	orderPhone    map[int]string           // pedido_id -> teléfono de WhatsApp con el que se hizo
 }
 
 // NewMemStore crea un almacén en memoria vacío.
 func NewMemStore() Store {
 	return &memStore{
-		data:      make(map[string][]*genai.Content),
-		locations: make(map[string]Location),
-		accounts:  make(map[string]Account),
-		profiles:  make(map[string]Profile),
-		lastOrders: make(map[string]LastOrder),
-		lastActivity: make(map[string]time.Time),
-		orderDrafts: make(map[string]OrderDraft),
-		pendingVerif: make(map[string]Account),
+		data:          make(map[string][]*genai.Content),
+		locations:     make(map[string]Location),
+		accounts:      make(map[string]Account),
+		profiles:      make(map[string]Profile),
+		lastOrders:    make(map[string]LastOrder),
+		lastActivity:  make(map[string]time.Time),
+		orderDrafts:   make(map[string]OrderDraft),
+		pendingVerif:  make(map[string]Account),
+		pendingRating: make(map[string]PendingRating),
+		orderPhone:    make(map[int]string),
 	}
 }
 
@@ -169,4 +173,36 @@ func (s *memStore) ClearPendingVerification(phone string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.pendingVerif, phone)
+}
+
+func (s *memStore) SetPendingRating(phone string, rating PendingRating) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pendingRating[phone] = rating
+}
+
+func (s *memStore) GetPendingRating(phone string) (PendingRating, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rating, ok := s.pendingRating[phone]
+	return rating, ok
+}
+
+func (s *memStore) ClearPendingRating(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.pendingRating, phone)
+}
+
+func (s *memStore) SetOrderPhone(pedidoID int, phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.orderPhone[pedidoID] = phone
+}
+
+func (s *memStore) GetOrderPhone(pedidoID int) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	phone, ok := s.orderPhone[pedidoID]
+	return phone, ok
 }

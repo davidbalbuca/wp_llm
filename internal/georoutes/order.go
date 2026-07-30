@@ -55,3 +55,14 @@ func (c *Client) StartOrder(jwt string, iddireccion, idtipopago int, productos [
 	}
 	return &result, nil
 }
+
+// RatingOrder registra la calificación (1-5) y un comentario opcional del cliente sobre el
+// conductor de un pedido entregado (POST /georoutes/ratingOrder/), con el JWT del cliente.
+func (c *Client) RatingOrder(jwt string, idpedido, calificacion int, observacion string) error {
+	_, err := c.post("/ratingOrder/", map[string]any{
+		"idpedido":     idpedido,
+		"calificacion": calificacion,
+		"observacion":  observacion,
+	}, jwt)
+	return err
+}

@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
-	_ "modernc.org/sqlite" // driver SQLite en Go puro (sin CGO)
 	"google.golang.org/genai"
+	_ "modernc.org/sqlite" // driver SQLite en Go puro (sin CGO)
 )
 
 // convTTL es cuánto se conserva una conversación inactiva. Al leer se ignoran los turnos
@@ -113,6 +113,23 @@ CREATE TABLE IF NOT EXISTS pending_verif (
     user_id    INTEGER,
     jwt        TEXT,
     refresh    TEXT,
+    created_at INTEGER NOT NULL
+);
+
+-- Pedidos entregados pendientes de calificación del conductor. Transitorios: se guardan
+-- cuando el backend avisa que el conductor finalizó y se limpian cuando el cliente califica.
+CREATE TABLE IF NOT EXISTS pending_rating (
+    phone      TEXT    PRIMARY KEY,
+    pedido_id  INTEGER NOT NULL,
+    conductor  TEXT,
+    created_at INTEGER NOT NULL
+);
+
+-- Mapa pedido_id -> teléfono de WhatsApp con el que se hizo el pedido. Sirve para contactar
+-- al cliente por el número correcto cuando el backend avisa que se entregó (calificación).
+CREATE TABLE IF NOT EXISTS order_phone (
+    pedido_id  INTEGER PRIMARY KEY,
+    phone      TEXT    NOT NULL,
     created_at INTEGER NOT NULL
 );`
 	if _, err := db.Exec(schema); err != nil {
@@ -372,9 +389,61 @@ func (s *sqliteStore) GetPendingVerification(phone string) (Account, bool) {
 	return account, true
 }
 
+func (s *sqliteStore) SetPendingRating(phone string, rating PendingRating) {
+	if _, err := s.db.Exec(`
+        INSERT INTO pending_rating(phone, pedido_id, conductor, created_at) VALUES(?, ?, ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET
+            pedido_id=excluded.pedido_id, conductor=excluded.conductor, created_at=excluded.created_at`,
+		phone, rating.PedidoID, rating.Conductor, time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] SetPendingRating %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) GetPendingRating(phone string) (PendingRating, bool) {
+	var rating PendingRating
+	err := s.db.QueryRow(
+		`SELECT pedido_id, conductor FROM pending_rating WHERE phone = ?`, phone).
+		Scan(&rating.PedidoID, &rating.Conductor)
+	if err == sql.ErrNoRows {
+		return PendingRating{}, false
+	}
+	if err != nil {
+		log.Printf("[sqlite] GetPendingRating %s: %v", phone, err)
+		return PendingRating{}, false
+	}
+	return rating, true
+}
+
+func (s *sqliteStore) ClearPendingRating(phone string) {
+	if _, err := s.db.Exec(`DELETE FROM pending_rating WHERE phone = ?`, phone); err != nil {
+		log.Printf("[sqlite] ClearPendingRating %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) SetOrderPhone(pedidoID int, phone string) {
+	if _, err := s.db.Exec(`
+        INSERT INTO order_phone(pedido_id, phone, created_at) VALUES(?, ?, ?)
+        ON CONFLICT(pedido_id) DO UPDATE SET phone=excluded.phone, created_at=excluded.created_at`,
+		pedidoID, phone, time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] SetOrderPhone %d: %v", pedidoID, err)
+	}
+}
+
+func (s *sqliteStore) GetOrderPhone(pedidoID int) (string, bool) {
+	var phone string
+	err := s.db.QueryRow(`SELECT phone FROM order_phone WHERE pedido_id = ?`, pedidoID).Scan(&phone)
+	if err == sql.ErrNoRows {
+		return "", false
+	}
+	if err != nil {
+		log.Printf("[sqlite] GetOrderPhone %d: %v", pedidoID, err)
+		return "", false
+	}
+	return phone, true
+}
+
 func (s *sqliteStore) ClearPendingVerification(phone string) {
 	if _, err := s.db.Exec(`DELETE FROM pending_verif WHERE phone = ?`, phone); err != nil {
 		log.Printf("[sqlite] ClearPendingVerification %s: %v", phone, err)
 	}
 }
-

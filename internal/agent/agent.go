@@ -71,12 +71,12 @@ var behaviorPrompt string
 
 // Agent orquesta las llamadas a Gemini y la ejecución de herramientas.
 type Agent struct {
-	cfg     config.Config
-	client  *genai.Client
-	store   conversation.Store
-	catalog *catalog.Client
-	gr      *georoutes.Client
-	tools   []*genai.Tool
+	cfg       config.Config
+	client    *genai.Client
+	store     conversation.Store
+	catalog   *catalog.Client
+	gr        *georoutes.Client
+	tools     []*genai.Tool
 	escalated bool
 }
 
@@ -132,7 +132,41 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 		},
 	}
 
-	tools := []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{escalar, registrar}}}
+	// verificar_cliente: al inicio, apenas el cliente da su cédula, verifica si ya está
+	// registrado en el backend (SIN efectos: no crea usuario ni envía código). Si existe,
+	// el bot lo saluda por su nombre y NO le vuelve a pedir nombre/correo (igual que la app).
+	verificarCliente := &genai.FunctionDeclaration{
+		Name: "verificar_cliente",
+		Description: "Verifica si un cliente ya está registrado en el sistema por su cédula/identificación. " +
+			"Llámala EN CUANTO el cliente te dé su cédula, ANTES de pedirle el nombre o el correo. Si el " +
+			"cliente ya existe, te devolverá su nombre para saludarlo y NO tendrás que pedirle nombre ni correo.",
+		Parameters: &genai.Schema{
+			Type: genai.TypeObject,
+			Properties: map[string]*genai.Schema{
+				"identificacion": {Type: genai.TypeString, Description: "Cédula o identificación (10 dígitos) que dio el cliente."},
+			},
+			Required: []string{"identificacion"},
+		},
+	}
+
+	// calificar_conductor: cuando un pedido se entregó, el bot le pide al cliente calificar
+	// al repartidor. Si el cliente da una nota (1-5) y un comentario opcional, se registra.
+	calificar := &genai.FunctionDeclaration{
+		Name: "calificar_conductor",
+		Description: "Registra la calificación del cliente sobre el repartidor de su pedido recién entregado. " +
+			"Úsala SOLO cuando el sistema indique que hay una CALIFICACIÓN PENDIENTE y el cliente te dé una nota " +
+			"del 1 al 5 (y, opcionalmente, un comentario).",
+		Parameters: &genai.Schema{
+			Type: genai.TypeObject,
+			Properties: map[string]*genai.Schema{
+				"estrellas":  {Type: genai.TypeInteger, Description: "Calificación del 1 (muy malo) al 5 (excelente)."},
+				"comentario": {Type: genai.TypeString, Description: "Comentario opcional del cliente sobre el servicio del repartidor."},
+			},
+			Required: []string{"estrellas"},
+		},
+	}
+
+	tools := []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{escalar, registrar, verificarCliente, calificar}}}
 
 	return &Agent{cfg: cfg, client: client, store: store, catalog: catalogClient, gr: grClient, tools: tools}, nil
 }
@@ -167,6 +201,15 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 				"Si acepta repetir, solo necesitas confirmar y pedirle la ubicación.",
 				last.Fecha, last.Cantidad, last.Producto, last.Color, last.Cantidad, last.Producto, last.Color)
 		}
+	}
+
+	// Si el cliente tiene un pedido recién entregado sin calificar, se lo indicamos al modelo
+	// para que le pida (o registre) la calificación del repartidor.
+	if rating, ok := a.store.GetPendingRating(from); ok && rating.PedidoID > 0 {
+		systemPrompt += fmt.Sprintf("\n\nCALIFICACIÓN PENDIENTE: el cliente tiene un pedido recién ENTREGADO por el "+
+			"repartidor %s. Si el cliente te da una calificación del 1 al 5 (y opcionalmente un comentario), llama a "+
+			"calificar_conductor con esos datos. Si aún no la ha dado, pídele con amabilidad que califique del 1 al 5 "+
+			"a su repartidor. No insistas si prefiere no calificar.", rating.Conductor)
 	}
 
 	cfg := &genai.GenerateContentConfig{
@@ -229,6 +272,12 @@ func (a *Agent) runTool(from, name string, args map[string]any) string {
 		resumen, _ := args["resumen"].(string)
 		return escalation.NotifyOwner(a.cfg, from, motivo, resumen)
 
+	case "verificar_cliente":
+		return a.verificarCliente(from, args)
+
+	case "calificar_conductor":
+		return a.calificarConductor(from, args)
+
 	case "registrar_pedido":
 		result := a.registrarPedido(from, args)
 		if strings.Contains(result, "dueño") || strings.Contains(result, "Deriva") {
@@ -237,6 +286,67 @@ func (a *Agent) runTool(from, name string, args map[string]any) string {
 		return result
 	}
 	return "Función desconocida: " + name
+}
+
+// verificarCliente consulta al backend si el cliente ya existe (por cédula) SIN efectos
+// secundarios. Si existe, guarda su perfil local para no volver a pedirle nombre/correo y
+// le indica al modelo que lo salude por su nombre. Si no existe (o falla la consulta),
+// deja que el flujo de registro continúe normalmente.
+func (a *Agent) verificarCliente(from string, args map[string]any) string {
+	identificacion := strings.TrimSpace(str(args["identificacion"]))
+	if identificacion == "" {
+		return "Falta la cédula del cliente. Pídesela para verificar si ya está registrado."
+	}
+	info, err := a.gr.ClientExists(identificacion)
+	if err != nil {
+		// Fallo técnico: no bloqueamos el pedido, seguimos el registro normal.
+		return "No se pudo verificar al cliente en este momento; continúa pidiéndole su nombre y correo para registrarlo."
+	}
+	if !info.Existe {
+		return "El cliente NO está registrado todavía. Continúa el registro: pídele su nombre completo y su correo electrónico."
+	}
+	// Cliente existente: persistimos su perfil para reutilizar sus datos y no volver a pedirlos.
+	a.store.SetProfile(from, conversation.Profile{
+		Identificacion: identificacion,
+		Nombres:        info.Nombres,
+		Correo:         info.Correo,
+	})
+	return fmt.Sprintf("El cliente YA está registrado. Nombre: %s. Correo: %s. Salúdalo por su nombre y NO le "+
+		"pidas nombre ni correo. Para el pedido solo necesitas: color/marca, cantidad y su ubicación de WhatsApp.",
+		info.Nombres, info.Correo)
+}
+
+// calificarConductor registra la calificación del cliente sobre el conductor de un pedido
+// entregado. Re-autentica al cliente (la calificación puede llegar horas después) y envía la
+// reseña por el flujo real (ratingOrder). Limpia el estado pendiente al terminar.
+func (a *Agent) calificarConductor(from string, args map[string]any) string {
+	rating, ok := a.store.GetPendingRating(from)
+	if !ok || rating.PedidoID <= 0 {
+		return "No hay un pedido pendiente de calificación en este momento. Agradécele e invítalo a un nuevo pedido."
+	}
+	estrellas := toInt(args["estrellas"])
+	if estrellas < 1 || estrellas > 5 {
+		return "La calificación debe ser un número del 1 al 5. Pídele al cliente que indique cuántas estrellas (1 a 5)."
+	}
+	comentario := strings.TrimSpace(str(args["comentario"]))
+
+	account, ok := a.store.GetAccount(from)
+	if !ok || account.Username == "" {
+		a.store.ClearPendingRating(from)
+		return "No pude registrar la calificación (no encuentro la cuenta del cliente). Agradécele de todos modos por su tiempo."
+	}
+	// JWT fresco: la calificación puede llegar mucho después del pedido, re-autenticamos.
+	tokens, err := a.gr.Login(account.Username, account.Password)
+	if err != nil {
+		return "No se pudo registrar la calificación en este momento (motivo: " + err.Error() + "). Agradécele igualmente."
+	}
+	if err := a.gr.RatingOrder(tokens.Access, rating.PedidoID, estrellas, comentario); err != nil {
+		a.store.ClearPendingRating(from)
+		return "No se pudo registrar la calificación (motivo: " + err.Error() + "). Agradécele igualmente por su tiempo."
+	}
+	a.store.ClearPendingRating(from)
+	return fmt.Sprintf("¡Calificación de %d/5 registrada con éxito para el repartidor %s! Agradécele calurosamente "+
+		"al cliente por su tiempo y su preferencia, y despídete de forma cordial.", estrellas, rating.Conductor)
 }
 
 // registrarPedido ejecuta la secuencia real de georoutes: mapea el color a IDs de
@@ -391,6 +501,12 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 		Correo:         correo,
 	})
 
+	// Recordar con qué teléfono de WhatsApp se hizo este pedido, para contactar al cliente
+	// por el número correcto cuando el backend avise que se entregó (calificación).
+	if resultado.IDPedido > 0 {
+		a.store.SetOrderPhone(resultado.IDPedido, from)
+	}
+
 	// Guardar el resumen del pedido para poder ofrecerle repetir lo mismo la próxima vez.
 	a.store.SetLastOrder(from, conversation.LastOrder{
 		Producto: producto.Nombre,
@@ -398,6 +514,12 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 		Cantidad: cantidad,
 		Fecha:    time.Now().Format("02/01/2006"),
 	})
+
+	// Recordar con qué teléfono de WhatsApp se hizo este pedido, para poder pedirle la
+	// calificación por el número correcto cuando el backend avise que se entregó.
+	if resultado.IDPedido > 0 {
+		a.store.SetOrderPhone(resultado.IDPedido, from)
+	}
 
 	// Pedido exitoso: limpiamos historial para que el proximo arranque fresco.
 	a.store.ClearHistory(from)
