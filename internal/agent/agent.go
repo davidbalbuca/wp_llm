@@ -127,7 +127,7 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 				"color":              {Type: genai.TypeString, Description: "Color/marca del cilindro que desea el cliente. Debe coincidir con uno de los colores disponibles en la INFORMACIÓN DEL SERVICIO."},
 				"cantidad":           {Type: genai.TypeInteger, Description: "Cantidad de cilindros solicitados."},
 				"telefono":           {Type: genai.TypeString, Description: "Teléfono del cliente. Si no lo indica, se usa su número de WhatsApp."},
-				"guardar_direccion_como": {Type: genai.TypeString, Description: "Nombre con el que el cliente quiere guardar ESTA ubicación (ej: Casa, Trabajo, Depa). Solo si el cliente aceptó ponerle nombre; si no quiere, déjalo vacío y se guarda como 'WhatsApp'. Se ignora si el pedido usa una dirección guardada."},
+				"guardar_direccion_como": {Type: genai.TypeString, Description: "Nombre con el que se guardará la dirección (ej: Casa, Trabajo, Depa, Local). OBLIGATORIO cuando el cliente comparte una ubicación NUEVA: no registres un pedido a una ubicación nueva sin este nombre. Se ignora si el pedido usa una dirección guardada (id_direccion_guardada)."},
 				"id_direccion_guardada":  {Type: genai.TypeInteger, Description: "ID de una dirección YA GUARDADA del cliente (de ver_direcciones_guardadas) a la que enviar el pedido. Si lo usas, NO hace falta la ubicación de WhatsApp. Déjalo vacío/0 si el cliente comparte una ubicación nueva."},
 			},
 			Required: []string{"color", "cantidad"},
@@ -527,11 +527,15 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 		if cercana, errNear := a.gr.NearbyDirection(tokens.Access, loc.Latitude, loc.Longitude); errNear == nil && cercana.Existe && cercana.IDDireccion != nil {
 			direccionID = *cercana.IDDireccion
 		} else {
-			// Alias: por defecto "WhatsApp"; si el cliente quiso ponerle nombre, "WhatsApp - <nombre>".
-			alias := "WhatsApp"
-			if nombre := strings.TrimSpace(str(args["guardar_direccion_como"])); nombre != "" {
-				alias = "WhatsApp - " + nombre
+			// Ubicación nueva: nombrar la dirección es OBLIGATORIO (no debe quedar genérica en la BD).
+			// Si el modelo aún no recopiló el nombre, no registramos: pedimos que lo pregunte primero.
+			nombre := strings.TrimSpace(str(args["guardar_direccion_como"]))
+			if nombre == "" {
+				return "Es una ubicación NUEVA del cliente y hay que guardarla con un nombre (no puede quedar " +
+					"genérica). Pregúntale cómo quiere llamar este lugar (por ejemplo: Casa, Trabajo, Depa, Local) " +
+					"y recién entonces registra el pedido con ese nombre. NO registres el pedido sin el nombre."
 			}
+			alias := "WhatsApp - " + nombre
 			direccionCreada, err := a.gr.CreateDirection(tokens.Access, georoutes.DirectionInput{
 				Direccion:  direccion,
 				Alias:      alias,
