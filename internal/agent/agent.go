@@ -127,6 +127,8 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 				"color":              {Type: genai.TypeString, Description: "Color/marca del cilindro que desea el cliente. Debe coincidir con uno de los colores disponibles en la INFORMACIÓN DEL SERVICIO."},
 				"cantidad":           {Type: genai.TypeInteger, Description: "Cantidad de cilindros solicitados."},
 				"telefono":           {Type: genai.TypeString, Description: "Teléfono del cliente. Si no lo indica, se usa su número de WhatsApp."},
+				"guardar_direccion_como": {Type: genai.TypeString, Description: "Nombre con el que el cliente quiere guardar ESTA ubicación (ej: Casa, Trabajo, Depa). Solo si el cliente aceptó ponerle nombre; si no quiere, déjalo vacío y se guarda como 'WhatsApp'. Se ignora si el pedido usa una dirección guardada."},
+				"id_direccion_guardada":  {Type: genai.TypeInteger, Description: "ID de una dirección YA GUARDADA del cliente (de ver_direcciones_guardadas) a la que enviar el pedido. Si lo usas, NO hace falta la ubicación de WhatsApp. Déjalo vacío/0 si el cliente comparte una ubicación nueva."},
 			},
 			Required: []string{"color", "cantidad"},
 		},
@@ -166,7 +168,17 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 		},
 	}
 
-	tools := []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{escalar, registrar, verificarCliente, calificar}}}
+	// ver_direcciones_guardadas: para un cliente YA registrado, trae sus direcciones guardadas
+	// (con su nombre) para ofrecérselas y que elija a cuál enviar sin re-compartir ubicación.
+	verDirecciones := &genai.FunctionDeclaration{
+		Name: "ver_direcciones_guardadas",
+		Description: "Devuelve las direcciones que el cliente YA tiene guardadas (con su nombre/alias). Úsala cuando " +
+			"un cliente ya registrado va a pedir, ANTES de pedirle la ubicación: ofrécele elegir una de sus " +
+			"direcciones guardadas (para no compartir ubicación de nuevo) o mandar una ubicación nueva.",
+		Parameters: &genai.Schema{Type: genai.TypeObject, Properties: map[string]*genai.Schema{}},
+	}
+
+	tools := []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{escalar, registrar, verificarCliente, calificar, verDirecciones}}}
 
 	return &Agent{cfg: cfg, client: client, store: store, catalog: catalogClient, gr: grClient, tools: tools}, nil
 }
@@ -275,6 +287,9 @@ func (a *Agent) runTool(from, name string, args map[string]any) string {
 	case "verificar_cliente":
 		return a.verificarCliente(from, args)
 
+	case "ver_direcciones_guardadas":
+		return a.verDireccionesGuardadas(from)
+
 	case "calificar_conductor":
 		return a.calificarConductor(from, args)
 
@@ -316,6 +331,39 @@ func (a *Agent) verificarCliente(from string, args map[string]any) string {
 		info.Nombres, info.Correo)
 }
 
+// verDireccionesGuardadas trae las direcciones guardadas del cliente para ofrecérselas. Si no
+// tiene cuenta o direcciones, indica que pida la ubicación de WhatsApp.
+func (a *Agent) verDireccionesGuardadas(from string) string {
+	account, ok := a.store.GetAccount(from)
+	if !ok || account.Username == "" {
+		return "El cliente aún no tiene cuenta ni direcciones guardadas. Pídele que comparta su ubicación de WhatsApp para este pedido."
+	}
+	tokens, err := a.gr.Login(account.Username, account.Password)
+	if err != nil {
+		return "No pude consultar las direcciones guardadas ahora. Pídele que comparta su ubicación de WhatsApp."
+	}
+	dirs, err := a.gr.GetDirections(tokens.Access)
+	if err != nil || len(dirs) == 0 {
+		return "El cliente no tiene direcciones guardadas todavía. Pídele que comparta su ubicación de WhatsApp."
+	}
+	var b strings.Builder
+	b.WriteString("Direcciones guardadas del cliente. Ofrécele elegir una por su número (o mandar una ubicación nueva):\n")
+	for _, d := range dirs {
+		nombre := strings.TrimSpace(d.Alias)
+		if nombre == "" {
+			nombre = strings.TrimSpace(d.Direccion)
+		}
+		if ref := strings.TrimSpace(d.Referencia); ref != "" {
+			fmt.Fprintf(&b, "- id %d: %s (%s)\n", d.ID, nombre, ref)
+		} else {
+			fmt.Fprintf(&b, "- id %d: %s\n", d.ID, nombre)
+		}
+	}
+	b.WriteString("Si elige una, registra el pedido con id_direccion_guardada = ese id (NO necesitas la ubicación). " +
+		"Si prefiere otra dirección, pídele que comparta su ubicación de WhatsApp.")
+	return b.String()
+}
+
 // calificarConductor registra la calificación del cliente sobre el conductor de un pedido
 // entregado. Re-autentica al cliente (la calificación puede llegar horas después) y envía la
 // reseña por el flujo real (ratingOrder). Limpia el estado pendiente al terminar.
@@ -353,15 +401,19 @@ func (a *Agent) calificarConductor(from string, args map[string]any) string {
 // producto, asegura la cuenta del cliente, hace login, registra la dirección desde la
 // ubicación de WhatsApp y crea el pedido. Devuelve un texto para que el modelo responda.
 func (a *Agent) registrarPedido(from string, args map[string]any) string {
-	loc, ok := a.store.GetLocation(from)
-	if !ok {
-		return "Aún no tengo la ubicación del cliente y es obligatoria para asignar un repartidor. " +
-			"Pídele que comparta su ubicación de WhatsApp (📎 → Ubicación) y vuelve a intentarlo."
-	}
-
 	cantidad := toInt(args["cantidad"])
 	if cantidad <= 0 {
 		return "Falta una cantidad válida de cilindros. Pregúntale al cliente cuántos desea."
+	}
+
+	// La ubicación del pedido puede venir de una dirección YA GUARDADA que el cliente eligió,
+	// o de la ubicación compartida por WhatsApp. Solo exigimos ubicación si NO eligió una guardada.
+	idDireccionGuardada := toInt(args["id_direccion_guardada"])
+	usarGuardada := idDireccionGuardada > 0
+	loc, hasLoc := a.store.GetLocation(from)
+	if !usarGuardada && !hasLoc {
+		return "Aún no tengo la ubicación del cliente y es obligatoria para asignar un repartidor. " +
+			"Pídele que comparta su ubicación de WhatsApp, o que elija una de sus direcciones guardadas."
 	}
 
 	identificacion := strings.TrimSpace(str(args["identificacion"]))
@@ -389,7 +441,7 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 	}
 	// La dirección de texto es opcional: la entrega se guía por el GPS de WhatsApp. Si el
 	// cliente no la dio, la rellenamos con la ubicación compartida para tener un rótulo legible.
-	if direccion == "" {
+	if direccion == "" && hasLoc {
 		direccion = fmt.Sprintf("Ubicación compartida por WhatsApp (%.6f, %.6f)", loc.Latitude, loc.Longitude)
 	}
 	if identificacion == "" || nombres == "" || correo == "" {
@@ -466,24 +518,36 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 	// cercana creamos una. Si la consulta de cercanía falla técnicamente, caemos a crear
 	// (no bloqueamos el pedido por eso).
 	var direccionID int
-	if cercana, errNear := a.gr.NearbyDirection(tokens.Access, loc.Latitude, loc.Longitude); errNear == nil && cercana.Existe && cercana.IDDireccion != nil {
-		direccionID = *cercana.IDDireccion
-	} else {
-		direccionCreada, err := a.gr.CreateDirection(tokens.Access, georoutes.DirectionInput{
-			Direccion:  direccion,
-			Alias:      "WhatsApp",
-			Referencia: referencia,
-			Latitude:   loc.Latitude,
-			Longitude:  loc.Longitude,
-		})
-		if err != nil {
-			if esFalloDeCobertura(err.Error()) {
-				return mensajeSinCobertura
+	switch {
+	case usarGuardada:
+		// El cliente eligió una de sus direcciones guardadas: la usamos tal cual.
+		direccionID = idDireccionGuardada
+	default:
+		// Ubicación nueva: reutilizamos una dirección cercana si existe; si no, creamos una.
+		if cercana, errNear := a.gr.NearbyDirection(tokens.Access, loc.Latitude, loc.Longitude); errNear == nil && cercana.Existe && cercana.IDDireccion != nil {
+			direccionID = *cercana.IDDireccion
+		} else {
+			// Alias: por defecto "WhatsApp"; si el cliente quiso ponerle nombre, "WhatsApp - <nombre>".
+			alias := "WhatsApp"
+			if nombre := strings.TrimSpace(str(args["guardar_direccion_como"])); nombre != "" {
+				alias = "WhatsApp - " + nombre
 			}
-			return "No se pudo registrar la dirección del pedido (motivo: " + err.Error() + "). " +
-				"Informa al cliente del inconveniente y deriva al dueño para atención manual."
+			direccionCreada, err := a.gr.CreateDirection(tokens.Access, georoutes.DirectionInput{
+				Direccion:  direccion,
+				Alias:      alias,
+				Referencia: referencia,
+				Latitude:   loc.Latitude,
+				Longitude:  loc.Longitude,
+			})
+			if err != nil {
+				if esFalloDeCobertura(err.Error()) {
+					return mensajeSinCobertura
+				}
+				return "No se pudo registrar la dirección del pedido (motivo: " + err.Error() + "). " +
+					"Informa al cliente del inconveniente y deriva al dueño para atención manual."
+			}
+			direccionID = direccionCreada.ID
 		}
-		direccionID = direccionCreada.ID
 	}
 
 	// Pedido en el flujo real.

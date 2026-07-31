@@ -68,6 +68,38 @@ func (c *Client) RatingOrder(jwt string, idpedido, calificacion int, observacion
 	return err
 }
 
+// SavedDirection es una dirección que el cliente ya tiene guardada en el backend.
+type SavedDirection struct {
+	ID        int     `json:"id"`
+	Alias     string  `json:"alias"`
+	Direccion string  `json:"direccion"`
+	Referencia string `json:"referencia"`
+	Principal bool    `json:"principal"`
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+}
+
+// GetDirections devuelve las direcciones guardadas del cliente (GET /getDirectionsClient/,
+// con el JWT del cliente). Sirve para ofrecérselas y que elija una sin re-compartir ubicación.
+func (c *Client) GetDirections(jwt string) ([]SavedDirection, error) {
+	env, status, err := c.doGet("/getDirectionsClient/", jwt)
+	if err != nil {
+		return nil, err
+	}
+	if status < 200 || status >= 300 {
+		mensaje := strings.TrimSpace(env.Mensaje)
+		if mensaje == "" {
+			mensaje = fmt.Sprintf("error del backend (HTTP %d)", status)
+		}
+		return nil, fmt.Errorf("%s", mensaje)
+	}
+	var dirs []SavedDirection
+	if err := json.Unmarshal(env.Resultado, &dirs); err != nil {
+		return nil, fmt.Errorf("respuesta de direcciones no válida del backend: %w", err)
+	}
+	return dirs, nil
+}
+
 // NearbyDir indica si el cliente ya tiene una dirección guardada cercana a una ubicación.
 type NearbyDir struct {
 	Existe      bool `json:"existe"`
