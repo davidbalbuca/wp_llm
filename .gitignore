@@ -1,10 +1,10 @@
 # Secretos
 .env
 
-# Binarios compilados
+# Binarios compilados (solo en la raíz; NO ignorar el paquete cmd/bot)
 /dist/
-bot
-bot.exe
+/bot
+/bot.exe
 
 # Logs
 *.log
