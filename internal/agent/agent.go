@@ -23,6 +23,7 @@ import (
 	"wp-llm-gas/internal/conversation"
 	"wp-llm-gas/internal/escalation"
 	"wp-llm-gas/internal/georoutes"
+	"wp-llm-gas/internal/whatsapp"
 )
 
 const maxToolRounds = 5
@@ -78,10 +79,18 @@ type Agent struct {
 	gr        *georoutes.Client
 	tools     []*genai.Tool
 	escalated bool
+	// menuSent indica que en este turno la IA ya envió un MENÚ interactivo por WhatsApp
+	// (vía la tool mostrar_menu); el llamador NO debe enviar además el texto de respuesta.
+	menuSent bool
 }
 
 func (a *Agent) DidEscalate() bool { return a.escalated }
 func (a *Agent) ClearEscalated()   { a.escalated = false }
+
+// MenuSent indica si en el último mensaje se envió un menú interactivo (para que el
+// llamador no mande un texto adicional). ClearMenuSent lo resetea.
+func (a *Agent) MenuSent() bool  { return a.menuSent }
+func (a *Agent) ClearMenuSent()  { a.menuSent = false }
 
 // New crea un Agent con el cliente de Gemini y las herramientas declaradas.
 func New(ctx context.Context, cfg config.Config, store conversation.Store, catalogClient *catalog.Client, grClient *georoutes.Client) (*Agent, error) {
@@ -178,13 +187,33 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 		Parameters: &genai.Schema{Type: genai.TypeObject, Properties: map[string]*genai.Schema{}},
 	}
 
-	tools := []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{escalar, registrar, verificarCliente, calificar, verDirecciones}}}
+	// mostrar_menu: presenta opciones como MENÚ TAPPABLE de WhatsApp (botones si 2-3, lista si
+	// 4-10) para que el cliente elija sin escribir. Para colores/marcas, cantidad, repetir/cambiar,
+	// o direcciones guardadas. El cliente toca y su elección vuelve como texto.
+	mostrarMenu := &genai.FunctionDeclaration{
+		Name: "mostrar_menu",
+		Description: "Muestra al cliente un MENÚ TAPPABLE en WhatsApp (botones si son 2-3 opciones, o una " +
+			"lista si son 4-10) para que elija tocando, sin escribir. Úsala SIEMPRE que ofrezcas opciones " +
+			"fijas: colores/marcas de cilindro, cantidad, repetir/cambiar el pedido, o direcciones guardadas. " +
+			"NO la uses para respuestas de texto libre. Máximo 10 opciones.",
+		Parameters: &genai.Schema{
+			Type: genai.TypeObject,
+			Properties: map[string]*genai.Schema{
+				"cuerpo":   {Type: genai.TypeString, Description: "Texto/pregunta que acompaña al menú (ej: '¿Qué cilindro necesitas?')."},
+				"opciones": {Type: genai.TypeArray, Items: &genai.Schema{Type: genai.TypeString}, Description: "Opciones a mostrar, de 2 a 10. Cada una es el texto de un botón/fila (ej: 'Blanco', 'Amarillo (Duragas)')."},
+			},
+			Required: []string{"cuerpo", "opciones"},
+		},
+	}
+
+	tools := []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{escalar, registrar, verificarCliente, calificar, verDirecciones, mostrarMenu}}}
 
 	return &Agent{cfg: cfg, client: client, store: store, catalog: catalogClient, gr: grClient, tools: tools}, nil
 }
 
 // HandleMessage procesa un mensaje del cliente y devuelve la respuesta para WhatsApp.
 func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, error) {
+	a.menuSent = false // se pone en true si la IA envía un menú interactivo en este turno
 	contents := append(a.store.History(from), &genai.Content{
 		Role:  "user",
 		Parts: []*genai.Part{{Text: text}},
@@ -290,6 +319,9 @@ func (a *Agent) runTool(from, name string, args map[string]any) string {
 	case "ver_direcciones_guardadas":
 		return a.verDireccionesGuardadas(from)
 
+	case "mostrar_menu":
+		return a.mostrarMenu(from, args)
+
 	case "calificar_conductor":
 		return a.calificarConductor(from, args)
 
@@ -329,6 +361,31 @@ func (a *Agent) verificarCliente(from string, args map[string]any) string {
 	return fmt.Sprintf("El cliente YA está registrado. Nombre: %s. Correo: %s. Salúdalo por su nombre y NO le "+
 		"pidas nombre ni correo. Para el pedido solo necesitas: color/marca, cantidad y su ubicación de WhatsApp.",
 		info.Nombres, info.Correo)
+}
+
+// mostrarMenu envía al cliente un menú interactivo (botones o lista) con las opciones dadas.
+// Marca menuSent para que el llamador NO envíe además un texto. Si falla, pide usar texto.
+func (a *Agent) mostrarMenu(from string, args map[string]any) string {
+	cuerpo := strings.TrimSpace(str(args["cuerpo"]))
+	var opciones []string
+	if raw, ok := args["opciones"].([]any); ok {
+		for _, v := range raw {
+			if s := strings.TrimSpace(str(v)); s != "" {
+				opciones = append(opciones, s)
+			}
+		}
+	}
+	if cuerpo == "" || len(opciones) < 2 {
+		return "Para un menú necesito un texto y al menos 2 opciones. Si hay menos, responde por texto normal."
+	}
+	if len(opciones) > 10 {
+		return "El menú admite máximo 10 opciones. Muéstrale las principales o pídeselo por texto."
+	}
+	if err := whatsapp.SendMenu(a.cfg, from, cuerpo, opciones); err != nil {
+		return "No pude enviar el menú (motivo: " + err.Error() + "). Preséntale las opciones por texto normal."
+	}
+	a.menuSent = true
+	return "MENÚ ENVIADO al cliente con esas opciones. NO repitas las opciones por texto; espera a que elija."
 }
 
 // verDireccionesGuardadas trae las direcciones guardadas del cliente para ofrecérselas. Si no
