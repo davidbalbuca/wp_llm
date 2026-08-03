@@ -10,6 +10,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	_ "embed"
 	"fmt"
 	"math"
@@ -300,9 +301,95 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 	if reply == "" {
 		reply = "Disculpa, no pude procesar tu mensaje. ¿Podrías reformularlo?"
 	}
+
+	// Red de seguridad: a veces el modelo (flash-lite) "narra" la herramienta mostrar_menu
+	// escribiendo su JSON {cuerpo, opciones} como TEXTO en vez de invocarla de verdad, y el
+	// cliente vería ese JSON crudo. Si detectamos ese JSON en la respuesta y aún no se envió
+	// un menú, lo enviamos como menú interactivo real y limpiamos el texto (nunca dejamos salir
+	// el JSON al cliente).
+	if !a.menuSent {
+		if cuerpo, opciones, preamble, ok := extractLeakedMenu(reply); ok {
+			mensaje := strings.TrimSpace(cuerpo)
+			if preamble != "" {
+				if mensaje != "" {
+					mensaje = preamble + "\n\n" + mensaje
+				} else {
+					mensaje = preamble
+				}
+			}
+			if mensaje == "" {
+				mensaje = "Elige una opción 👇"
+			}
+			if len(opciones) >= 2 && len(opciones) <= 10 {
+				if err := whatsapp.SendMenu(a.cfg, from, mensaje, opciones); err == nil {
+					a.menuSent = true
+				}
+			}
+			// Enviara o no el menú, no dejamos el JSON crudo en el texto que se guarda/manda.
+			reply = mensaje
+		}
+	}
+
 	a.store.AppendUser(from, text)
 	a.store.AppendModel(from, reply)
 	return reply, nil
+}
+
+// extractLeakedMenu detecta cuando el modelo escribió una llamada a mostrar_menu como TEXTO
+// (un objeto JSON con "cuerpo" y "opciones") en vez de invocar la herramienta. Devuelve el
+// cuerpo, las opciones y el texto que venía ANTES del JSON (preámbulo), y ok=true si lo halló.
+func extractLeakedMenu(s string) (cuerpo string, opciones []string, preamble string, ok bool) {
+	start := strings.IndexByte(s, '{')
+	if start < 0 {
+		return "", nil, "", false
+	}
+	// Recorremos emparejando llaves (respetando strings/escapes) para aislar el objeto JSON.
+	depth, end := 0, -1
+	inStr, esc := false, false
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				end = i
+			}
+		}
+		if end >= 0 {
+			break
+		}
+	}
+	if end < 0 {
+		return "", nil, "", false
+	}
+	var m struct {
+		Cuerpo   string   `json:"cuerpo"`
+		Opciones []string `json:"opciones"`
+	}
+	if err := json.Unmarshal([]byte(s[start:end+1]), &m); err != nil || len(m.Opciones) < 2 {
+		return "", nil, "", false
+	}
+	// Limpiamos el preámbulo de cercos de código markdown (``` / ```json) que suele dejar el modelo.
+	pre := strings.TrimSpace(s[:start])
+	pre = strings.TrimRight(pre, "`\n ")
+	pre = strings.TrimSpace(strings.TrimSuffix(pre, "json"))
+	pre = strings.TrimRight(pre, "`\n ")
+	return m.Cuerpo, m.Opciones, strings.TrimSpace(pre), true
 }
 
 func (a *Agent) runTool(from, name string, args map[string]any) string {
