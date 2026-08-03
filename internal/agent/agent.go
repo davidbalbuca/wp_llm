@@ -404,7 +404,10 @@ func (a *Agent) verDireccionesGuardadas(from string) string {
 		return "El cliente no tiene direcciones guardadas todavía. Pídele que comparta su ubicación de WhatsApp."
 	}
 	var b strings.Builder
-	b.WriteString("Direcciones guardadas del cliente. Ofrécele elegir una por su número (o mandar una ubicación nueva):\n")
+	b.WriteString("Direcciones guardadas del cliente (nombre → id). Ofréceselas SIEMPRE con la herramienta " +
+		"mostrar_menu (botones/lista tappables), NUNCA como texto numerado 1️⃣ 2️⃣. Las opciones del menú son " +
+		"los NOMBRES de abajo MÁS una última opción \"Otra dirección\". NO pongas el id ni coordenadas en el " +
+		"texto de las opciones:\n")
 	for _, d := range dirs {
 		nombre := strings.TrimSpace(d.Alias)
 		if nombre == "" {
@@ -416,8 +419,9 @@ func (a *Agent) verDireccionesGuardadas(from string) string {
 			fmt.Fprintf(&b, "- id %d: %s\n", d.ID, nombre)
 		}
 	}
-	b.WriteString("Si elige una, registra el pedido con id_direccion_guardada = ese id (NO necesitas la ubicación). " +
-		"Si prefiere otra dirección, pídele que comparta su ubicación de WhatsApp.")
+	b.WriteString("Cuando el cliente toque una, mapea el NOMBRE elegido a su id y registra el pedido con " +
+		"id_direccion_guardada = ese id (NO necesitas la ubicación). Si toca \"Otra dirección\", pídele que " +
+		"comparta su ubicación de WhatsApp.")
 	return b.String()
 }
 
