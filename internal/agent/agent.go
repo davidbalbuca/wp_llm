@@ -39,6 +39,13 @@ const mensajeSinCobertura = "IMPORTANTE: En este momento no hay repartidores dis
 	"intentar más tarde. NO derives al dueño y NO le pidas de nuevo los datos ni la ubicación: cierra la " +
 	"conversación de forma cordial."
 
+// mensajePedirNombreDireccion se devuelve cuando el cliente va a usar una ubicación NUEVA pero
+// aún no le puso nombre. Nombrar es obligatorio para que la dirección no quede genérica en la BD.
+const mensajePedirNombreDireccion = "Es una ubicación NUEVA del cliente y hay que guardarla con un " +
+	"nombre (no puede quedar genérica). Pregúntale cómo quiere llamar este lugar (por ejemplo: Casa, " +
+	"Trabajo, Depa, Local) y recién entonces registra el pedido con ese nombre en guardar_direccion_como. " +
+	"NO registres el pedido sin el nombre."
+
 // coberturaMarkers son fragmentos (en minúsculas) de los mensajes que el backend devuelve
 // cuando no hay conductor asignable por zona/cercanía. Se comparan contra el error para
 // distinguir "sin cobertura" (negocio) de un fallo técnico real.
@@ -490,26 +497,52 @@ func (a *Agent) verDireccionesGuardadas(from string) string {
 	if err != nil || len(dirs) == 0 {
 		return "El cliente no tiene direcciones guardadas todavía. Pídele que comparta su ubicación de WhatsApp."
 	}
-	var b strings.Builder
-	b.WriteString("Direcciones guardadas del cliente (nombre → id). Ofréceselas SIEMPRE con la herramienta " +
-		"mostrar_menu (botones/lista tappables), NUNCA como texto numerado 1️⃣ 2️⃣. Las opciones del menú son " +
-		"los NOMBRES de abajo MÁS una última opción \"Otra dirección\". NO pongas el id ni coordenadas en el " +
-		"texto de las opciones:\n")
-	for _, d := range dirs {
-		nombre := strings.TrimSpace(d.Alias)
-		if nombre == "" {
-			nombre = strings.TrimSpace(d.Direccion)
-		}
-		if ref := strings.TrimSpace(d.Referencia); ref != "" {
-			fmt.Fprintf(&b, "- id %d: %s (%s)\n", d.ID, nombre, ref)
-		} else {
-			fmt.Fprintf(&b, "- id %d: %s\n", d.ID, nombre)
-		}
+	// WhatsApp muestra como máximo 10 filas en una lista; dejamos una para "Otra dirección".
+	// Si el cliente tiene muchas, mostramos solo las más recientes (las últimas de la lista).
+	if len(dirs) > 8 {
+		dirs = dirs[len(dirs)-8:]
 	}
-	b.WriteString("Cuando el cliente toque una, mapea el NOMBRE elegido a su id y registra el pedido con " +
+	var b strings.Builder
+	b.WriteString("Direcciones guardadas del cliente (etiqueta → id). Ofréceselas SIEMPRE con la herramienta " +
+		"mostrar_menu (lista tappable), NUNCA como texto numerado 1️⃣ 2️⃣. Las opciones del menú son las " +
+		"ETIQUETAS de abajo TAL CUAL, MÁS una última opción \"Otra dirección\". NO agregues el id ni " +
+		"coordenadas al texto de las opciones:\n")
+	for i, d := range dirs {
+		etiqueta := friendlyDirName(d)
+		if etiqueta == "" {
+			// Dirección vieja sin nombre real: le damos una etiqueta secuencial legible.
+			etiqueta = fmt.Sprintf("Dirección %d", i+1)
+		}
+		fmt.Fprintf(&b, "- id %d: %s\n", d.ID, etiqueta)
+	}
+	b.WriteString("Cuando el cliente toque una etiqueta, mapéala a su id y registra el pedido con " +
 		"id_direccion_guardada = ese id (NO necesitas la ubicación). Si toca \"Otra dirección\", pídele que " +
 		"comparta su ubicación de WhatsApp.")
 	return b.String()
+}
+
+// friendlyDirName arma una etiqueta legible para una dirección guardada. Quita el prefijo
+// genérico "WhatsApp - " (para mostrar solo "Casa", "Trabajo", etc.) y, si la dirección no tiene
+// un nombre real (direcciones viejas guardadas simplemente como "WhatsApp"), cae a la referencia
+// o a un extracto de la dirección de texto. Devuelve "" si no hay nada legible.
+func friendlyDirName(d georoutes.SavedDirection) string {
+	alias := strings.TrimSpace(d.Alias)
+	for _, p := range []string{"WhatsApp -", "WhatsApp-", "Whatsapp -", "Whatsapp-"} {
+		if strings.HasPrefix(alias, p) {
+			alias = strings.TrimSpace(alias[len(p):])
+			break
+		}
+	}
+	if alias != "" && !strings.EqualFold(alias, "WhatsApp") {
+		return alias
+	}
+	if ref := strings.TrimSpace(d.Referencia); ref != "" {
+		return ref
+	}
+	if dir := strings.TrimSpace(d.Direccion); dir != "" && !strings.HasPrefix(dir, "Ubicación compartida por WhatsApp") {
+		return dir
+	}
+	return ""
 }
 
 // calificarConductor registra la calificación del cliente sobre el conductor de un pedido
@@ -574,6 +607,14 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 	if telefono == "" {
 		telefono = from
 	}
+	// Nombre con el que el cliente quiere guardar la ubicación NUEVA (ej: Casa, Trabajo). Se usa
+	// tanto para la primera dirección de un cliente nuevo (creada junto con la cuenta) como para
+	// las direcciones creadas después, para que NINGUNA quede con el alias genérico "WhatsApp".
+	nombreDireccion := strings.TrimSpace(str(args["guardar_direccion_como"]))
+	aliasDireccion := "WhatsApp"
+	if nombreDireccion != "" {
+		aliasDireccion = "WhatsApp - " + nombreDireccion
+	}
 	// Cliente recurrente: si la IA no repitió los datos personales, los tomamos del perfil
 	// guardado. Así un cliente que ya pidió no tiene que dar cédula/nombre/correo otra vez.
 	if perfil, ok := a.store.GetProfile(from); ok {
@@ -625,7 +666,13 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 	// Cuenta georoutes del cliente (recuperar de la caché local, o crear/recuperar del backend).
 	account, ok := a.store.GetAccount(from)
 	if !ok {
-		nueva, err := a.ensureAccount(identificacion, nombres, telefono, correo, direccion, referencia, loc)
+		// Cliente nuevo: su PRIMERA dirección se crea junto con la cuenta y será la que use el
+		// pedido (la reutilización de cercana la encontrará). Por eso también debe llevar nombre:
+		// si es una ubicación nueva sin nombre, lo pedimos ANTES de crear la cuenta.
+		if !usarGuardada && nombreDireccion == "" {
+			return mensajePedirNombreDireccion
+		}
+		nueva, err := a.ensureAccount(identificacion, nombres, telefono, correo, direccion, referencia, aliasDireccion, loc)
 		if err != nil {
 			return "No se pudo registrar la cuenta del cliente (motivo: " + err.Error() + "). " +
 				"Informa al cliente y deriva al dueño."
@@ -677,16 +724,12 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 		} else {
 			// Ubicación nueva: nombrar la dirección es OBLIGATORIO (no debe quedar genérica en la BD).
 			// Si el modelo aún no recopiló el nombre, no registramos: pedimos que lo pregunte primero.
-			nombre := strings.TrimSpace(str(args["guardar_direccion_como"]))
-			if nombre == "" {
-				return "Es una ubicación NUEVA del cliente y hay que guardarla con un nombre (no puede quedar " +
-					"genérica). Pregúntale cómo quiere llamar este lugar (por ejemplo: Casa, Trabajo, Depa, Local) " +
-					"y recién entonces registra el pedido con ese nombre. NO registres el pedido sin el nombre."
+			if nombreDireccion == "" {
+				return mensajePedirNombreDireccion
 			}
-			alias := "WhatsApp - " + nombre
 			direccionCreada, err := a.gr.CreateDirection(tokens.Access, georoutes.DirectionInput{
 				Direccion:  direccion,
-				Alias:      alias,
+				Alias:      aliasDireccion,
 				Referencia: referencia,
 				Latitude:   loc.Latitude,
 				Longitude:  loc.Longitude,
@@ -759,9 +802,12 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 
 // ensureAccount recupera del backend la cuenta del cliente por su identificación, o la
 // crea si no existe. Devuelve las credenciales generadas por el backend.
-func (a *Agent) ensureAccount(identificacion, nombres, telefono, correo, direccion, referencia string, loc conversation.Location) (conversation.Account, error) {
+func (a *Agent) ensureAccount(identificacion, nombres, telefono, correo, direccion, referencia, alias string, loc conversation.Location) (conversation.Account, error) {
 	if existente, err := a.gr.UserExists(identificacion); err == nil && existente.Username != "" {
 		return conversation.Account{Username: existente.Username, Password: existente.Password}, nil
+	}
+	if strings.TrimSpace(alias) == "" {
+		alias = "WhatsApp"
 	}
 
 	creada, err := a.gr.CreateUser(georoutes.NewClientInput{
@@ -770,7 +816,7 @@ func (a *Agent) ensureAccount(identificacion, nombres, telefono, correo, direcci
 		Telefono:       telefono,
 		Correo:         correo,
 		Direccion:      direccion,
-		Alias:          "WhatsApp",
+		Alias:          alias,
 		Referencia:     referencia,
 		Latitude:       loc.Latitude,
 		Longitude:      loc.Longitude,
