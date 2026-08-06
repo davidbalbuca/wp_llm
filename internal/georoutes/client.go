@@ -183,6 +183,26 @@ type NewClientInput struct {
 	Longitude      float64
 }
 
+// WppGetOrCreateClient recupera (o crea) el cliente del BOT de WhatsApp y devuelve sus
+// credenciales. El backend lo deja YA VERIFICADO (sin OTP ni correo) y usa un correo
+// placeholder. Endpoint EXCLUSIVO del bot: POST /wppGetOrCreateClient/. Reemplaza el par
+// UserExists+CreateUser del flujo viejo (que reseteaba verificación y mandaba correo).
+func (c *Client) WppGetOrCreateClient(identificacion, nombres, telefono string) (*Account, error) {
+	res, err := c.post("/wppGetOrCreateClient/", map[string]any{
+		"identificacion": identificacion,
+		"nombres":        nombres,
+		"telefono":       telefono,
+	}, "")
+	if err != nil {
+		return nil, err
+	}
+	var acc Account
+	if err := json.Unmarshal(res, &acc); err != nil {
+		return nil, fmt.Errorf("credenciales no válidas del backend: %w", err)
+	}
+	return &acc, nil
+}
+
 // CreateUser da de alta al cliente y devuelve las credenciales generadas por el backend.
 func (c *Client) CreateUser(in NewClientInput) (*Account, error) {
 	res, err := c.post("/createUser/", map[string]any{

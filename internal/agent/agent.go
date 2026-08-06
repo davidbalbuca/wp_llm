@@ -125,27 +125,23 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 		},
 	}
 
-	// registrar_pedido: las coordenadas NO son parámetros del modelo; se toman de la
-	// ubicación que el cliente compartió por WhatsApp (las inyecta runTool), para no inventarlas.
-	// El "color" debe ser uno de los colores/marcas listados en la INFORMACIÓN DEL SERVICIO.
+	// registrar_pedido: las coordenadas NO son parámetros del modelo; se toman de la ubicación
+	// que el cliente compartió por WhatsApp (las inyecta runTool), para no inventarlas. El bot
+	// SIEMPRE usa esa ubicación (no hay direcciones guardadas ni menús de dirección). Solo se
+	// necesita color + cantidad y, si es un cliente nuevo, su cédula + nombre.
 	registrar := &genai.FunctionDeclaration{
 		Name: "registrar_pedido",
-		Description: "Registra un pedido de gas en el sistema de la distribuidora. Úsala solo cuando ya " +
-			"recopilaste TODOS los datos del cliente (cédula, nombre, correo, color/marca y cantidad) Y el " +
-			"cliente compartió su ubicación de WhatsApp. No la uses para consultas; solo para concretar un pedido.",
+		Description: "Registra un pedido de gas en el sistema. Úsala solo cuando ya tienes el color/marca y la " +
+			"cantidad, el cliente compartió su ubicación de WhatsApp, y (si es un cliente NUEVO) su cédula y su " +
+			"nombre. No la uses para consultas; solo para concretar el pedido.",
 		Parameters: &genai.Schema{
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
-				"identificacion":     {Type: genai.TypeString, Description: "Cédula o identificación del cliente. Si el cliente ya está registrado (ver DATOS DEL CLIENTE), no hace falta volver a pedirla."},
-				"nombres_completos":  {Type: genai.TypeString, Description: "Nombres y apellidos del cliente. Si el cliente ya está registrado, no hace falta volver a pedirlos."},
-				"correo_electronico": {Type: genai.TypeString, Description: "Correo electrónico del cliente. Si el cliente ya está registrado, no hace falta volver a pedirlo."},
-				"direccion":          {Type: genai.TypeString, Description: "Dirección de entrega en texto (opcional). NO es necesaria: la entrega se guía por la ubicación GPS de WhatsApp. Si el cliente no la da, se usa la ubicación compartida."},
-				"referencia":         {Type: genai.TypeString, Description: "Referencia del domicilio para que el repartidor ubique mejor (opcional; ej: color de casa, local cercano)."},
-				"color":              {Type: genai.TypeString, Description: "Color/marca del cilindro que desea el cliente. Debe coincidir con uno de los colores disponibles en la INFORMACIÓN DEL SERVICIO."},
-				"cantidad":           {Type: genai.TypeInteger, Description: "Cantidad de cilindros solicitados."},
-				"telefono":           {Type: genai.TypeString, Description: "Teléfono del cliente. Si no lo indica, se usa su número de WhatsApp."},
-				"guardar_direccion_como": {Type: genai.TypeString, Description: "Nombre con el que se guardará la dirección (ej: Casa, Trabajo, Depa, Local). OBLIGATORIO cuando el cliente comparte una ubicación NUEVA: no registres un pedido a una ubicación nueva sin este nombre. Se ignora si el pedido usa una dirección guardada (id_direccion_guardada)."},
-				"id_direccion_guardada":  {Type: genai.TypeInteger, Description: "ID de una dirección YA GUARDADA del cliente (de ver_direcciones_guardadas) a la que enviar el pedido. Si lo usas, NO hace falta la ubicación de WhatsApp. Déjalo vacío/0 si el cliente comparte una ubicación nueva."},
+				"identificacion":    {Type: genai.TypeString, Description: "Cédula/identificación del cliente. Si ya está registrado (ver DATOS DEL CLIENTE), NO hace falta repetirla."},
+				"nombres_completos": {Type: genai.TypeString, Description: "Nombres y apellidos del cliente. Si ya está registrado, NO hace falta repetirlos."},
+				"color":             {Type: genai.TypeString, Description: "Color/marca del cilindro. Debe coincidir con uno de los colores de la INFORMACIÓN DEL SERVICIO."},
+				"cantidad":          {Type: genai.TypeInteger, Description: "Cantidad de cilindros solicitados."},
+				"telefono":          {Type: genai.TypeString, Description: "Teléfono del cliente. Si no lo indica, se usa su número de WhatsApp."},
 			},
 			Required: []string{"color", "cantidad"},
 		},
@@ -185,16 +181,6 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 		},
 	}
 
-	// ver_direcciones_guardadas: para un cliente YA registrado, trae sus direcciones guardadas
-	// (con su nombre) para ofrecérselas y que elija a cuál enviar sin re-compartir ubicación.
-	verDirecciones := &genai.FunctionDeclaration{
-		Name: "ver_direcciones_guardadas",
-		Description: "Devuelve las direcciones que el cliente YA tiene guardadas (con su nombre/alias). Úsala cuando " +
-			"un cliente ya registrado va a pedir, ANTES de pedirle la ubicación: ofrécele elegir una de sus " +
-			"direcciones guardadas (para no compartir ubicación de nuevo) o mandar una ubicación nueva.",
-		Parameters: &genai.Schema{Type: genai.TypeObject, Properties: map[string]*genai.Schema{}},
-	}
-
 	// mostrar_menu: presenta opciones como MENÚ TAPPABLE de WhatsApp (botones si 2-3, lista si
 	// 4-10) para que el cliente elija sin escribir. Para colores/marcas, cantidad, repetir/cambiar,
 	// o direcciones guardadas. El cliente toca y su elección vuelve como texto.
@@ -214,7 +200,7 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 		},
 	}
 
-	tools := []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{escalar, registrar, verificarCliente, calificar, verDirecciones, mostrarMenu}}}
+	tools := []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{escalar, registrar, verificarCliente, calificar, mostrarMenu}}}
 
 	return &Agent{cfg: cfg, client: client, store: store, catalog: catalogClient, gr: grClient, tools: tools}, nil
 }
@@ -410,8 +396,6 @@ func (a *Agent) runTool(from, name string, args map[string]any) string {
 	case "verificar_cliente":
 		return a.verificarCliente(from, args)
 
-	case "ver_direcciones_guardadas":
-		return a.verDireccionesGuardadas(from)
 
 	case "mostrar_menu":
 		return a.mostrarMenu(from, args)
@@ -587,36 +571,23 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 		return "Falta una cantidad válida de cilindros. Pregúntale al cliente cuántos desea."
 	}
 
-	// La ubicación del pedido puede venir de una dirección YA GUARDADA que el cliente eligió,
-	// o de la ubicación compartida por WhatsApp. Solo exigimos ubicación si NO eligió una guardada.
-	idDireccionGuardada := toInt(args["id_direccion_guardada"])
-	usarGuardada := idDireccionGuardada > 0
+	// El bot SIEMPRE trabaja con la ubicación compartida por WhatsApp (ya no hay direcciones
+	// guardadas ni menús de dirección). La ubicación es obligatoria.
 	loc, hasLoc := a.store.GetLocation(from)
-	if !usarGuardada && !hasLoc {
-		return "Aún no tengo la ubicación del cliente y es obligatoria para asignar un repartidor. " +
-			"Pídele que comparta su ubicación de WhatsApp, o que elija una de sus direcciones guardadas."
+	if !hasLoc {
+		return "Aún no tengo la ubicación del cliente y es obligatoria para el pedido. " +
+			"Pídele que comparta su ubicación de WhatsApp 📎."
 	}
 
 	identificacion := strings.TrimSpace(str(args["identificacion"]))
 	nombres := strings.TrimSpace(str(args["nombres_completos"]))
-	correo := strings.TrimSpace(str(args["correo_electronico"]))
-	direccion := strings.TrimSpace(str(args["direccion"]))
-	referencia := strings.TrimSpace(str(args["referencia"]))
 	colorNombre := strings.TrimSpace(str(args["color"]))
 	telefono := strings.TrimSpace(str(args["telefono"]))
 	if telefono == "" {
 		telefono = from
 	}
-	// Nombre con el que el cliente quiere guardar la ubicación NUEVA (ej: Casa, Trabajo). Se usa
-	// tanto para la primera dirección de un cliente nuevo (creada junto con la cuenta) como para
-	// las direcciones creadas después, para que NINGUNA quede con el alias genérico "WhatsApp".
-	nombreDireccion := strings.TrimSpace(str(args["guardar_direccion_como"]))
-	aliasDireccion := "WhatsApp"
-	if nombreDireccion != "" {
-		aliasDireccion = "WhatsApp - " + nombreDireccion
-	}
-	// Cliente recurrente: si la IA no repitió los datos personales, los tomamos del perfil
-	// guardado. Así un cliente que ya pidió no tiene que dar cédula/nombre/correo otra vez.
+
+	// Cliente recurrente: si la IA no repitió cédula/nombre, los tomamos del perfil guardado.
 	if perfil, ok := a.store.GetProfile(from); ok {
 		if identificacion == "" {
 			identificacion = perfil.Identificacion
@@ -624,27 +595,17 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 		if nombres == "" {
 			nombres = perfil.Nombres
 		}
-		if correo == "" {
-			correo = perfil.Correo
-		}
 	}
-	// La dirección de texto es opcional: la entrega se guía por el GPS de WhatsApp. Si el
-	// cliente no la dio, la rellenamos con la ubicación compartida para tener un rótulo legible.
-	if direccion == "" && hasLoc {
-		direccion = fmt.Sprintf("Ubicación compartida por WhatsApp (%.6f, %.6f)", loc.Latitude, loc.Longitude)
-	}
-	if identificacion == "" || nombres == "" || correo == "" {
-		return "Faltan datos del cliente (cédula, nombre o correo). Pídeselos antes de registrar el pedido."
+	if identificacion == "" || nombres == "" {
+		return "Faltan datos del cliente (cédula o nombre). Pídeselos antes de registrar el pedido."
 	}
 
-	// Persistimos el perfil en cuanto tenemos sus datos completos, ANTES de intentar el
-	// pedido. Así, si el pedido falla por cobertura o cualquier motivo, un cliente que ya
-	// dio cédula/nombre/correo no tiene que repetirlos en el próximo intento.
+	// Persistimos el perfil apenas tenemos cédula+nombre (sin correo: el bot no lo pide). Así,
+	// si el pedido falla, un cliente que ya dio sus datos no los repite en el próximo intento.
 	if _, ya := a.store.GetProfile(from); !ya {
 		a.store.SetProfile(from, conversation.Profile{
 			Identificacion: identificacion,
 			Nombres:        nombres,
-			Correo:         correo,
 		})
 	}
 
@@ -663,99 +624,49 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 		return "No hay una forma de pago configurada en el sistema. Deriva al dueño."
 	}
 
-	// Cuenta georoutes del cliente (recuperar de la caché local, o crear/recuperar del backend).
+	// Cuenta del bot (YA verificada, sin OTP): de la caché local, o del backend (get-or-create).
 	account, ok := a.store.GetAccount(from)
 	if !ok {
-		// Cliente nuevo: su PRIMERA dirección se crea junto con la cuenta y será la que use el
-		// pedido (la reutilización de cercana la encontrará). Por eso también debe llevar nombre:
-		// si es una ubicación nueva sin nombre, lo pedimos ANTES de crear la cuenta.
-		if !usarGuardada && nombreDireccion == "" {
-			return mensajePedirNombreDireccion
-		}
-		nueva, err := a.ensureAccount(identificacion, nombres, telefono, correo, direccion, referencia, aliasDireccion, loc)
+		nueva, err := a.gr.WppGetOrCreateClient(identificacion, nombres, telefono)
 		if err != nil {
 			return "No se pudo registrar la cuenta del cliente (motivo: " + err.Error() + "). " +
 				"Informa al cliente y deriva al dueño."
 		}
-		account = nueva
+		account = conversation.Account{Username: nueva.Username, Password: nueva.Password}
 		a.store.SetAccount(from, account)
 	}
 
-	// Login → JWT.
+	// Login → JWT. Si las credenciales guardadas ya no sirven (la contraseña rotó en el backend),
+	// re-obtenemos la cuenta del bot y reintentamos una vez.
 	tokens, err := a.gr.Login(account.Username, account.Password)
 	if err != nil {
-		return "No se pudo autenticar al cliente (motivo: " + err.Error() + "). Deriva al dueño."
+		nueva, e2 := a.gr.WppGetOrCreateClient(identificacion, nombres, telefono)
+		if e2 != nil {
+			return "No se pudo autenticar al cliente (motivo: " + err.Error() + "). Deriva al dueño."
+		}
+		account = conversation.Account{Username: nueva.Username, Password: nueva.Password}
+		a.store.SetAccount(from, account)
+		tokens, err = a.gr.Login(account.Username, account.Password)
+		if err != nil {
+			return "No se pudo autenticar al cliente (motivo: " + err.Error() + "). Deriva al dueño."
+		}
 	}
 
-	// Guardar JWT y refresh en Account para reutilizar en próximos pedidos.
+	// Guardar JWT y refresh para reutilizar en próximos pedidos.
 	account.JWT = tokens.Access
 	account.Refresh = tokens.Refresh
 	a.store.SetAccount(from, account)
 
-	// Si el cliente no está verificado, solicitamos el código OTP y pausamos el pedido.
-	if !tokens.EstaValidado {
-		if err := a.gr.GetVerificationCode(tokens.Access); err != nil {
-			return "No se pudo enviar el código de verificación al correo del cliente " +
-				"(motivo: " + err.Error() + "). Deriva al dueño."
-		}
-		a.store.SetPendingVerification(from, account)
-		// Guardamos el pedido recopilado para RETOMARLO automáticamente cuando el cliente
-		// valide el código, sin depender de que la IA recuerde el color/cantidad.
-		a.store.SetOrderDraft(from, conversation.OrderDraft{Color: colorNombre, Cantidad: cantidad})
-		return "Por seguridad, hemos enviado un código de verificación al correo electrónico del cliente. " +
-			"Pídele que revise su bandeja de entrada (y spam) y que te comparta el código por WhatsApp para " +
-			"poder procesar el pedido. Cuando lo tenga, dímelo y lo valido."
-	}
-
-	// Dirección del pedido. Igual que la app: primero buscamos si el cliente ya tiene una
-	// dirección guardada CERCANA a esta ubicación (nearby-direction, tolerancia del backend);
-	// si existe, la reutilizamos en vez de crear una nueva cada vez. Solo si no hay ninguna
-	// cercana creamos una. Si la consulta de cercanía falla técnicamente, caemos a crear
-	// (no bloqueamos el pedido por eso).
-	var direccionID int
-	switch {
-	case usarGuardada:
-		// El cliente eligió una de sus direcciones guardadas: la usamos tal cual.
-		direccionID = idDireccionGuardada
-	default:
-		// Ubicación nueva: reutilizamos una dirección cercana si existe; si no, creamos una.
-		if cercana, errNear := a.gr.NearbyDirection(tokens.Access, loc.Latitude, loc.Longitude); errNear == nil && cercana.Existe && cercana.IDDireccion != nil {
-			direccionID = *cercana.IDDireccion
-		} else {
-			// Ubicación nueva: nombrar la dirección es OBLIGATORIO (no debe quedar genérica en la BD).
-			// Si el modelo aún no recopiló el nombre, no registramos: pedimos que lo pregunte primero.
-			if nombreDireccion == "" {
-				return mensajePedirNombreDireccion
-			}
-			direccionCreada, err := a.gr.CreateDirection(tokens.Access, georoutes.DirectionInput{
-				Direccion:  direccion,
-				Alias:      aliasDireccion,
-				Referencia: referencia,
-				Latitude:   loc.Latitude,
-				Longitude:  loc.Longitude,
-			})
-			if err != nil {
-				if esFalloDeCobertura(err.Error()) {
-					return mensajeSinCobertura
-				}
-				return "No se pudo registrar la dirección del pedido (motivo: " + err.Error() + "). " +
-					"Informa al cliente del inconveniente y deriva al dueño para atención manual."
-			}
-			direccionID = direccionCreada.ID
-		}
-	}
-
-	// Pedido en el flujo real.
-	resultado, err := a.gr.StartOrder(tokens.Access, direccionID, idtipopago, []georoutes.OrderProduct{{
+	// Pedido: el backend hace UPSERT de la dirección "WhatsApp" del cliente con esta ubicación
+	// (la reemplaza; el cliente no la ve ni la nombra) y REUTILIZA el flujo real de pedido.
+	resultado, err := a.gr.WppOrder(tokens.Access, loc.Latitude, loc.Longitude, idtipopago, []georoutes.OrderProduct{{
 		IDCategoria: producto.IDCategoria,
 		IDProducto:  producto.IDProducto,
 		IDColor:     color.ID,
 		Cantidad:    cantidad,
 	}})
 	if err != nil {
-		// Sin repartidores en la zona / fuera de cobertura NO es un error técnico: es una
-		// condición normal de negocio. Se informa con un mensaje claro y NO se deriva al
-		// dueño ni se entra en bucle; la conversación se cierra cordialmente.
+		// Sin repartidores / fuera de cobertura NO es error técnico: mensaje cordial, sin escalar.
 		if esFalloDeCobertura(err.Error()) {
 			return mensajeSinCobertura
 		}
@@ -763,34 +674,21 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 			"Informa al cliente del inconveniente y deriva al dueño para atención manual."
 	}
 
-	// Guardar el perfil del cliente para no volver a pedir estos datos en pedidos futuros.
+	// Guardar perfil (para no re-pedir datos), el teléfono del pedido (para la calificación) y
+	// el resumen del último pedido (para ofrecer repetir). Luego limpiar historial.
 	a.store.SetProfile(from, conversation.Profile{
 		Identificacion: identificacion,
 		Nombres:        nombres,
-		Correo:         correo,
 	})
-
-	// Recordar con qué teléfono de WhatsApp se hizo este pedido, para contactar al cliente
-	// por el número correcto cuando el backend avise que se entregó (calificación).
 	if resultado.IDPedido > 0 {
 		a.store.SetOrderPhone(resultado.IDPedido, from)
 	}
-
-	// Guardar el resumen del pedido para poder ofrecerle repetir lo mismo la próxima vez.
 	a.store.SetLastOrder(from, conversation.LastOrder{
 		Producto: producto.Nombre,
 		Color:    color.Nombre,
 		Cantidad: cantidad,
 		Fecha:    time.Now().Format("02/01/2006"),
 	})
-
-	// Recordar con qué teléfono de WhatsApp se hizo este pedido, para poder pedirle la
-	// calificación por el número correcto cuando el backend avise que se entregó.
-	if resultado.IDPedido > 0 {
-		a.store.SetOrderPhone(resultado.IDPedido, from)
-	}
-
-	// Pedido exitoso: limpiamos historial para que el proximo arranque fresco.
 	a.store.ClearHistory(from)
 
 	mensaje := fmt.Sprintf("Pedido registrado correctamente: %d x %s (%s).", cantidad, producto.Nombre, color.Nombre)

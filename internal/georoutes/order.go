@@ -57,6 +57,41 @@ func (c *Client) StartOrder(jwt string, iddireccion, idtipopago int, productos [
 	return &result, nil
 }
 
+// WppOrder crea el pedido del BOT con la ubicación compartida por WhatsApp, SIN iddireccion:
+// el backend hace upsert de la única dirección "WhatsApp" del cliente (reemplaza sus
+// coordenadas) y REUTILIZA el flujo real de pedido. Endpoint exclusivo: POST /wppOrder/.
+func (c *Client) WppOrder(jwt string, latitude, longitude float64, idtipopago int, productos []OrderProduct) (*OrderResult, error) {
+	items := make([]map[string]any, 0, len(productos))
+	for _, p := range productos {
+		item := map[string]any{
+			"idcategoria": p.IDCategoria,
+			"idproducto":  p.IDProducto,
+			"cantidad":    p.Cantidad,
+			"idcolor":     nil,
+		}
+		if p.IDColor > 0 {
+			item["idcolor"] = p.IDColor
+		}
+		items = append(items, item)
+	}
+
+	res, err := c.post("/wppOrder/", map[string]any{
+		"latitude":   latitude,
+		"longitude":  longitude,
+		"idtipopago": idtipopago,
+		"productos":  items,
+	}, jwt)
+	if err != nil {
+		return nil, err
+	}
+
+	var result OrderResult
+	if err := json.Unmarshal(res, &result); err != nil {
+		return nil, fmt.Errorf("respuesta de pedido no válida del backend: %w", err)
+	}
+	return &result, nil
+}
+
 // RatingOrder registra la calificación (1-5) y un comentario opcional del cliente sobre el
 // conductor de un pedido entregado (POST /georoutes/ratingOrder/), con el JWT del cliente.
 func (c *Client) RatingOrder(jwt string, idpedido, calificacion int, observacion string) error {
