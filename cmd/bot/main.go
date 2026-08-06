@@ -107,6 +107,27 @@ func main() {
 		go notifyOrderFinished(cfg, store, payload.PedidoID, payload.Telefono, payload.Conductor)
 	})
 
+	// Notificación INTERNA del backend: el conductor LLEGÓ a la ubicación (pulsó "Sí, llegué").
+	// El bot le avisa al cliente por WhatsApp que salga a recibir el pedido. Mismo secreto
+	// compartido que /internal/order-finished.
+	mux.HandleFunc("POST /internal/order-arrived", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			PedidoID  int    `json:"pedido_id"`
+			Telefono  string `json:"telefono"`
+			Conductor string `json:"conductor"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		go notifyOrderArrived(cfg, store, payload.PedidoID, payload.Telefono)
+	})
+
 	log.Printf("Servidor escuchando en http://localhost:%s", cfg.Port)
 	log.Printf("Modelo Gemini: %s", cfg.GeminiModel)
 	log.Fatal(http.ListenAndServe(":"+cfg.Port, mux))
@@ -248,5 +269,22 @@ func notifyOrderFinished(cfg config.Config, store conversation.Store, pedidoID i
 	}
 	if err := whatsapp.SendText(cfg, phone, msg); err != nil {
 		log.Printf("[order-finished] error enviando a %s: %v", phone, err)
+	}
+}
+
+// notifyOrderArrived avisa al cliente por WhatsApp que el conductor LLEGÓ y salga a recibir.
+// Usa el número real del pedido (order_phone) o el que mande el backend.
+func notifyOrderArrived(cfg config.Config, store conversation.Store, pedidoID int, telefono string) {
+	phone := telefono
+	if p, ok := store.GetOrderPhone(pedidoID); ok && p != "" {
+		phone = p
+	}
+	if phone == "" {
+		log.Printf("[order-arrived] pedido %d sin teléfono de contacto; se ignora", pedidoID)
+		return
+	}
+	msg := "🛵 El conductor llegó a tu ubicación. Por favor, sal a recibir tu pedido. 📦"
+	if err := whatsapp.SendText(cfg, phone, msg); err != nil {
+		log.Printf("[order-arrived] error enviando a %s: %v", phone, err)
 	}
 }
