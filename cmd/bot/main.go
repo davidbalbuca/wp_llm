@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -23,6 +24,55 @@ import (
 	"wp-llm-gas/internal/georoutes"
 	"wp-llm-gas/internal/whatsapp"
 )
+
+// --- Anti-duplicados de mensajes ---
+// Ignora un mensaje de texto IDÉNTICO del mismo teléfono dentro de una ventana corta (el cliente
+// que manda "Hola" dos veces, o un reintento del webhook de Meta), para no responder dos veces.
+type dedupEntry struct {
+	text string
+	at   time.Time
+}
+
+type msgDedup struct {
+	mu   sync.Mutex
+	last map[string]dedupEntry
+}
+
+var dedup = &msgDedup{last: map[string]dedupEntry{}}
+
+const dedupWindow = 6 * time.Second
+
+func (d *msgDedup) isDuplicate(phone, text string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	now := time.Now()
+	prev, ok := d.last[phone]
+	if ok && prev.text == text && now.Sub(prev.at) < dedupWindow {
+		return true
+	}
+	d.last[phone] = dedupEntry{text: text, at: now}
+	return false
+}
+
+// looksLikeLeakedJSON detecta si la respuesta de la IA es una estructura cruda (JSON/acción) que
+// NUNCA debe llegarle al cliente. Ninguna respuesta normal del bot empieza con { [ o ```.
+func looksLikeLeakedJSON(s string) bool {
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return false
+	}
+	if strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[") || strings.HasPrefix(t, "```") {
+		return true
+	}
+	low := strings.ToLower(t)
+	if strings.Contains(low, `"action"`) || strings.Contains(low, "action_input") {
+		return true
+	}
+	if strings.Contains(low, `"opciones"`) && strings.Contains(low, `"cuerpo"`) {
+		return true
+	}
+	return false
+}
 
 // catalogTTL es cuánto se cachea el contexto del negocio traído del backend antes de
 // refrescarlo. Balance entre reflejar cambios pronto y no consultar en cada mensaje.
@@ -134,11 +184,31 @@ func main() {
 }
 
 func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store, body []byte) {
+	// Blindaje: un panic inesperado NO debe tumbar el proceso; si sabemos el teléfono, le avisamos
+	// al cliente con un mensaje amable (nunca un error crudo).
+	var recoverPhone string
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[webhook] PANIC recuperado: %v", r)
+			if recoverPhone != "" {
+				_ = whatsapp.SendText(cfg, recoverPhone, "Disculpa, estamos con un problema técnico. Por favor intenta de nuevo en un momento. 🙏")
+			}
+		}
+	}()
+
 	log.Printf("[webhook] payload recibido: %s", string(body))
 
 	inc, ok := whatsapp.ParseIncoming(body)
 	if !ok {
 		log.Printf("[webhook] sin mensaje (probable evento de estado); se ignora.")
+		return
+	}
+	recoverPhone = inc.From
+
+	// Anti-duplicados: si el cliente manda el MISMO texto dos veces seguidas (doble-tap) o Meta
+	// reintenta el webhook, respondemos una sola vez.
+	if inc.IsText && dedup.isDuplicate(inc.From, strings.TrimSpace(inc.Text)) {
+		log.Printf("[webhook] mensaje duplicado de %s ignorado: %q", inc.From, inc.Text)
 		return
 	}
 
@@ -230,6 +300,13 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	}
 
 	log.Printf("[webhook] respuesta de la IA: %q", reply)
+	// Blindaje final: el cliente NUNCA debe ver JSON crudo ni algo técnico. Si la IA filtró una
+	// estructura (acción/menú mal formado) que no se convirtió en menú, la cambiamos por un
+	// mensaje amable en vez de mostrarle el texto crudo.
+	if looksLikeLeakedJSON(reply) {
+		log.Printf("[webhook] fuga de JSON descartada para %s: %.150q", inc.From, reply)
+		reply = "Disculpa, tuve un pequeño inconveniente 🙈. ¿Me repites qué necesitas, por favor?"
+	}
 	if err := whatsapp.SendText(cfg, inc.From, reply); err != nil {
 		log.Printf("[server] Error enviando a %s: %v", inc.From, err)
 		return
