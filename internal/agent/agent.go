@@ -200,7 +200,15 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 		},
 	}
 
-	tools := []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{escalar, registrar, verificarCliente, calificar, mostrarMenu}}}
+	// cancelar_pedido: cancela el pedido ACTIVO del cliente cuando lo pide por WhatsApp.
+	cancelar := &genai.FunctionDeclaration{
+		Name: "cancelar_pedido",
+		Description: "Cancela el pedido ACTIVO del cliente. Úsala SOLO cuando el cliente pida explícitamente " +
+			"cancelar su pedido (ej. \"cancelar mi pedido\", \"ya no lo quiero\", \"anula mi pedido\").",
+		Parameters: &genai.Schema{Type: genai.TypeObject, Properties: map[string]*genai.Schema{}},
+	}
+
+	tools := []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{escalar, registrar, verificarCliente, calificar, mostrarMenu, cancelar}}}
 
 	return &Agent{cfg: cfg, client: client, store: store, catalog: catalogClient, gr: grClient, tools: tools}, nil
 }
@@ -409,6 +417,9 @@ func (a *Agent) runTool(from, name string, args map[string]any) string {
 			a.escalated = true
 		}
 		return result
+
+	case "cancelar_pedido":
+		return a.cancelarPedido(from)
 	}
 	return "Función desconocida: " + name
 }
@@ -562,6 +573,34 @@ func (a *Agent) calificarConductor(from string, args map[string]any) string {
 		"al cliente por su tiempo y su preferencia, y despídete de forma cordial.", estrellas, rating.Conductor)
 }
 
+// cancelarPedido cancela el pedido ACTIVO del cliente cuando lo pide por WhatsApp. Re-autentica
+// al cliente y llama al MISMO flujo que el botón "Cancelar" de la app (cancelOrder): el backend
+// marca el pedido CANCELADO_CLIENTE, devuelve el stock al conductor y le avisa. Limpia el estado
+// del pedido activo y el historial para arrancar fresco.
+func (a *Agent) cancelarPedido(from string) string {
+	pedidoID, ok := a.store.GetActivePedido(from)
+	if !ok || pedidoID <= 0 {
+		return "El cliente no tiene un pedido activo para cancelar. Aclárale con amabilidad que no encuentras un " +
+			"pedido en curso a su nombre, y ofrécele hacer uno nuevo cuando quiera."
+	}
+	account, ok := a.store.GetAccount(from)
+	if !ok || account.Username == "" {
+		return "No encuentro la cuenta del cliente para cancelar el pedido. Discúlpate y dile que en un momento lo revisa el equipo."
+	}
+	// JWT fresco: el pedido pudo hacerse hace rato, re-autenticamos antes de cancelar.
+	tokens, err := a.gr.Login(account.Username, account.Password)
+	if err != nil {
+		return "No se pudo cancelar el pedido en este momento (motivo: " + err.Error() + "). Discúlpate y pídele que intente de nuevo en un momento."
+	}
+	if err := a.gr.CancelOrder(tokens.Access, pedidoID); err != nil {
+		return "No se pudo cancelar el pedido (motivo: " + err.Error() + "). Discúlpate y dile que en un momento lo revisa el equipo."
+	}
+	a.store.ClearActivePedido(from)
+	a.store.ClearHistory(from)
+	return "Pedido cancelado con éxito. Confírmale al cliente con amabilidad que su pedido fue cancelado y que " +
+		"puede hacer uno nuevo cuando lo desee."
+}
+
 // registrarPedido ejecuta la secuencia real de georoutes: mapea el color a IDs de
 // producto, asegura la cuenta del cliente, hace login, registra la dirección desde la
 // ubicación de WhatsApp y crea el pedido. Devuelve un texto para que el modelo responda.
@@ -682,6 +721,7 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 	})
 	if resultado.IDPedido > 0 {
 		a.store.SetOrderPhone(resultado.IDPedido, from)
+		a.store.SetActivePedido(from, resultado.IDPedido)
 	}
 	a.store.SetLastOrder(from, conversation.LastOrder{
 		Producto: producto.Nombre,

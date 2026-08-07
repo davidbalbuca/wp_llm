@@ -103,6 +103,13 @@ func (c *Client) RatingOrder(jwt string, idpedido, calificacion int, observacion
 	return err
 }
 
+// CancelOrder cancela el pedido del cliente (POST /cancelOrder/) con su JWT. El backend lo marca
+// CANCELADO_CLIENTE, devuelve el stock al conductor y le avisa. Igual que el "Cancelar" de la app.
+func (c *Client) CancelOrder(jwt string, idpedido int) error {
+	_, err := c.post("/cancelOrder/", map[string]any{"idpedido": idpedido}, jwt)
+	return err
+}
+
 // SavedDirection es una dirección que el cliente ya tiene guardada en el backend.
 type SavedDirection struct {
 	ID        int     `json:"id"`

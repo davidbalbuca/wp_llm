@@ -131,6 +131,12 @@ CREATE TABLE IF NOT EXISTS order_phone (
     pedido_id  INTEGER PRIMARY KEY,
     phone      TEXT    NOT NULL,
     created_at INTEGER NOT NULL
+);
+-- Pedido ACTIVO por teléfono (el último creado). Sirve para cancelarlo si el cliente lo pide.
+CREATE TABLE IF NOT EXISTS active_pedido (
+    phone      TEXT    PRIMARY KEY,
+    pedido_id  INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
 );`
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
@@ -440,6 +446,34 @@ func (s *sqliteStore) GetOrderPhone(pedidoID int) (string, bool) {
 		return "", false
 	}
 	return phone, true
+}
+
+func (s *sqliteStore) SetActivePedido(phone string, pedidoID int) {
+	if _, err := s.db.Exec(`
+        INSERT INTO active_pedido(phone, pedido_id, created_at) VALUES(?, ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET pedido_id=excluded.pedido_id, created_at=excluded.created_at`,
+		phone, pedidoID, time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] SetActivePedido %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) GetActivePedido(phone string) (int, bool) {
+	var id int
+	err := s.db.QueryRow(`SELECT pedido_id FROM active_pedido WHERE phone = ?`, phone).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, false
+	}
+	if err != nil {
+		log.Printf("[sqlite] GetActivePedido %s: %v", phone, err)
+		return 0, false
+	}
+	return id, true
+}
+
+func (s *sqliteStore) ClearActivePedido(phone string) {
+	if _, err := s.db.Exec(`DELETE FROM active_pedido WHERE phone = ?`, phone); err != nil {
+		log.Printf("[sqlite] ClearActivePedido %s: %v", phone, err)
+	}
 }
 
 func (s *sqliteStore) ClearPendingVerification(phone string) {

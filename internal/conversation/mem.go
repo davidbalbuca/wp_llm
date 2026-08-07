@@ -21,6 +21,7 @@ type memStore struct {
 	pendingVerif  map[string]Account       // pending OTP verification accounts
 	pendingRating map[string]PendingRating // pedidos entregados por calificar
 	orderPhone    map[int]string           // pedido_id -> teléfono de WhatsApp con el que se hizo
+	activePedido  map[string]int           // teléfono -> id del pedido activo (para cancelar)
 }
 
 // NewMemStore crea un almacén en memoria vacío.
@@ -36,6 +37,7 @@ func NewMemStore() Store {
 		pendingVerif:  make(map[string]Account),
 		pendingRating: make(map[string]PendingRating),
 		orderPhone:    make(map[int]string),
+		activePedido:  make(map[string]int),
 	}
 }
 
@@ -205,4 +207,23 @@ func (s *memStore) GetOrderPhone(pedidoID int) (string, bool) {
 	defer s.mu.Unlock()
 	phone, ok := s.orderPhone[pedidoID]
 	return phone, ok
+}
+
+func (s *memStore) SetActivePedido(phone string, pedidoID int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.activePedido[phone] = pedidoID
+}
+
+func (s *memStore) GetActivePedido(phone string) (int, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id, ok := s.activePedido[phone]
+	return id, ok
+}
+
+func (s *memStore) ClearActivePedido(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.activePedido, phone)
 }

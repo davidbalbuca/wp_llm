@@ -144,6 +144,13 @@ type Store interface {
 	SetOrderPhone(pedidoID int, phone string)
 	// GetOrderPhone devuelve el teléfono de WhatsApp asociado a un pedido (ok=false si no hay).
 	GetOrderPhone(pedidoID int) (string, bool)
+	// SetActivePedido guarda el id del pedido ACTIVO del cliente (el último creado), para poder
+	// cancelarlo si el cliente lo pide por WhatsApp ("cancelar mi pedido").
+	SetActivePedido(phone string, pedidoID int)
+	// GetActivePedido devuelve el id del pedido activo del cliente (ok=false si no hay).
+	GetActivePedido(phone string) (int, bool)
+	// ClearActivePedido elimina el pedido activo (tras cancelarlo o entregarlo).
+	ClearActivePedido(phone string)
 }
 
 // turn es la forma serializable de un turno de conversación. Se usa para persistir

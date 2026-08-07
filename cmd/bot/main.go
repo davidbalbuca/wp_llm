@@ -178,6 +178,26 @@ func main() {
 		go notifyOrderArrived(cfg, store, payload.PedidoID, payload.Telefono)
 	})
 
+	// Notificación INTERNA del backend: el conductor CANCELÓ el pedido. El bot le avisa al
+	// cliente por WhatsApp. Mismo secreto compartido.
+	mux.HandleFunc("POST /internal/order-cancelled", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			PedidoID  int    `json:"pedido_id"`
+			Telefono  string `json:"telefono"`
+			Conductor string `json:"conductor"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		go notifyOrderCancelled(cfg, store, payload.PedidoID, payload.Telefono)
+	})
+
 	log.Printf("Servidor escuchando en http://localhost:%s", cfg.Port)
 	log.Printf("Modelo Gemini: %s", cfg.GeminiModel)
 	log.Fatal(http.ListenAndServe(":"+cfg.Port, mux))
@@ -363,5 +383,24 @@ func notifyOrderArrived(cfg config.Config, store conversation.Store, pedidoID in
 	msg := "🛵 El conductor llegó a tu ubicación. Por favor, sal a recibir tu pedido. 📦"
 	if err := whatsapp.SendText(cfg, phone, msg); err != nil {
 		log.Printf("[order-arrived] error enviando a %s: %v", phone, err)
+	}
+}
+
+// notifyOrderCancelled avisa al cliente por WhatsApp que el conductor CANCELÓ su pedido. Limpia el
+// historial para que la próxima conversación arranque fresca (sin arrastrar el pedido cancelado).
+func notifyOrderCancelled(cfg config.Config, store conversation.Store, pedidoID int, telefono string) {
+	phone := telefono
+	if p, ok := store.GetOrderPhone(pedidoID); ok && p != "" {
+		phone = p
+	}
+	if phone == "" {
+		log.Printf("[order-cancelled] pedido %d sin teléfono de contacto; se ignora", pedidoID)
+		return
+	}
+	store.ClearActivePedido(phone)
+	store.ClearHistory(phone)
+	msg := "😔 Tu pedido fue cancelado por el conductor. Disculpa las molestias. Cuando quieras, puedes hacer un nuevo pedido."
+	if err := whatsapp.SendText(cfg, phone, msg); err != nil {
+		log.Printf("[order-cancelled] error enviando a %s: %v", phone, err)
 	}
 }
