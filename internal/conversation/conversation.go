@@ -81,6 +81,21 @@ type OrderDraft struct {
 	Cantidad int    `json:"cantidad"`
 }
 
+// PendingWait es un pedido que NO encontró conductor y quedó a la espera porque el cliente
+// eligió esperar (~5 min). Guarda lo necesario para REINTENTAR la asignación; la ubicación y la
+// cuenta se leen del store (ya están). Transitorio: se limpia al asignar, cancelar o expirar.
+type PendingWait struct {
+	IDCategoria    int    `json:"idcategoria"`
+	IDProducto     int    `json:"idproducto"`
+	IDColor        int    `json:"idcolor"`
+	Cantidad       int    `json:"cantidad"`
+	IDTipoPago     int    `json:"idtipopago"`
+	ProductoNombre string `json:"producto_nombre"`
+	ColorNombre    string `json:"color_nombre"`
+	Identificacion string `json:"identificacion"`
+	Nombres        string `json:"nombres"`
+}
+
 // Store es el almacén de estado conversacional por número de teléfono.
 // Las operaciones no devuelven error a propósito: un fallo del backend de estado
 // se registra y degrada de forma segura (p. ej. historial vacío), sin tumbar el chat.
@@ -151,6 +166,13 @@ type Store interface {
 	GetActivePedido(phone string) (int, bool)
 	// ClearActivePedido elimina el pedido activo (tras cancelarlo o entregarlo).
 	ClearActivePedido(phone string)
+	// SetPendingWait guarda un pedido que no encontró conductor y quedó esperando (el cliente
+	// eligió esperar). Sirve para reintentar la asignación durante ~5 min.
+	SetPendingWait(phone string, w PendingWait)
+	// GetPendingWait devuelve el pedido en espera de conductor (ok=false si no hay).
+	GetPendingWait(phone string) (PendingWait, bool)
+	// ClearPendingWait elimina el pedido en espera (al asignarse, cancelar o expirar).
+	ClearPendingWait(phone string)
 }
 
 // turn es la forma serializable de un turno de conversación. Se usa para persistir

@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	_ "embed"
 	"fmt"
+	"log"
 	"math"
 	"strings"
 	"time"
@@ -38,6 +39,16 @@ const mensajeSinCobertura = "IMPORTANTE: En este momento no hay repartidores dis
 	"ahora no tenemos cobertura/repartidores en su ubicación, que agradecemos su interés y que puede " +
 	"intentar más tarde. NO derives al dueño y NO le pidas de nuevo los datos ni la ubicación: cierra la " +
 	"conversación de forma cordial."
+
+// mensajeOfrecerEspera se devuelve cuando no hay conductor AHORA pero el pedido quedó guardado a
+// la espera. El bot le ofrece al cliente esperar hasta ~5 min (se reintenta la asignación) o
+// cancelar. NO se deriva al dueño ni se le vuelven a pedir datos.
+const mensajeOfrecerEspera = "IMPORTANTE: En este momento no hay un repartidor disponible cerca, pero el " +
+	"pedido quedó listo. Ofrécele al cliente ESPERAR usando la herramienta mostrar_menu con el cuerpo: " +
+	"'Los repartidores están un poco lejos 🚚. Podría tardar hasta 5 minutos en asignarse. ¿Deseas esperar?' " +
+	"y las opciones exactas [\"Esperar\", \"Cancelar\"]. Si el cliente elige esperar, llama a la herramienta " +
+	"esperar_conductor. Si elige cancelar, llama a cancelar_espera. NO derives al dueño ni le pidas de nuevo " +
+	"los datos ni la ubicación."
 
 // mensajePedirNombreDireccion se devuelve cuando el cliente va a usar una ubicación NUEVA pero
 // aún no le puso nombre. Nombrar es obligatorio para que la dirección no quede genérica en la BD.
@@ -208,7 +219,23 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 		Parameters: &genai.Schema{Type: genai.TypeObject, Properties: map[string]*genai.Schema{}},
 	}
 
-	tools := []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{escalar, registrar, verificarCliente, calificar, mostrarMenu, cancelar}}}
+	// esperar_conductor: el cliente aceptó ESPERAR a que se libere un repartidor (hasta 5 min).
+	esperar := &genai.FunctionDeclaration{
+		Name: "esperar_conductor",
+		Description: "Úsala SOLO cuando el sistema ofreció esperar por falta de repartidor y el cliente " +
+			"ACEPTA esperar (ej. elige \"Esperar\" o dice \"sí, espero\"). Inicia la espera de hasta 5 minutos.",
+		Parameters: &genai.Schema{Type: genai.TypeObject, Properties: map[string]*genai.Schema{}},
+	}
+
+	// cancelar_espera: el cliente NO quiere esperar por el repartidor.
+	cancelarEsp := &genai.FunctionDeclaration{
+		Name: "cancelar_espera",
+		Description: "Úsala SOLO cuando el sistema ofreció esperar por falta de repartidor y el cliente NO " +
+			"quiere esperar (elige \"Cancelar\" o dice que no). Cancela el pedido en espera.",
+		Parameters: &genai.Schema{Type: genai.TypeObject, Properties: map[string]*genai.Schema{}},
+	}
+
+	tools := []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{escalar, registrar, verificarCliente, calificar, mostrarMenu, cancelar, esperar, cancelarEsp}}}
 
 	return &Agent{cfg: cfg, client: client, store: store, catalog: catalogClient, gr: grClient, tools: tools}, nil
 }
@@ -420,6 +447,12 @@ func (a *Agent) runTool(from, name string, args map[string]any) string {
 
 	case "cancelar_pedido":
 		return a.cancelarPedido(from)
+
+	case "esperar_conductor":
+		return a.esperarConductor(from)
+
+	case "cancelar_espera":
+		return a.cancelarEspera(from)
 	}
 	return "Función desconocida: " + name
 }
@@ -601,6 +634,85 @@ func (a *Agent) cancelarPedido(from string) string {
 		"puede hacer uno nuevo cuando lo desee."
 }
 
+// esperarConductor arranca la espera de hasta 5 minutos: reintenta la asignación cada 30s y le
+// avisa al cliente por WhatsApp cuando se asigne, o si se agota el tiempo sin repartidor.
+func (a *Agent) esperarConductor(from string) string {
+	w, ok := a.store.GetPendingWait(from)
+	if !ok || w.IDProducto == 0 {
+		return "No hay un pedido en espera en este momento. Ofrécele con amabilidad hacer un pedido nuevo."
+	}
+	a.startWaitForDriver(from, w)
+	return "El cliente aceptó esperar. Confírmale con calidez que estás buscando un repartidor y que le " +
+		"avisas apenas se asigne (o si en unos minutos no hay disponible). Pídele que esté atento por aquí."
+}
+
+// cancelarEspera descarta el pedido en espera cuando el cliente NO quiere esperar.
+func (a *Agent) cancelarEspera(from string) string {
+	a.store.ClearPendingWait(from)
+	a.store.ClearHistory(from)
+	return "El cliente no quiso esperar. Despídete con: \"Muchas gracias, espero poder ayudarte la próxima vez. 🙌\""
+}
+
+// startWaitForDriver corre en segundo plano: reintenta la asignación cada 30s durante 5 min. En
+// WhatsApp NO sirve el push (token placeholder), por eso el bot reintenta activamente. Al asignarse
+// o al expirar, envía el mensaje directo por WhatsApp. Best-effort: nunca tumba el proceso.
+func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
+	cfg := a.cfg
+	gr := a.gr
+	store := a.store
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[espera] panic recuperado para %s: %v", from, r)
+			}
+		}()
+		deadline := time.Now().Add(5 * time.Minute)
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			<-ticker.C
+			// Si el cliente canceló (o ya se resolvió) mientras esperaba, salir sin avisar.
+			if _, ok := store.GetPendingWait(from); !ok {
+				return
+			}
+			account, okA := store.GetAccount(from)
+			loc, okL := store.GetLocation(from)
+			if okA && okL {
+				if tokens, err := gr.Login(account.Username, account.Password); err == nil {
+					res, err := gr.WppOrder(tokens.Access, loc.Latitude, loc.Longitude, w.IDTipoPago,
+						[]georoutes.OrderProduct{{IDCategoria: w.IDCategoria, IDProducto: w.IDProducto, IDColor: w.IDColor, Cantidad: w.Cantidad}})
+					if err == nil {
+						// ¡Asignado! Guardar estado igual que un pedido normal y avisar al cliente.
+						store.SetProfile(from, conversation.Profile{Identificacion: w.Identificacion, Nombres: w.Nombres})
+						if res.IDPedido > 0 {
+							store.SetOrderPhone(res.IDPedido, from)
+							store.SetActivePedido(from, res.IDPedido)
+						}
+						store.SetLastOrder(from, conversation.LastOrder{Producto: w.ProductoNombre, Color: w.ColorNombre, Cantidad: w.Cantidad, Fecha: time.Now().Format("02/01/2006")})
+						store.ClearPendingWait(from)
+						store.ClearHistory(from)
+						msg := "🎉 ¡Listo! Ya tienes un repartidor asignado"
+						if res.ConductorAsignado != "" {
+							msg += ": " + res.ConductorAsignado
+						}
+						msg += ". Sale con tu pedido en breve. ¡Gracias por tu espera!"
+						_ = whatsapp.SendText(cfg, from, msg)
+						return
+					}
+				}
+			}
+			if time.Now().After(deadline) {
+				break
+			}
+		}
+		// Se agotaron los 5 min sin repartidor.
+		store.ClearPendingWait(from)
+		store.ClearHistory(from)
+		_ = whatsapp.SendText(cfg, from, "Te pedimos disculpas 🙏. Por ahora no hay ningún repartidor disponible "+
+			"para asignar tu pedido. Intenta más tarde, con gusto te ayudamos.")
+	}()
+}
+
 // registrarPedido ejecuta la secuencia real de georoutes: mapea el color a IDs de
 // producto, asegura la cuenta del cliente, hace login, registra la dirección desde la
 // ubicación de WhatsApp y crea el pedido. Devuelve un texto para que el modelo responda.
@@ -705,9 +817,21 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 		Cantidad:    cantidad,
 	}})
 	if err != nil {
-		// Sin repartidores / fuera de cobertura NO es error técnico: mensaje cordial, sin escalar.
+		// Sin repartidores / fuera de cobertura NO es error técnico: guardamos el pedido a la
+		// espera y le ofrecemos al cliente esperar hasta 5 min (reintento de asignación).
 		if esFalloDeCobertura(err.Error()) {
-			return mensajeSinCobertura
+			a.store.SetPendingWait(from, conversation.PendingWait{
+				IDCategoria:    producto.IDCategoria,
+				IDProducto:     producto.IDProducto,
+				IDColor:        color.ID,
+				Cantidad:       cantidad,
+				IDTipoPago:     idtipopago,
+				ProductoNombre: producto.Nombre,
+				ColorNombre:    color.Nombre,
+				Identificacion: identificacion,
+				Nombres:        nombres,
+			})
+			return mensajeOfrecerEspera
 		}
 		return "No se pudo registrar el pedido (motivo: " + err.Error() + "). " +
 			"Informa al cliente del inconveniente y deriva al dueño para atención manual."

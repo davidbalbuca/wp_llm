@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"database/sql"
+	"encoding/json"
 	"log"
 	"os"
 	"path/filepath"
@@ -136,6 +137,13 @@ CREATE TABLE IF NOT EXISTS order_phone (
 CREATE TABLE IF NOT EXISTS active_pedido (
     phone      TEXT    PRIMARY KEY,
     pedido_id  INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+);
+-- Pedido esperando conductor (el cliente eligió esperar ~5 min). Se guarda como JSON para
+-- reintentar la asignación; se limpia al asignar, cancelar o expirar.
+CREATE TABLE IF NOT EXISTS pending_wait (
+    phone      TEXT    PRIMARY KEY,
+    data       TEXT    NOT NULL,
     created_at INTEGER NOT NULL
 );`
 	if _, err := db.Exec(schema); err != nil {
@@ -473,6 +481,44 @@ func (s *sqliteStore) GetActivePedido(phone string) (int, bool) {
 func (s *sqliteStore) ClearActivePedido(phone string) {
 	if _, err := s.db.Exec(`DELETE FROM active_pedido WHERE phone = ?`, phone); err != nil {
 		log.Printf("[sqlite] ClearActivePedido %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) SetPendingWait(phone string, w PendingWait) {
+	data, err := json.Marshal(w)
+	if err != nil {
+		log.Printf("[sqlite] SetPendingWait marshal %s: %v", phone, err)
+		return
+	}
+	if _, err := s.db.Exec(`
+        INSERT INTO pending_wait(phone, data, created_at) VALUES(?, ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET data=excluded.data, created_at=excluded.created_at`,
+		phone, string(data), time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] SetPendingWait %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) GetPendingWait(phone string) (PendingWait, bool) {
+	var data string
+	err := s.db.QueryRow(`SELECT data FROM pending_wait WHERE phone = ?`, phone).Scan(&data)
+	if err == sql.ErrNoRows {
+		return PendingWait{}, false
+	}
+	if err != nil {
+		log.Printf("[sqlite] GetPendingWait %s: %v", phone, err)
+		return PendingWait{}, false
+	}
+	var w PendingWait
+	if err := json.Unmarshal([]byte(data), &w); err != nil {
+		log.Printf("[sqlite] GetPendingWait unmarshal %s: %v", phone, err)
+		return PendingWait{}, false
+	}
+	return w, true
+}
+
+func (s *sqliteStore) ClearPendingWait(phone string) {
+	if _, err := s.db.Exec(`DELETE FROM pending_wait WHERE phone = ?`, phone); err != nil {
+		log.Printf("[sqlite] ClearPendingWait %s: %v", phone, err)
 	}
 }
 
