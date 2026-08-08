@@ -198,6 +198,24 @@ func main() {
 		go notifyOrderCancelled(cfg, store, payload.PedidoID, payload.Telefono)
 	})
 
+	mux.HandleFunc("POST /internal/order-reassigned", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			PedidoID  int    `json:"pedido_id"`
+			Telefono  string `json:"telefono"`
+			Conductor string `json:"conductor"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		go notifyOrderReassigned(cfg, store, payload.PedidoID, payload.Telefono, payload.Conductor)
+	})
+
 	log.Printf("Servidor escuchando en http://localhost:%s", cfg.Port)
 	log.Printf("Modelo Gemini: %s", cfg.GeminiModel)
 	log.Fatal(http.ListenAndServe(":"+cfg.Port, mux))
@@ -402,5 +420,26 @@ func notifyOrderCancelled(cfg config.Config, store conversation.Store, pedidoID 
 	msg := "😔 Tu pedido fue cancelado por el conductor. Disculpa las molestias. Cuando quieras, puedes hacer un nuevo pedido."
 	if err := whatsapp.SendText(cfg, phone, msg); err != nil {
 		log.Printf("[order-cancelled] error enviando a %s: %v", phone, err)
+	}
+}
+
+// notifyOrderReassigned avisa al cliente por WhatsApp que su pedido fue REASIGNADO a un nuevo
+// repartidor (el anterior canceló). El pedido sigue vivo, así que NO se limpia el historial.
+func notifyOrderReassigned(cfg config.Config, store conversation.Store, pedidoID int, telefono, conductor string) {
+	phone := telefono
+	if p, ok := store.GetOrderPhone(pedidoID); ok && p != "" {
+		phone = p
+	}
+	if phone == "" {
+		log.Printf("[order-reassigned] pedido %d sin teléfono de contacto; se ignora", pedidoID)
+		return
+	}
+	msg := "🚚 Tu pedido fue asignado a un nuevo repartidor"
+	if conductor != "" {
+		msg += ": " + conductor
+	}
+	msg += ". ¡Ya va en camino!"
+	if err := whatsapp.SendText(cfg, phone, msg); err != nil {
+		log.Printf("[order-reassigned] error enviando a %s: %v", phone, err)
 	}
 }
