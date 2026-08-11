@@ -17,20 +17,21 @@ func (c *Client) get(path string) (json.RawMessage, error) {
 		return nil, err
 	}
 
-	res, status, err := c.doGet(path, token)
-	if err != nil {
-		return nil, err
-	}
-	// 401 con token: probablemente venció → un reintento con login forzado.
+	res, status, derr := c.doGet(path, token)
+	// 401 con token: el JWT probablemente venció. Reintentamos con un login forzado ANTES de
+	// rendirnos, AUNQUE el cuerpo del 401 no sea JSON (derr != nil por el decode fallido). Antes
+	// el `if err != nil { return }` salía primero y este reintento NUNCA se alcanzaba: el bot se
+	// quedaba pegado en 401 para siempre y el catálogo jamás se refrescaba hasta reiniciar el
+	// contenedor (precios/descripciones cambiados en el backend no se reflejaban).
 	if status == http.StatusUnauthorized && token != "" {
 		token, err = c.serviceToken(true)
 		if err != nil {
 			return nil, err
 		}
-		res, status, err = c.doGet(path, token)
-		if err != nil {
-			return nil, err
-		}
+		res, status, derr = c.doGet(path, token)
+	}
+	if derr != nil {
+		return nil, derr
 	}
 
 	if status < 200 || status >= 300 {

@@ -101,6 +101,11 @@ type Agent struct {
 	// menuSent indica que en este turno la IA ya envió un MENÚ interactivo por WhatsApp
 	// (vía la tool mostrar_menu); el llamador NO debe enviar además el texto de respuesta.
 	menuSent bool
+	// lastMenuText es la PREGUNTA del último menú enviado en este turno (cuerpo + opciones).
+	// Se guarda en el historial como turno del modelo, porque el historial solo persiste TEXTO
+	// (no function calls): sin esto los menús quedaban invisibles y el modelo, al no "recordar"
+	// que ya preguntó (color/cantidad), volvía a mandar el mismo menú una y otra vez.
+	lastMenuText string
 }
 
 func (a *Agent) DidEscalate() bool { return a.escalated }
@@ -243,6 +248,7 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 // HandleMessage procesa un mensaje del cliente y devuelve la respuesta para WhatsApp.
 func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, error) {
 	a.menuSent = false // se pone en true si la IA envía un menú interactivo en este turno
+	a.lastMenuText = ""
 	contents := append(a.store.History(from), &genai.Content{
 		Role:  "user",
 		Parts: []*genai.Part{{Text: text}},
@@ -326,10 +332,6 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 		break
 	}
 
-	if reply == "" {
-		reply = "Disculpa, no pude procesar tu mensaje. ¿Podrías reformularlo?"
-	}
-
 	// Red de seguridad: a veces el modelo (flash-lite) "narra" la herramienta mostrar_menu
 	// escribiendo su JSON {cuerpo, opciones} como TEXTO en vez de invocarla de verdad, y el
 	// cliente vería ese JSON crudo. Si detectamos ese JSON en la respuesta y aún no se envió
@@ -351,6 +353,7 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 			if len(opciones) >= 2 && len(opciones) <= 10 {
 				if err := whatsapp.SendMenu(a.cfg, from, mensaje, opciones); err == nil {
 					a.menuSent = true
+					a.lastMenuText = mensaje + " (opciones: " + strings.Join(opciones, " / ") + ")"
 				}
 			}
 			// Enviara o no el menú, no dejamos el JSON crudo en el texto que se guarda/manda.
@@ -358,8 +361,22 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 		}
 	}
 
+	// Turno del modelo para el HISTORIAL. Si en este turno se envió un menú interactivo,
+	// guardamos la PREGUNTA del menú (cuerpo + opciones), NO un texto vacío ni el fallback:
+	// así el modelo recuerda qué preguntó y no repite el menú. El historial solo guarda texto,
+	// por eso sin esto los menús (function calls) quedaban invisibles para el modelo.
+	modelTurn := reply
+	if a.menuSent && a.lastMenuText != "" {
+		modelTurn = a.lastMenuText
+	}
+	if strings.TrimSpace(modelTurn) == "" {
+		// Sin menú y sin texto real: recién aquí cae el fallback visible al cliente.
+		reply = "Disculpa, no pude procesar tu mensaje. ¿Podrías reformularlo?"
+		modelTurn = reply
+	}
+
 	a.store.AppendUser(from, text)
-	a.store.AppendModel(from, reply)
+	a.store.AppendModel(from, modelTurn)
 	return reply, nil
 }
 
@@ -507,6 +524,9 @@ func (a *Agent) mostrarMenu(from string, args map[string]any) string {
 		return "No pude enviar el menú (motivo: " + err.Error() + "). Preséntale las opciones por texto normal."
 	}
 	a.menuSent = true
+	// Guardamos la pregunta del menú para el historial (ver Agent.lastMenuText): así, en el
+	// próximo mensaje, el modelo recuerda qué ofreció y no vuelve a mandar el mismo menú.
+	a.lastMenuText = cuerpo + " (opciones: " + strings.Join(opciones, " / ") + ")"
 	return "MENÚ ENVIADO al cliente con esas opciones. NO repitas las opciones por texto; espera a que elija."
 }
 
