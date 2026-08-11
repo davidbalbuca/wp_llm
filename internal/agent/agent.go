@@ -325,6 +325,12 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 				})
 			}
 			contents = append(contents, &genai.Content{Role: "user", Parts: respParts})
+			// Una pregunta por turno: si en este round ya se envió un menú, cortamos aquí (no
+			// pedimos otro round que podría mandar una segunda pregunta). El texto no se envía
+			// porque menuSent hace que el llamador solo muestre el menú.
+			if a.menuSent {
+				break
+			}
 			continue // vuelve a llamar al modelo con los resultados
 		}
 
@@ -505,6 +511,12 @@ func (a *Agent) verificarCliente(from string, args map[string]any) string {
 // mostrarMenu envía al cliente un menú interactivo (botones o lista) con las opciones dadas.
 // Marca menuSent para que el llamador NO envíe además un texto. Si falla, pide usar texto.
 func (a *Agent) mostrarMenu(from string, args map[string]any) string {
+	// Tope de UNA pregunta por turno: si ya se envió un menú en este turno, NO enviamos otro.
+	// Evita que el modelo encadene color + cantidad de un tiro (y se adelante asumiendo la
+	// elección). El segundo menú se rechaza y se le pide al modelo esperar la respuesta.
+	if a.menuSent {
+		return "Ya enviaste un menú en este turno. NO envíes otro menú ni otra pregunta: espera a que el cliente responda el que ya mandaste."
+	}
 	cuerpo := strings.TrimSpace(str(args["cuerpo"]))
 	var opciones []string
 	if raw, ok := args["opciones"].([]any); ok {
