@@ -92,6 +92,34 @@ func (c *Client) WppOrder(jwt string, latitude, longitude float64, idtipopago in
 	return &result, nil
 }
 
+// WppRegistrarPedidoNoAsignado registra un pedido que NO se pudo asignar (no hubo repartidor):
+// el cliente rechazó esperar, o se vencieron los 5 min de espera sin conductor. El backend lo
+// guarda en estado "no asignado" para gestión manual. Endpoint: POST /wppRegistrarPedidoNoAsignado/.
+// Best-effort desde el bot (no bloquea el flujo del cliente).
+func (c *Client) WppRegistrarPedidoNoAsignado(jwt string, latitude, longitude float64, idtipopago int, productos []OrderProduct) error {
+	items := make([]map[string]any, 0, len(productos))
+	for _, p := range productos {
+		item := map[string]any{
+			"idcategoria": p.IDCategoria,
+			"idproducto":  p.IDProducto,
+			"cantidad":    p.Cantidad,
+			"idcolor":     nil,
+		}
+		if p.IDColor > 0 {
+			item["idcolor"] = p.IDColor
+		}
+		items = append(items, item)
+	}
+
+	_, err := c.post("/wppRegistrarPedidoNoAsignado/", map[string]any{
+		"latitude":   latitude,
+		"longitude":  longitude,
+		"idtipopago": idtipopago,
+		"productos":  items,
+	}, jwt)
+	return err
+}
+
 // RatingOrder registra la calificación (1-5) y un comentario opcional del cliente sobre el
 // conductor de un pedido entregado (POST /georoutes/ratingOrder/), con el JWT del cliente.
 func (c *Client) RatingOrder(jwt string, idpedido, calificacion int, observacion string) error {

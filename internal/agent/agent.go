@@ -678,11 +678,36 @@ func (a *Agent) esperarConductor(from string) string {
 		"avisas apenas se asigne (o si en unos minutos no hay disponible). Pídele que esté atento por aquí."
 }
 
-// cancelarEspera descarta el pedido en espera cuando el cliente NO quiere esperar.
+// cancelarEspera descarta el pedido en espera cuando el cliente NO quiere esperar. Antes de
+// descartarlo lo registra como NO ASIGNADO en el backend, para gestión manual.
 func (a *Agent) cancelarEspera(from string) string {
+	a.registrarNoAsignado(from)
 	a.store.ClearPendingWait(from)
 	a.store.ClearHistory(from)
 	return "El cliente no quiso esperar. Despídete con: \"Muchas gracias, espero poder ayudarte la próxima vez. 🙌\""
+}
+
+// registrarNoAsignado guarda el pedido pendiente como NO ASIGNADO en el backend (gestión manual).
+// Best-effort: si algo falla, solo se loguea (nunca rompe el flujo del cliente).
+func (a *Agent) registrarNoAsignado(from string) {
+	w, ok := a.store.GetPendingWait(from)
+	if !ok || w.IDProducto == 0 {
+		return
+	}
+	account, okA := a.store.GetAccount(from)
+	loc, okL := a.store.GetLocation(from)
+	if !okA || !okL {
+		return
+	}
+	tokens, err := a.gr.Login(account.Username, account.Password)
+	if err != nil {
+		log.Printf("[no-asignado] login falló para %s: %v", from, err)
+		return
+	}
+	if err := a.gr.WppRegistrarPedidoNoAsignado(tokens.Access, loc.Latitude, loc.Longitude, w.IDTipoPago,
+		[]georoutes.OrderProduct{{IDCategoria: w.IDCategoria, IDProducto: w.IDProducto, IDColor: w.IDColor, Cantidad: w.Cantidad}}); err != nil {
+		log.Printf("[no-asignado] registro falló para %s: %v", from, err)
+	}
 }
 
 // startWaitForDriver corre en segundo plano: reintenta la asignación cada 30s durante 5 min. En
@@ -737,7 +762,18 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 				break
 			}
 		}
-		// Se agotaron los 5 min sin repartidor.
+		// Se agotaron los 5 min sin repartidor -> registrar el pedido como NO ASIGNADO (gestión
+		// manual). Best-effort: si falla, solo se loguea.
+		if account, okA := store.GetAccount(from); okA {
+			if loc, okL := store.GetLocation(from); okL {
+				if tokens, err := gr.Login(account.Username, account.Password); err == nil {
+					if err := gr.WppRegistrarPedidoNoAsignado(tokens.Access, loc.Latitude, loc.Longitude, w.IDTipoPago,
+						[]georoutes.OrderProduct{{IDCategoria: w.IDCategoria, IDProducto: w.IDProducto, IDColor: w.IDColor, Cantidad: w.Cantidad}}); err != nil {
+						log.Printf("[no-asignado] registro (timeout) falló para %s: %v", from, err)
+					}
+				}
+			}
+		}
 		store.ClearPendingWait(from)
 		store.ClearHistory(from)
 		_ = whatsapp.SendText(cfg, from, "Te pedimos disculpas 🙏. Por ahora no hay ningún repartidor disponible "+
