@@ -452,7 +452,12 @@ func (a *Agent) runTool(from, name string, args map[string]any) string {
 		a.escalated = true
 		motivo, _ := args["motivo"].(string)
 		resumen, _ := args["resumen"].(string)
-		return escalation.NotifyOwner(a.cfg, from, motivo, resumen)
+		id := a.crearTicketSoporte(from, motivo, resumen)
+		if id > 0 {
+			return fmt.Sprintf("Se creó el caso de soporte #%d y el equipo fue notificado. Dile al cliente que "+
+				"su caso quedó registrado y que pronto lo contactará una persona del equipo.", id)
+		}
+		return "No se pudo registrar el caso, pero el equipo fue notificado. Dile al cliente que pronto lo contactarán."
 
 	case "verificar_cliente":
 		return a.verificarCliente(from, args)
@@ -468,6 +473,8 @@ func (a *Agent) runTool(from, name string, args map[string]any) string {
 		result := a.registrarPedido(from, args)
 		if strings.Contains(result, "dueño") || strings.Contains(result, "Deriva") {
 			a.escalated = true
+			// Antes este caso se perdía en silencio; ahora también deja su ticket de soporte.
+			a.crearTicketSoporte(from, "Fallo al registrar un pedido", result)
 		}
 		return result
 
@@ -679,6 +686,18 @@ func (a *Agent) esperarConductor(from string) string {
 	a.startWaitForDriver(from, w)
 	return "El cliente aceptó esperar. Confírmale con calidez que estás buscando un repartidor y que le " +
 		"avisas apenas se asigne (o si en unos minutos no hay disponible). Pídele que esté atento por aquí."
+}
+
+// crearTicketSoporte crea el TICKET de la escalación (durable, se gestiona desde el panel), deja
+// constancia en la auditoría del chat y notifica al equipo por CORREO (async, best-effort).
+// Devuelve el id del ticket (0 si no se pudo crear).
+func (a *Agent) crearTicketSoporte(from, motivo, resumen string) int64 {
+	id := a.store.CreateTicket(from, motivo, resumen)
+	if id > 0 {
+		a.store.LogMessage(from, "system", fmt.Sprintf("🎫 Ticket de soporte #%d creado — %s", id, motivo))
+	}
+	go escalation.SendSupportEmail(a.cfg, id, from, motivo, resumen)
+	return id
 }
 
 // cancelarEspera descarta el pedido en espera cuando el cliente NO quiere esperar. Antes de

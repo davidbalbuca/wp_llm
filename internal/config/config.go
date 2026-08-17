@@ -36,6 +36,13 @@ type Config struct {
 	// AuditLogDays es cuántos días se conserva el registro de auditoría (message_log) de las
 	// conversaciones, para revisarlas desde la web. Parametrizable; default 15.
 	AuditLogDays int
+	// SMTP para notificar por CORREO los tickets de soporte (escalaciones). Si falta host o
+	// destinatario, la notificación por correo queda apagada (el ticket igual se crea).
+	SMTPHost       string
+	SMTPPort       string
+	SMTPUser       string
+	SMTPPassword   string
+	SupportEmailTo string
 	// HumanTakeoverTimeout es la inactividad tras la cual un chat en control HUMANO vuelve solo
 	// al bot (para que un pedido nuevo lo atienda el bot y no quede colgado). Default 3h.
 	HumanTakeoverTimeout time.Duration
@@ -83,5 +90,10 @@ func Load() Config {
 		DBPath:          os.Getenv("DB_PATH"),
 		AuditLogDays:    optionalInt("AUDIT_LOG_DAYS", 15),
 		HumanTakeoverTimeout: time.Duration(optionalInt("HUMAN_TAKEOVER_TIMEOUT_MIN", 180)) * time.Minute,
+		SMTPHost:       os.Getenv("SMTP_HOST"),
+		SMTPPort:       optional("SMTP_PORT", "587"),
+		SMTPUser:       os.Getenv("SMTP_USER"),
+		SMTPPassword:   os.Getenv("SMTP_PASSWORD"),
+		SupportEmailTo: os.Getenv("SUPPORT_EMAIL_TO"),
 	}
 }

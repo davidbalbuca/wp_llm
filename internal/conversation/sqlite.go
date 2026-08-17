@@ -170,7 +170,20 @@ CREATE TABLE IF NOT EXISTS chat_control (
     phone      TEXT    PRIMARY KEY,
     mode       TEXT    NOT NULL,
     updated_at INTEGER NOT NULL
-);`
+);
+
+-- Tickets de SOPORTE (escalaciones del bot). Durables: NO se purgan (histórico de casos).
+CREATE TABLE IF NOT EXISTS tickets (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone      TEXT    NOT NULL,
+    motivo     TEXT,
+    resumen    TEXT,
+    estado     TEXT    NOT NULL DEFAULT 'abierto',
+    solucion   TEXT,
+    created_at INTEGER NOT NULL,
+    closed_at  INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_tickets_estado ON tickets(estado, id);`
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, err
@@ -246,6 +259,61 @@ func (s *sqliteStore) ListConversations(limit int) []ConversationSummary {
 		out[i].Mode = s.GetChatMode(out[i].Phone)
 	}
 	return out
+}
+
+func (s *sqliteStore) CreateTicket(phone, motivo, resumen string) int64 {
+	res, err := s.db.Exec(
+		`INSERT INTO tickets(phone, motivo, resumen, estado, created_at) VALUES(?, ?, ?, ?, ?)`,
+		phone, motivo, resumen, TicketAbierto, time.Now().Unix())
+	if err != nil {
+		log.Printf("[sqlite] CreateTicket %s: %v", phone, err)
+		return 0
+	}
+	id, _ := res.LastInsertId()
+	return id
+}
+
+func (s *sqliteStore) ListTickets(estado string, limit int) []Ticket {
+	if limit <= 0 {
+		limit = 200
+	}
+	q := `SELECT id, phone, COALESCE(motivo,''), COALESCE(resumen,''), estado, COALESCE(solucion,''),
+                 created_at, COALESCE(closed_at,0) FROM tickets`
+	args := []any{}
+	if estado == TicketAbierto || estado == TicketCerrado {
+		q += ` WHERE estado = ?`
+		args = append(args, estado)
+	}
+	q += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		log.Printf("[sqlite] ListTickets: %v", err)
+		return nil
+	}
+	defer rows.Close()
+	var out []Ticket
+	for rows.Next() {
+		var t Ticket
+		if err := rows.Scan(&t.ID, &t.Phone, &t.Motivo, &t.Resumen, &t.Estado, &t.Solucion,
+			&t.CreatedAt, &t.ClosedAt); err != nil {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+func (s *sqliteStore) CloseTicket(id int64, solucion string) bool {
+	res, err := s.db.Exec(
+		`UPDATE tickets SET estado = ?, solucion = ?, closed_at = ? WHERE id = ? AND estado = ?`,
+		TicketCerrado, solucion, time.Now().Unix(), id, TicketAbierto)
+	if err != nil {
+		log.Printf("[sqlite] CloseTicket %d: %v", id, err)
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n > 0
 }
 
 func (s *sqliteStore) GetChatMode(phone string) string {

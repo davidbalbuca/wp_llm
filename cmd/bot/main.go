@@ -307,6 +307,33 @@ func main() {
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
+	// --- Tickets de soporte (panel web; secreto de canal) ---
+	// Lista de tickets: ?estado=abierto|cerrado (vacío = todos).
+	mux.HandleFunc("GET /internal/tickets", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		writeJSON(w, store.ListTickets(r.URL.Query().Get("estado"), atoiDefault(r.URL.Query().Get("limit"), 200)))
+	})
+	// Cerrar un ticket con su solución.
+	mux.HandleFunc("POST /internal/ticket-close", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			ID       int64  `json:"id"`
+			Solucion string `json:"solucion"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.ID <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		ok := store.CloseTicket(payload.ID, strings.TrimSpace(payload.Solucion))
+		writeJSON(w, map[string]any{"ok": ok})
+	})
+
 	log.Printf("Modelo Gemini: %s", cfg.GeminiModel)
 	log.Fatal(http.ListenAndServe(":"+cfg.Port, mux))
 }
@@ -442,7 +469,13 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	if err != nil {
 		log.Printf("[server] Error procesando mensaje: %v", err)
 		_ = replyClient(cfg, store, inc.From, "Disculpa, tuvimos un inconveniente técnico. Ya avisé a nuestro equipo para que te contacte.")
-		escalation.NotifyOwner(cfg, inc.From, "Error técnico del agente", "El cliente envió: \""+messageForAgent+"\". La IA falló al responder.")
+		// Ticket de soporte + correo al equipo (antes era un WhatsApp al dueño que podía perderse).
+		resumenErr := "El cliente envió: \"" + messageForAgent + "\". La IA falló al responder."
+		tid := store.CreateTicket(inc.From, "Error técnico del agente", resumenErr)
+		if tid > 0 {
+			store.LogMessage(inc.From, "system", fmt.Sprintf("🎫 Ticket de soporte #%d creado — error técnico", tid))
+		}
+		go escalation.SendSupportEmail(cfg, tid, inc.From, "Error técnico del agente", resumenErr)
 		return
 	}
 

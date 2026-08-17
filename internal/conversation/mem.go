@@ -25,6 +25,8 @@ type memStore struct {
 	pendingWait   map[string]PendingWait   // teléfono -> pedido esperando conductor (reintento 5 min)
 	messageLog    map[string][]LoggedMessage // teléfono -> auditoría de la conversación
 	chatMode      map[string]string          // teléfono -> "bot" | "human"
+	tickets       []Ticket                   // tickets de soporte (escalaciones)
+	nextTicketID  int64
 }
 
 // NewMemStore crea un almacén en memoria vacío.
@@ -84,6 +86,49 @@ func (s *memStore) ListConversations(limit int) []ConversationSummary {
 		out = out[:limit]
 	}
 	return out
+}
+
+func (s *memStore) CreateTicket(phone, motivo, resumen string) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nextTicketID++
+	t := Ticket{ID: s.nextTicketID, Phone: phone, Motivo: motivo, Resumen: resumen,
+		Estado: TicketAbierto, CreatedAt: time.Now().Unix()}
+	s.tickets = append(s.tickets, t)
+	return t.ID
+}
+
+func (s *memStore) ListTickets(estado string, limit int) []Ticket {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []Ticket
+	for i := len(s.tickets) - 1; i >= 0; i-- {
+		t := s.tickets[i]
+		if estado == TicketAbierto || estado == TicketCerrado {
+			if t.Estado != estado {
+				continue
+			}
+		}
+		out = append(out, t)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func (s *memStore) CloseTicket(id int64, solucion string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.tickets {
+		if s.tickets[i].ID == id && s.tickets[i].Estado == TicketAbierto {
+			s.tickets[i].Estado = TicketCerrado
+			s.tickets[i].Solucion = solucion
+			s.tickets[i].ClosedAt = time.Now().Unix()
+			return true
+		}
+	}
+	return false
 }
 
 func (s *memStore) GetChatMode(phone string) string {

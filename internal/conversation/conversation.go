@@ -51,6 +51,26 @@ type ConversationSummary struct {
 	LastAt      int64  `json:"last_at"`
 }
 
+// Estados de un ticket de soporte.
+const (
+	TicketAbierto = "abierto"
+	TicketCerrado = "cerrado"
+)
+
+// Ticket es un caso de SOPORTE creado cuando el bot escala (cliente pide un humano, la IA no
+// puede resolver, o hubo un error técnico). Se gestiona desde el panel: un agente lo revisa,
+// interactúa con el cliente (chat/llamada) y lo cierra escribiendo la solución.
+type Ticket struct {
+	ID        int64  `json:"id"`
+	Phone     string `json:"phone"`
+	Motivo    string `json:"motivo"`
+	Resumen   string `json:"resumen"`
+	Estado    string `json:"estado"` // "abierto" | "cerrado"
+	Solucion  string `json:"solucion"`
+	CreatedAt int64  `json:"created_at"`
+	ClosedAt  int64  `json:"closed_at"` // 0 si sigue abierto
+}
+
 // Location es la última ubicación GPS que compartió un cliente por WhatsApp.
 // Se usa para registrar el pedido en el backend, que requiere latitude/longitude.
 type Location struct {
@@ -209,6 +229,14 @@ type Store interface {
 	GetChatMode(phone string) string
 	// SetChatMode fija el modo del chat ("bot" o "human").
 	SetChatMode(phone, mode string)
+
+	// --- Tickets de soporte (escalaciones; durables, se gestionan desde la web) ---
+	// CreateTicket crea un ticket ABIERTO y devuelve su id (0 si falló).
+	CreateTicket(phone, motivo, resumen string) int64
+	// ListTickets lista tickets por estado ("abierto", "cerrado" o "" = todos), recientes primero.
+	ListTickets(estado string, limit int) []Ticket
+	// CloseTicket cierra un ticket con su solución. Devuelve false si no existe o ya está cerrado.
+	CloseTicket(id int64, solucion string) bool
 }
 
 // turn es la forma serializable de un turno de conversación. Se usa para persistir
