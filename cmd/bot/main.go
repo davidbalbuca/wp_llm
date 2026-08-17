@@ -450,7 +450,11 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	// no mandamos además el texto de respuesta (evita duplicar la pregunta).
 	if ag.MenuSent() {
 		log.Printf("[webhook] menú interactivo enviado a %s ✔", inc.From)
-		store.LogMessage(inc.From, "model", "[menú interactivo enviado]")
+		menuTxt := ag.LastMenuText()
+		if menuTxt == "" {
+			menuTxt = "menú interactivo enviado"
+		}
+		store.LogMessage(inc.From, "model", "📋 "+menuTxt)
 		ag.ClearMenuSent()
 		return
 	}

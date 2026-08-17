@@ -116,6 +116,9 @@ func (a *Agent) ClearEscalated()   { a.escalated = false }
 func (a *Agent) MenuSent() bool  { return a.menuSent }
 func (a *Agent) ClearMenuSent()  { a.menuSent = false }
 
+// LastMenuText devuelve la pregunta + opciones del último menú enviado (para auditar el chat).
+func (a *Agent) LastMenuText() string { return a.lastMenuText }
+
 // New crea un Agent con el cliente de Gemini y las herramientas declaradas.
 func New(ctx context.Context, cfg config.Config, store conversation.Store, catalogClient *catalog.Client, grClient *georoutes.Client) (*Agent, error) {
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
