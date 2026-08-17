@@ -23,6 +23,8 @@ type memStore struct {
 	orderPhone    map[int]string           // pedido_id -> teléfono de WhatsApp con el que se hizo
 	activePedido  map[string]int           // teléfono -> id del pedido activo (para cancelar)
 	pendingWait   map[string]PendingWait   // teléfono -> pedido esperando conductor (reintento 5 min)
+	messageLog    map[string][]LoggedMessage // teléfono -> auditoría de la conversación
+	chatMode      map[string]string          // teléfono -> "bot" | "human"
 }
 
 // NewMemStore crea un almacén en memoria vacío.
@@ -40,7 +42,66 @@ func NewMemStore() Store {
 		orderPhone:    make(map[int]string),
 		activePedido:  make(map[string]int),
 		pendingWait:   make(map[string]PendingWait),
+		messageLog:    make(map[string][]LoggedMessage),
+		chatMode:      make(map[string]string),
 	}
+}
+
+func (s *memStore) LogMessage(phone, role, content string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.messageLog[phone] = append(s.messageLog[phone], LoggedMessage{Role: role, Content: content, CreatedAt: time.Now().Unix()})
+}
+
+func (s *memStore) GetConversation(phone string, limit int) []LoggedMessage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	src := s.messageLog[phone]
+	if limit > 0 && len(src) > limit {
+		src = src[len(src)-limit:]
+	}
+	out := make([]LoggedMessage, len(src))
+	copy(out, src)
+	return out
+}
+
+func (s *memStore) ListConversations(limit int) []ConversationSummary {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []ConversationSummary
+	for phone, msgs := range s.messageLog {
+		if len(msgs) == 0 {
+			continue
+		}
+		last := msgs[len(msgs)-1]
+		mode := s.chatMode[phone]
+		if mode == "" {
+			mode = ChatModeBot
+		}
+		out = append(out, ConversationSummary{Phone: phone, Mode: mode, LastMessage: last.Content, LastAt: last.CreatedAt})
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+func (s *memStore) GetChatMode(phone string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if m := s.chatMode[phone]; m != "" {
+		return m
+	}
+	return ChatModeBot
+}
+
+func (s *memStore) SetChatMode(phone, mode string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if mode != ChatModeHuman {
+		mode = ChatModeBot
+	}
+	s.chatMode[phone] = mode
 }
 
 func (s *memStore) History(phone string) []*genai.Content {

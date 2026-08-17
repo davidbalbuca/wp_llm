@@ -4,7 +4,9 @@ package config
 import (
 	"log"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Config agrupa toda la configuración del servicio.
@@ -31,6 +33,12 @@ type Config struct {
 	// DBPath es la ruta del archivo SQLite para persistir el historial.
 	// Si está vacía, el bot usa el almacén en memoria (desarrollo).
 	DBPath string
+	// AuditLogDays es cuántos días se conserva el registro de auditoría (message_log) de las
+	// conversaciones, para revisarlas desde la web. Parametrizable; default 15.
+	AuditLogDays int
+	// HumanTakeoverTimeout es la inactividad tras la cual un chat en control HUMANO vuelve solo
+	// al bot (para que un pedido nuevo lo atienda el bot y no quede colgado). Default 3h.
+	HumanTakeoverTimeout time.Duration
 }
 
 func required(k string) string {
@@ -44,6 +52,15 @@ func required(k string) string {
 func optional(k, def string) string {
 	if v := os.Getenv(k); v != "" {
 		return v
+	}
+	return def
+}
+
+func optionalInt(k string, def int) int {
+	if v := os.Getenv(k); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return def
 }
@@ -64,5 +81,7 @@ func Load() Config {
 		CatalogUser:     os.Getenv("CATALOG_USER"),
 		CatalogPassword: os.Getenv("CATALOG_PASSWORD"),
 		DBPath:          os.Getenv("DB_PATH"),
+		AuditLogDays:    optionalInt("AUDIT_LOG_DAYS", 15),
+		HumanTakeoverTimeout: time.Duration(optionalInt("HUMAN_TAKEOVER_TIMEOUT_MIN", 180)) * time.Minute,
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -78,6 +79,25 @@ func looksLikeLeakedJSON(s string) bool {
 // refrescarlo. Balance entre reflejar cambios pronto y no consultar en cada mensaje.
 const catalogTTL = 5 * time.Minute
 
+// replyClient envía un mensaje al cliente y lo registra en la auditoría (message_log), para que
+// quede en el historial durable de la conversación.
+func replyClient(cfg config.Config, store conversation.Store, phone, text string) error {
+	store.LogMessage(phone, "model", text)
+	return whatsapp.SendText(cfg, phone, text)
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func atoiDefault(s string, def int) int {
+	if n, err := strconv.Atoi(s); err == nil && n > 0 {
+		return n
+	}
+	return def
+}
+
 func main() {
 	_ = godotenv.Load() // carga .env si existe
 	cfg := config.Load()
@@ -85,7 +105,7 @@ func main() {
 	// Selección del almacén de estado: SQLite si hay DB_PATH, memoria en caso contrario.
 	var store conversation.Store
 	if cfg.DBPath != "" {
-		ss, err := conversation.NewSQLiteStore(cfg.DBPath)
+		ss, err := conversation.NewSQLiteStore(cfg.DBPath, cfg.AuditLogDays)
 		if err != nil {
 			log.Fatalf("No se pudo abrir SQLite (%s): %v", cfg.DBPath, err)
 		}
@@ -217,6 +237,76 @@ func main() {
 	})
 
 	log.Printf("Servidor escuchando en http://localhost:%s", cfg.Port)
+	// --- Web/panel: revisar y controlar conversaciones (protegido por el secreto de canal) ---
+	// Lista de chats recientes (número, último mensaje, modo bot/humano).
+	mux.HandleFunc("GET /internal/conversations", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		writeJSON(w, store.ListConversations(atoiDefault(r.URL.Query().Get("limit"), 100)))
+	})
+	// Conversación completa de un número (para revisarla).
+	mux.HandleFunc("GET /internal/conversation", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		phone := strings.TrimSpace(r.URL.Query().Get("phone"))
+		if phone == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{
+			"phone":    phone,
+			"mode":     store.GetChatMode(phone),
+			"messages": store.GetConversation(phone, atoiDefault(r.URL.Query().Get("limit"), 300)),
+		})
+	})
+	// Cambiar el modo de un chat: "bot" (responde el bot) o "human" (respondes tú desde la web).
+	mux.HandleFunc("POST /internal/chat-control", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			Phone string `json:"phone"`
+			Mode  string `json:"mode"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Phone) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		store.SetChatMode(payload.Phone, payload.Mode)
+		if payload.Mode == conversation.ChatModeHuman {
+			store.TouchActivity(payload.Phone) // arranca el contador de inactividad del control humano
+		}
+		writeJSON(w, map[string]any{"phone": payload.Phone, "mode": store.GetChatMode(payload.Phone)})
+	})
+	// Enviar un mensaje al cliente desde la web (respuesta manual del humano). Lo registra en el audit.
+	mux.HandleFunc("POST /internal/send-message", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			Phone string `json:"phone"`
+			Text  string `json:"text"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Phone) == "" || strings.TrimSpace(payload.Text) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		store.TouchActivity(payload.Phone) // mantiene viva la sesión de control humano
+		store.LogMessage(payload.Phone, "human", payload.Text)
+		if err := whatsapp.SendText(cfg, payload.Phone, payload.Text); err != nil {
+			log.Printf("[send-message] error enviando a %s: %v", payload.Phone, err)
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	})
+
 	log.Printf("Modelo Gemini: %s", cfg.GeminiModel)
 	log.Fatal(http.ListenAndServe(":"+cfg.Port, mux))
 }
@@ -255,13 +345,40 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	// conversación NUEVA: limpiamos el historial anterior para arrancar fresco, sin
 	// arrastrar un pedido a medias ni depender de contar turnos. Un pedido en curso
 	// (draft OTP) también se descarta por inactividad.
-	if last, ok := store.LastActivity(inc.From); ok && time.Since(last) > conversation.SessionGap {
+	last, hasLast := store.LastActivity(inc.From)
+	if hasLast && time.Since(last) > conversation.SessionGap {
 		log.Printf("[webhook] nueva sesión para %s (inactivo %s); se limpia historial", inc.From, time.Since(last).Round(time.Minute))
 		store.ClearHistory(inc.From)
 		store.ClearOrderDraft(inc.From)
 		store.ClearPendingVerification(inc.From)
 	}
+
+	// --- Control humano (takeover) ---
+	// Si el chat está tomado por un humano pero lleva más de HumanTakeoverTimeout inactivo, vuelve
+	// SOLO al bot (para que un pedido NUEVO lo atienda el bot y no quede colgado esperando a alguien).
+	humanControlled := store.GetChatMode(inc.From) == conversation.ChatModeHuman
+	if humanControlled && (!hasLast || time.Since(last) > cfg.HumanTakeoverTimeout) {
+		log.Printf("[webhook] control humano expiró por inactividad para %s; vuelve al bot", inc.From)
+		store.SetChatMode(inc.From, conversation.ChatModeBot)
+		humanControlled = false
+	}
 	store.TouchActivity(inc.From)
+
+	// Auditoría: registra el mensaje ENTRANTE del cliente (siempre, incluso en control humano).
+	inboundAudit := strings.TrimSpace(inc.Text)
+	if inc.HasLocation {
+		inboundAudit = fmt.Sprintf("📍 ubicación: %.6f, %.6f", inc.Latitude, inc.Longitude)
+	}
+	if inboundAudit != "" {
+		store.LogMessage(inc.From, "user", inboundAudit)
+	}
+
+	// En control HUMANO el bot NO responde: solo deja registrado el mensaje para que un humano
+	// conteste desde la web. (Las notificaciones de pedido llegó/entregado siguen igual.)
+	if humanControlled {
+		log.Printf("[webhook] chat en control humano; el bot no responde a %s", inc.From)
+		return
+	}
 
 	// Determina el texto a procesar por la IA.
 	messageForAgent := inc.Text
@@ -287,7 +404,7 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 
 	// Mensaje no-texto y sin ubicación (imagen, audio, etc.): pedimos texto.
 	if messageForAgent == "" {
-		_ = whatsapp.SendText(cfg, inc.From, "Por ahora solo puedo leer mensajes de texto y ubicaciones. Por favor, escribe tu consulta. 🙂")
+		_ = replyClient(cfg, store, inc.From, "Por ahora solo puedo leer mensajes de texto y ubicaciones. Por favor, escribe tu consulta. 🙂")
 		return
 	}
 
@@ -305,7 +422,7 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 				log.Printf("[server] Error retomando pedido de %s: %v", inc.From, err)
 				resumeReply = "¡Tu cuenta ya está verificada ✅! Cuéntame, ¿qué cilindro necesitas y cuántos?"
 			}
-			_ = whatsapp.SendText(cfg, inc.From, resumeReply)
+			_ = replyClient(cfg, store, inc.From, resumeReply)
 			if ag.DidEscalate() {
 				store.ClearHistory(inc.From)
 				store.ClearPendingVerification(inc.From)
@@ -316,7 +433,7 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		if reply != "" {
 			log.Printf("[webhook] código OTP procesado para %s", inc.From)
 			log.Printf("[webhook] respuesta: %q", reply)
-			_ = whatsapp.SendText(cfg, inc.From, reply)
+			_ = replyClient(cfg, store, inc.From, reply)
 			return
 		}
 	}
@@ -324,7 +441,7 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	reply, err := ag.HandleMessage(context.Background(), inc.From, messageForAgent)
 	if err != nil {
 		log.Printf("[server] Error procesando mensaje: %v", err)
-		_ = whatsapp.SendText(cfg, inc.From, "Disculpa, tuvimos un inconveniente técnico. Ya avisé a nuestro equipo para que te contacte.")
+		_ = replyClient(cfg, store, inc.From, "Disculpa, tuvimos un inconveniente técnico. Ya avisé a nuestro equipo para que te contacte.")
 		escalation.NotifyOwner(cfg, inc.From, "Error técnico del agente", "El cliente envió: \""+messageForAgent+"\". La IA falló al responder.")
 		return
 	}
@@ -333,6 +450,7 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	// no mandamos además el texto de respuesta (evita duplicar la pregunta).
 	if ag.MenuSent() {
 		log.Printf("[webhook] menú interactivo enviado a %s ✔", inc.From)
+		store.LogMessage(inc.From, "model", "[menú interactivo enviado]")
 		ag.ClearMenuSent()
 		return
 	}
@@ -345,7 +463,7 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		log.Printf("[webhook] fuga de JSON descartada para %s: %.150q", inc.From, reply)
 		reply = "Disculpa, tuve un pequeño inconveniente 🙈. ¿Me repites qué necesitas, por favor?"
 	}
-	if err := whatsapp.SendText(cfg, inc.From, reply); err != nil {
+	if err := replyClient(cfg, store, inc.From, reply); err != nil {
 		log.Printf("[server] Error enviando a %s: %v", inc.From, err)
 		return
 	}
@@ -382,6 +500,7 @@ func notifyOrderFinished(cfg config.Config, store conversation.Store, pedidoID i
 	} else {
 		msg += "¿Cómo calificarías a tu repartidor? Responde con un número del 1 al 5 ⭐ (y si quieres, un breve comentario)."
 	}
+	store.LogMessage(phone, "system", msg)
 	if err := whatsapp.SendText(cfg, phone, msg); err != nil {
 		log.Printf("[order-finished] error enviando a %s: %v", phone, err)
 	}
@@ -399,6 +518,7 @@ func notifyOrderArrived(cfg config.Config, store conversation.Store, pedidoID in
 		return
 	}
 	msg := "🛵 El conductor llegó a tu ubicación. Por favor, sal a recibir tu pedido. 📦"
+	store.LogMessage(phone, "system", msg)
 	if err := whatsapp.SendText(cfg, phone, msg); err != nil {
 		log.Printf("[order-arrived] error enviando a %s: %v", phone, err)
 	}
@@ -418,6 +538,7 @@ func notifyOrderCancelled(cfg config.Config, store conversation.Store, pedidoID 
 	store.ClearActivePedido(phone)
 	store.ClearHistory(phone)
 	msg := "😔 Tu pedido fue cancelado por el conductor. Disculpa las molestias. Cuando quieras, puedes hacer un nuevo pedido."
+	store.LogMessage(phone, "system", msg)
 	if err := whatsapp.SendText(cfg, phone, msg); err != nil {
 		log.Printf("[order-cancelled] error enviando a %s: %v", phone, err)
 	}
@@ -439,6 +560,7 @@ func notifyOrderReassigned(cfg config.Config, store conversation.Store, pedidoID
 		msg += ": " + conductor
 	}
 	msg += ". ¡Ya va en camino!"
+	store.LogMessage(phone, "system", msg)
 	if err := whatsapp.SendText(cfg, phone, msg); err != nil {
 		log.Printf("[order-reassigned] error enviando a %s: %v", phone, err)
 	}

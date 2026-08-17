@@ -20,11 +20,16 @@ const convTTL = 24 * time.Hour
 // (sobrevive reinicios) sin necesidad de un servidor aparte. Apto para una instancia;
 // para varias máquinas compartiendo estado haría falta Redis o Postgres.
 type sqliteStore struct {
-	db *sql.DB
+	db       *sql.DB
+	auditTTL time.Duration // retención del message_log (auditoría de conversaciones)
 }
 
-// NewSQLiteStore abre (o crea) la base en dbPath, activa WAL y prepara el esquema.
-func NewSQLiteStore(dbPath string) (Store, error) {
+// NewSQLiteStore abre (o crea) la base en dbPath, activa WAL y prepara el esquema. `auditDays`
+// es cuántos días se conserva el registro de auditoría (message_log).
+func NewSQLiteStore(dbPath string, auditDays int) (Store, error) {
+	if auditDays <= 0 {
+		auditDays = 15
+	}
 	if dir := filepath.Dir(dbPath); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, err
@@ -145,12 +150,123 @@ CREATE TABLE IF NOT EXISTS pending_wait (
     phone      TEXT    PRIMARY KEY,
     data       TEXT    NOT NULL,
     created_at INTEGER NOT NULL
+);
+
+-- Registro de AUDITORÍA de conversaciones (durable). Guarda TODO lo dicho en un chat (mensajes del
+-- cliente, del bot, notificaciones del sistema y respuestas manuales). NO lo borra ClearHistory; se
+-- purga solo por retención (AUDIT_LOG_DAYS). Es aparte del historial del bot (tabla turns).
+CREATE TABLE IF NOT EXISTS message_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone      TEXT    NOT NULL,
+    role       TEXT    NOT NULL,
+    content    TEXT    NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_msglog_phone ON message_log(phone, id);
+CREATE INDEX IF NOT EXISTS idx_msglog_created ON message_log(created_at);
+
+-- Control del chat: modo "bot" (responde el bot) o "human" (control manual desde la web).
+CREATE TABLE IF NOT EXISTS chat_control (
+    phone      TEXT    PRIMARY KEY,
+    mode       TEXT    NOT NULL,
+    updated_at INTEGER NOT NULL
 );`
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, err
 	}
-	return &sqliteStore{db: db}, nil
+	return &sqliteStore{db: db, auditTTL: time.Duration(auditDays) * 24 * time.Hour}, nil
+}
+
+// LogMessage añade una línea al registro de auditoría y purga (perezosamente) lo más viejo que la
+// retención. Roles: "user" (cliente), "model" (bot), "system" (notificación), "human" (manual).
+func (s *sqliteStore) LogMessage(phone, role, content string) {
+	if _, err := s.db.Exec(
+		`INSERT INTO message_log(phone, role, content, created_at) VALUES(?, ?, ?, ?)`,
+		phone, role, content, time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] LogMessage %s: %v", phone, err)
+		return
+	}
+	minTime := time.Now().Add(-s.auditTTL).Unix()
+	if _, err := s.db.Exec(`DELETE FROM message_log WHERE created_at < ?`, minTime); err != nil {
+		log.Printf("[sqlite] purga message_log: %v", err)
+	}
+}
+
+// GetConversation devuelve las últimas `limit` líneas de auditoría de un chat, en orden cronológico.
+func (s *sqliteStore) GetConversation(phone string, limit int) []LoggedMessage {
+	if limit <= 0 {
+		limit = 300
+	}
+	rows, err := s.db.Query(`
+        SELECT role, content, created_at FROM (
+            SELECT id, role, content, created_at FROM message_log
+            WHERE phone = ? ORDER BY id DESC LIMIT ?
+        ) ORDER BY id ASC`, phone, limit)
+	if err != nil {
+		log.Printf("[sqlite] GetConversation %s: %v", phone, err)
+		return nil
+	}
+	defer rows.Close()
+	var out []LoggedMessage
+	for rows.Next() {
+		var m LoggedMessage
+		if err := rows.Scan(&m.Role, &m.Content, &m.CreatedAt); err != nil {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// ListConversations lista los chats con actividad reciente (último mensaje) + su modo.
+func (s *sqliteStore) ListConversations(limit int) []ConversationSummary {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.Query(`
+        SELECT m.phone, m.content, m.created_at FROM message_log m
+        JOIN (SELECT phone, MAX(id) AS mid FROM message_log GROUP BY phone) t ON t.mid = m.id
+        ORDER BY m.created_at DESC LIMIT ?`, limit)
+	if err != nil {
+		log.Printf("[sqlite] ListConversations: %v", err)
+		return nil
+	}
+	var out []ConversationSummary
+	for rows.Next() {
+		var c ConversationSummary
+		if err := rows.Scan(&c.Phone, &c.LastMessage, &c.LastAt); err != nil {
+			continue
+		}
+		out = append(out, c)
+	}
+	rows.Close()
+	// El modo se consulta aparte (evita anidar queries mientras se itera el cursor).
+	for i := range out {
+		out[i].Mode = s.GetChatMode(out[i].Phone)
+	}
+	return out
+}
+
+func (s *sqliteStore) GetChatMode(phone string) string {
+	var mode string
+	err := s.db.QueryRow(`SELECT mode FROM chat_control WHERE phone = ?`, phone).Scan(&mode)
+	if err != nil || mode == "" {
+		return ChatModeBot
+	}
+	return mode
+}
+
+func (s *sqliteStore) SetChatMode(phone, mode string) {
+	if mode != ChatModeHuman {
+		mode = ChatModeBot
+	}
+	if _, err := s.db.Exec(`
+        INSERT INTO chat_control(phone, mode, updated_at) VALUES(?, ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET mode=excluded.mode, updated_at=excluded.updated_at`,
+		phone, mode, time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] SetChatMode %s: %v", phone, err)
+	}
 }
 
 func (s *sqliteStore) History(phone string) []*genai.Content {

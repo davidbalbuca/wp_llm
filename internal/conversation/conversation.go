@@ -28,6 +28,29 @@ const maxTurns = 100
 // depender de contar turnos.
 const SessionGap = 40 * time.Minute
 
+// Modos de un chat para el control humano (takeover).
+const (
+	ChatModeBot   = "bot"   // el bot responde normalmente
+	ChatModeHuman = "human" // control manual: el bot NO responde; contesta un humano desde la web
+)
+
+// LoggedMessage es una línea del registro de auditoría (message_log): todo lo dicho en la
+// conversación, incluidas las notificaciones del sistema. Se conserva varios días (durable, NO lo
+// borra ClearHistory ni el TTL corto del historial del bot), para revisar/gestionar desde la web.
+type LoggedMessage struct {
+	Role      string `json:"role"`       // "user" (cliente) | "model" (bot) | "system" (notificación) | "human" (respuesta manual)
+	Content   string `json:"content"`
+	CreatedAt int64  `json:"created_at"` // unix (segundos)
+}
+
+// ConversationSummary resume un chat para la lista de conversaciones de la web.
+type ConversationSummary struct {
+	Phone       string `json:"phone"`
+	Mode        string `json:"mode"`
+	LastMessage string `json:"last_message"`
+	LastAt      int64  `json:"last_at"`
+}
+
 // Location es la última ubicación GPS que compartió un cliente por WhatsApp.
 // Se usa para registrar el pedido en el backend, que requiere latitude/longitude.
 type Location struct {
@@ -173,6 +196,19 @@ type Store interface {
 	GetPendingWait(phone string) (PendingWait, bool)
 	// ClearPendingWait elimina el pedido en espera (al asignarse, cancelar o expirar).
 	ClearPendingWait(phone string)
+
+	// --- Auditoría de conversaciones (durable, para revisar/gestionar desde la web) ---
+	// LogMessage añade una línea al registro de auditoría. NO la borra ClearHistory ni el TTL
+	// corto del historial del bot; se conserva según la retención configurada (AUDIT_LOG_DAYS).
+	LogMessage(phone, role, content string)
+	// GetConversation devuelve las últimas `limit` líneas de auditoría de un chat (orden cronológico).
+	GetConversation(phone string, limit int) []LoggedMessage
+	// ListConversations lista los chats recientes con su último mensaje y modo.
+	ListConversations(limit int) []ConversationSummary
+	// GetChatMode devuelve el modo del chat ("bot" por defecto).
+	GetChatMode(phone string) string
+	// SetChatMode fija el modo del chat ("bot" o "human").
+	SetChatMode(phone, mode string)
 }
 
 // turn es la forma serializable de un turno de conversación. Se usa para persistir
