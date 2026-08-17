@@ -362,7 +362,7 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 			if len(opciones) >= 2 && len(opciones) <= 10 {
 				if err := whatsapp.SendMenu(a.cfg, from, mensaje, opciones); err == nil {
 					a.menuSent = true
-					a.lastMenuText = mensaje + " (opciones: " + strings.Join(opciones, " / ") + ")"
+					a.lastMenuText = mensaje + "\n• " + strings.Join(opciones, "\n• ")
 				}
 			}
 			// Enviara o no el menú, no dejamos el JSON crudo en el texto que se guarda/manda.
@@ -541,7 +541,7 @@ func (a *Agent) mostrarMenu(from string, args map[string]any) string {
 	a.menuSent = true
 	// Guardamos la pregunta del menú para el historial (ver Agent.lastMenuText): así, en el
 	// próximo mensaje, el modelo recuerda qué ofreció y no vuelve a mandar el mismo menú.
-	a.lastMenuText = cuerpo + " (opciones: " + strings.Join(opciones, " / ") + ")"
+	a.lastMenuText = cuerpo + "\n• " + strings.Join(opciones, "\n• ")
 	return "MENÚ ENVIADO al cliente con esas opciones. NO repitas las opciones por texto; espera a que elija."
 }
 
