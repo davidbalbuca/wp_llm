@@ -451,7 +451,8 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 			}
 			_ = replyClient(cfg, store, inc.From, resumeReply)
 			if ag.DidEscalate() {
-				store.ClearHistory(inc.From)
+				// Ya NO se borra el historial al escalar: el ticket queda registrado y la
+				// conversación sigue con contexto (un "gracias/no" recibe una despedida normal).
 				store.ClearPendingVerification(inc.From)
 				ag.ClearEscalated()
 			}
@@ -505,8 +506,9 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		return
 	}
 	if ag.DidEscalate() {
-		log.Printf("[webhook] escalation detectada, limpiando historial para %s", inc.From)
-		store.ClearHistory(inc.From)
+		// Ya NO se borra el historial al escalar (antes el próximo mensaje reiniciaba el flujo
+		// como conversación nueva). El ticket queda registrado y el chat sigue con contexto.
+		log.Printf("[webhook] escalation detectada para %s (ticket creado; historial se conserva)", inc.From)
 		store.ClearPendingVerification(inc.From)
 		ag.ClearEscalated()
 	}

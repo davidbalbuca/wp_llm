@@ -598,9 +598,16 @@ func (s *sqliteStore) SetPendingRating(phone string, rating PendingRating) {
 }
 
 func (s *sqliteStore) GetPendingRating(phone string) (PendingRating, bool) {
+	// Caducidad (RatingTTL): un pendiente viejo se ignora (y se purga perezosamente) para que
+	// el bot no pida la calificación en cada conversación por los siglos de los siglos.
+	minTime := time.Now().Add(-RatingTTL).Unix()
+	if _, err := s.db.Exec(`DELETE FROM pending_rating WHERE created_at < ?`, minTime); err != nil {
+		log.Printf("[sqlite] purga pending_rating: %v", err)
+	}
 	var rating PendingRating
 	err := s.db.QueryRow(
-		`SELECT pedido_id, conductor FROM pending_rating WHERE phone = ?`, phone).
+		`SELECT pedido_id, conductor FROM pending_rating WHERE phone = ? AND created_at >= ?`,
+		phone, minTime).
 		Scan(&rating.PedidoID, &rating.Conductor)
 	if err == sql.ErrNoRows {
 		return PendingRating{}, false

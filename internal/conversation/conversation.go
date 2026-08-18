@@ -28,6 +28,11 @@ const maxTurns = 100
 // depender de contar turnos.
 const SessionGap = 40 * time.Minute
 
+// RatingTTL es cuánto vale una calificación pendiente. Pasado este tiempo se descarta sola:
+// sin esto, un pendiente sin responder hacía que el bot pidiera la calificación en el saludo
+// de CADA conversación nueva, para siempre.
+const RatingTTL = 24 * time.Hour
+
 // Modos de un chat para el control humano (takeover).
 const (
 	ChatModeBot   = "bot"   // el bot responde normalmente

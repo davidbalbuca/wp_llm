@@ -286,9 +286,10 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 	// para que le pida (o registre) la calificación del repartidor.
 	if rating, ok := a.store.GetPendingRating(from); ok && rating.PedidoID > 0 {
 		systemPrompt += fmt.Sprintf("\n\nCALIFICACIÓN PENDIENTE: el cliente tiene un pedido recién ENTREGADO por el "+
-			"repartidor %s. Si el cliente te da una calificación del 1 al 5 (y opcionalmente un comentario), llama a "+
-			"calificar_conductor con esos datos. Si aún no la ha dado, pídele con amabilidad que califique del 1 al 5 "+
-			"a su repartidor. No insistas si prefiere no calificar.", rating.Conductor)
+			"repartidor %s. Si el cliente responde con un número del 1 al 5 (y opcionalmente un comentario), llama "+
+			"PRIMERO a calificar_conductor con ese número, ANTES de ofrecer menús, repetir pedidos o cualquier otro "+
+			"tema. Si aún no la ha dado, pídele con amabilidad que califique del 1 al 5 a su repartidor. Si prefiere "+
+			"no calificar o lo ignora, no insistas ni lo vuelvas a mencionar.", rating.Conductor)
 	}
 
 	cfg := &genai.GenerateContentConfig{
@@ -470,10 +471,13 @@ func (a *Agent) runTool(from, name string, args map[string]any) string {
 		return a.calificarConductor(from, args)
 
 	case "registrar_pedido":
+		antesEscalado := a.escalated
 		result := a.registrarPedido(from, args)
-		if strings.Contains(result, "dueño") || strings.Contains(result, "Deriva") {
-			a.escalated = true
-			// Antes este caso se perdía en silencio; ahora también deja su ticket de soporte.
+		// La escalación se marca EXPLÍCITAMENTE dentro de registrarPedido (a.escalated) solo en
+		// las derivaciones reales. Antes se adivinaba buscando "dueño" en el texto, y el mensaje
+		// del flujo de ESPERA ("NO derives al dueño...") disparaba un falso positivo que creaba
+		// tickets y borraba la conversación en un flujo normal.
+		if a.escalated && !antesEscalado {
 			a.crearTicketSoporte(from, "Fallo al registrar un pedido", result)
 		}
 		return result
@@ -637,6 +641,9 @@ func (a *Agent) calificarConductor(from string, args map[string]any) string {
 	// JWT fresco: la calificación puede llegar mucho después del pedido, re-autenticamos.
 	tokens, err := a.gr.Login(account.Username, account.Password)
 	if err != nil {
+		// Se limpia el pendiente TAMBIÉN aquí (antes este camino lo dejaba vivo y el saludo
+		// seguía pidiendo la calificación en cada conversación nueva).
+		a.store.ClearPendingRating(from)
 		return "No se pudo registrar la calificación en este momento (motivo: " + err.Error() + "). Agradécele igualmente."
 	}
 	if err := a.gr.RatingOrder(tokens.Access, rating.PedidoID, estrellas, comentario); err != nil {
@@ -853,6 +860,7 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 	// Catálogo: mapear el color elegido a (producto, color) y elegir la forma de pago.
 	contexto, disponible := a.catalog.Get()
 	if !disponible || contexto == nil {
+		a.escalated = true // derivación REAL (señal explícita; ya no se adivina por texto)
 		return "No puedo consultar el catálogo en este momento. Discúlpate con el cliente y deriva al dueño."
 	}
 	producto, color, ok := findProductByColor(contexto.Products, colorNombre)
@@ -862,6 +870,7 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 	}
 	idtipopago, ok := defaultPaymentID(contexto.Payments)
 	if !ok {
+		a.escalated = true
 		return "No hay una forma de pago configurada en el sistema. Deriva al dueño."
 	}
 
@@ -870,6 +879,7 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 	if !ok {
 		nueva, err := a.gr.WppGetOrCreateClient(identificacion, nombres, telefono)
 		if err != nil {
+			a.escalated = true
 			return "No se pudo registrar la cuenta del cliente (motivo: " + err.Error() + "). " +
 				"Informa al cliente y deriva al dueño."
 		}
@@ -883,12 +893,14 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 	if err != nil {
 		nueva, e2 := a.gr.WppGetOrCreateClient(identificacion, nombres, telefono)
 		if e2 != nil {
+			a.escalated = true
 			return "No se pudo autenticar al cliente (motivo: " + err.Error() + "). Deriva al dueño."
 		}
 		account = conversation.Account{Username: nueva.Username, Password: nueva.Password}
 		a.store.SetAccount(from, account)
 		tokens, err = a.gr.Login(account.Username, account.Password)
 		if err != nil {
+			a.escalated = true
 			return "No se pudo autenticar al cliente (motivo: " + err.Error() + "). Deriva al dueño."
 		}
 	}
@@ -923,6 +935,7 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 			})
 			return mensajeOfrecerEspera
 		}
+		a.escalated = true
 		return "No se pudo registrar el pedido (motivo: " + err.Error() + "). " +
 			"Informa al cliente del inconveniente y deriva al dueño para atención manual."
 	}

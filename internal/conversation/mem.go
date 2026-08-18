@@ -20,6 +20,7 @@ type memStore struct {
 	orderDrafts   map[string]OrderDraft
 	pendingVerif  map[string]Account       // pending OTP verification accounts
 	pendingRating map[string]PendingRating // pedidos entregados por calificar
+	pendingRatingAt map[string]time.Time   // cuándo se creó cada pendiente (para RatingTTL)
 	orderPhone    map[int]string           // pedido_id -> teléfono de WhatsApp con el que se hizo
 	activePedido  map[string]int           // teléfono -> id del pedido activo (para cancelar)
 	pendingWait   map[string]PendingWait   // teléfono -> pedido esperando conductor (reintento 5 min)
@@ -41,6 +42,7 @@ func NewMemStore() Store {
 		orderDrafts:   make(map[string]OrderDraft),
 		pendingVerif:  make(map[string]Account),
 		pendingRating: make(map[string]PendingRating),
+		pendingRatingAt: make(map[string]time.Time),
 		orderPhone:    make(map[int]string),
 		activePedido:  make(map[string]int),
 		pendingWait:   make(map[string]PendingWait),
@@ -289,12 +291,19 @@ func (s *memStore) SetPendingRating(phone string, rating PendingRating) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pendingRating[phone] = rating
+	s.pendingRatingAt[phone] = time.Now()
 }
 
 func (s *memStore) GetPendingRating(phone string) (PendingRating, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rating, ok := s.pendingRating[phone]
+	// Caducidad (RatingTTL): un pendiente viejo se descarta.
+	if ok && time.Since(s.pendingRatingAt[phone]) > RatingTTL {
+		delete(s.pendingRating, phone)
+		delete(s.pendingRatingAt, phone)
+		return PendingRating{}, false
+	}
 	return rating, ok
 }
 
@@ -302,6 +311,7 @@ func (s *memStore) ClearPendingRating(phone string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.pendingRating, phone)
+	delete(s.pendingRatingAt, phone)
 }
 
 func (s *memStore) SetOrderPhone(pedidoID int, phone string) {
