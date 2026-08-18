@@ -218,6 +218,25 @@ func main() {
 		go notifyOrderCancelled(cfg, store, payload.PedidoID, payload.Telefono)
 	})
 
+	// Notificación INTERNA del backend: el pedido se cerró porque el CLIENTE NO SALIÓ a recibir
+	// (estado "no salió el cliente"). Mensaje específico; mismo secreto compartido.
+	mux.HandleFunc("POST /internal/order-no-show", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			PedidoID int    `json:"pedido_id"`
+			Telefono string `json:"telefono"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		go notifyOrderNoShow(cfg, store, payload.PedidoID, payload.Telefono)
+	})
+
 	mux.HandleFunc("POST /internal/order-reassigned", func(w http.ResponseWriter, r *http.Request) {
 		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -580,6 +599,26 @@ func notifyOrderCancelled(cfg config.Config, store conversation.Store, pedidoID 
 	store.LogMessage(phone, "system", msg)
 	if err := whatsapp.SendText(cfg, phone, msg); err != nil {
 		log.Printf("[order-cancelled] error enviando a %s: %v", phone, err)
+	}
+}
+
+// notifyOrderNoShow avisa al cliente por WhatsApp que su pedido se cerró porque NO salió a
+// recibirlo. Limpia el pedido activo y el historial (la próxima conversación arranca fresca).
+func notifyOrderNoShow(cfg config.Config, store conversation.Store, pedidoID int, telefono string) {
+	phone := telefono
+	if p, ok := store.GetOrderPhone(pedidoID); ok && p != "" {
+		phone = p
+	}
+	if phone == "" {
+		log.Printf("[order-no-show] pedido %d sin teléfono de contacto; se ignora", pedidoID)
+		return
+	}
+	store.ClearActivePedido(phone)
+	store.ClearHistory(phone)
+	msg := "🚚 El conductor llegó pero no saliste a recibir tu pedido 😔. Cuando quieras, puedes hacer un nuevo pedido."
+	store.LogMessage(phone, "system", msg)
+	if err := whatsapp.SendText(cfg, phone, msg); err != nil {
+		log.Printf("[order-no-show] error enviando a %s: %v", phone, err)
 	}
 }
 
