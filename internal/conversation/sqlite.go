@@ -172,6 +172,29 @@ CREATE TABLE IF NOT EXISTS chat_control (
     updated_at INTEGER NOT NULL
 );
 
+-- Entregas PROGRAMADAS (cliente escribió fuera de horario y agendó una hora). El scheduler
+-- las revisa y a la hora propuesta escribe al cliente para confirmar el pedido.
+CREATE TABLE IF NOT EXISTS scheduled_orders (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone           TEXT    NOT NULL,
+    identificacion  TEXT,
+    nombres         TEXT,
+    idcategoria     INTEGER,
+    idproducto      INTEGER,
+    idcolor         INTEGER,
+    cantidad        INTEGER,
+    idtipopago      INTEGER,
+    producto_nombre TEXT,
+    color_nombre    TEXT,
+    latitude        REAL,
+    longitude       REAL,
+    hora_propuesta  INTEGER NOT NULL,
+    estado          TEXT    NOT NULL DEFAULT 'pendiente',
+    confirm_sent_at INTEGER,
+    created_at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sched_estado ON scheduled_orders(estado, hora_propuesta);
+
 -- Tickets de SOPORTE (escalaciones del bot). Durables: NO se purgan (histórico de casos).
 CREATE TABLE IF NOT EXISTS tickets (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -259,6 +282,100 @@ func (s *sqliteStore) ListConversations(limit int) []ConversationSummary {
 		out[i].Mode = s.GetChatMode(out[i].Phone)
 	}
 	return out
+}
+
+func (s *sqliteStore) CreateScheduled(o ScheduledOrder) int64 {
+	res, err := s.db.Exec(`
+        INSERT INTO scheduled_orders(phone, identificacion, nombres, idcategoria, idproducto,
+            idcolor, cantidad, idtipopago, producto_nombre, color_nombre, latitude, longitude,
+            hora_propuesta, estado, created_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		o.Phone, o.Identificacion, o.Nombres, o.IDCategoria, o.IDProducto, o.IDColor,
+		o.Cantidad, o.IDTipoPago, o.ProductoNombre, o.ColorNombre, o.Latitude, o.Longitude,
+		o.HoraPropuesta, SchedulePendiente, time.Now().Unix())
+	if err != nil {
+		log.Printf("[sqlite] CreateScheduled %s: %v", o.Phone, err)
+		return 0
+	}
+	id, _ := res.LastInsertId()
+	return id
+}
+
+func (s *sqliteStore) scanScheduled(rows *sql.Rows) []ScheduledOrder {
+	var out []ScheduledOrder
+	for rows.Next() {
+		var o ScheduledOrder
+		if err := rows.Scan(&o.ID, &o.Phone, &o.Identificacion, &o.Nombres, &o.IDCategoria,
+			&o.IDProducto, &o.IDColor, &o.Cantidad, &o.IDTipoPago, &o.ProductoNombre,
+			&o.ColorNombre, &o.Latitude, &o.Longitude, &o.HoraPropuesta, &o.Estado,
+			&o.ConfirmSentAt, &o.CreatedAt); err != nil {
+			continue
+		}
+		out = append(out, o)
+	}
+	return out
+}
+
+const scheduledCols = `id, phone, COALESCE(identificacion,''), COALESCE(nombres,''),
+    COALESCE(idcategoria,0), COALESCE(idproducto,0), COALESCE(idcolor,0), COALESCE(cantidad,0),
+    COALESCE(idtipopago,0), COALESCE(producto_nombre,''), COALESCE(color_nombre,''),
+    COALESCE(latitude,0), COALESCE(longitude,0), hora_propuesta, estado,
+    COALESCE(confirm_sent_at,0), created_at`
+
+func (s *sqliteStore) DueScheduled(now int64) []ScheduledOrder {
+	rows, err := s.db.Query(`SELECT `+scheduledCols+` FROM scheduled_orders
+        WHERE estado = ? AND hora_propuesta <= ? ORDER BY hora_propuesta`, SchedulePendiente, now)
+	if err != nil {
+		log.Printf("[sqlite] DueScheduled: %v", err)
+		return nil
+	}
+	defer rows.Close()
+	return s.scanScheduled(rows)
+}
+
+func (s *sqliteStore) GetConfirmingSchedule(phone string) (ScheduledOrder, bool) {
+	rows, err := s.db.Query(`SELECT `+scheduledCols+` FROM scheduled_orders
+        WHERE phone = ? AND estado = ? ORDER BY id DESC LIMIT 1`, phone, ScheduleConfirmando)
+	if err != nil {
+		log.Printf("[sqlite] GetConfirmingSchedule %s: %v", phone, err)
+		return ScheduledOrder{}, false
+	}
+	defer rows.Close()
+	out := s.scanScheduled(rows)
+	if len(out) == 0 {
+		return ScheduledOrder{}, false
+	}
+	return out[0], true
+}
+
+func (s *sqliteStore) SetScheduledEstado(id int64, estado string) {
+	if _, err := s.db.Exec(`UPDATE scheduled_orders SET estado = ? WHERE id = ?`, estado, id); err != nil {
+		log.Printf("[sqlite] SetScheduledEstado %d: %v", id, err)
+	}
+}
+
+func (s *sqliteStore) MarkConfirmSent(id int64, ts int64) {
+	if _, err := s.db.Exec(`UPDATE scheduled_orders SET estado = ?, confirm_sent_at = ? WHERE id = ?`,
+		ScheduleConfirmando, ts, id); err != nil {
+		log.Printf("[sqlite] MarkConfirmSent %d: %v", id, err)
+	}
+}
+
+func (s *sqliteStore) ExpireConfirming(olderThan int64) {
+	if _, err := s.db.Exec(`UPDATE scheduled_orders SET estado = ? WHERE estado = ? AND confirm_sent_at < ?`,
+		ScheduleExpirado, ScheduleConfirmando, olderThan); err != nil {
+		log.Printf("[sqlite] ExpireConfirming: %v", err)
+	}
+}
+
+func (s *sqliteStore) LastClientMessageAt(phone string) (int64, bool) {
+	var ts sql.NullInt64
+	err := s.db.QueryRow(`SELECT MAX(created_at) FROM message_log WHERE phone = ? AND role = 'user'`,
+		phone).Scan(&ts)
+	if err != nil || !ts.Valid {
+		return 0, false
+	}
+	return ts.Int64, true
 }
 
 func (s *sqliteStore) CreateTicket(phone, motivo, resumen string) int64 {

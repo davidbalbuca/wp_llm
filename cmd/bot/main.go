@@ -354,6 +354,43 @@ func main() {
 		writeJSON(w, map[string]any{"ok": ok})
 	})
 
+	// --- Scheduler de entregas PROGRAMADAS ---
+	// Ticker de 60s (simple y a prueba de reinicios: el estado vive en la tabla, no en memoria).
+	// A la hora propuesta le escribe al cliente para confirmar; solo dentro de la ventana de 24h
+	// de WhatsApp (desde el ÚLTIMO mensaje del cliente). Confirmaciones sin respuesta expiran en 1h.
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[schedule] panic recuperado: %v", r)
+			}
+		}()
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			now := time.Now().Unix()
+			store.ExpireConfirming(now - 3600)
+			for _, sch := range store.DueScheduled(now) {
+				lastMsg, ok := store.LastClientMessageAt(sch.Phone)
+				if !ok || now-lastMsg > 24*3600-300 {
+					// Ventana de 24h cerrada (o sin margen): ya no se le puede escribir. Expira.
+					store.SetScheduledEstado(sch.ID, conversation.ScheduleExpirado)
+					log.Printf("[schedule] programado #%d de %s expirado (ventana 24h cerrada)", sch.ID, sch.Phone)
+					continue
+				}
+				msg := fmt.Sprintf("⏰ ¡Hola! Tenemos programada tu entrega de %d x %s color %s. "+
+					"¿Confirmas tu pedido ahora? Responde \"Sí\" para enviarlo 🚚",
+					sch.Cantidad, sch.ProductoNombre, sch.ColorNombre)
+				if err := whatsapp.SendText(cfg, sch.Phone, msg); err != nil {
+					log.Printf("[schedule] error escribiendo a %s: %v (reintento en 1 min)", sch.Phone, err)
+					continue // sigue 'pendiente'; el próximo tick reintenta
+				}
+				store.LogMessage(sch.Phone, "system", msg)
+				store.MarkConfirmSent(sch.ID, now)
+				log.Printf("[schedule] confirmación enviada al cliente %s (programado #%d)", sch.Phone, sch.ID)
+			}
+		}
+	}()
+
 	log.Printf("Modelo Gemini: %s", cfg.GeminiModel)
 	log.Fatal(http.ListenAndServe(":"+cfg.Port, mux))
 }
@@ -595,7 +632,7 @@ func notifyOrderCancelled(cfg config.Config, store conversation.Store, pedidoID 
 		return
 	}
 	store.ClearActivePedido(phone)
-	store.ClearHistory(phone)
+	// El historial NO se borra: la memoria del chat dura la ventana de 24h (regla general).
 	msg := "😔 Tu pedido fue cancelado por el conductor. Disculpa las molestias. Cuando quieras, puedes hacer un nuevo pedido."
 	store.LogMessage(phone, "system", msg)
 	if err := whatsapp.SendText(cfg, phone, msg); err != nil {
@@ -615,7 +652,7 @@ func notifyOrderNoShow(cfg config.Config, store conversation.Store, pedidoID int
 		return
 	}
 	store.ClearActivePedido(phone)
-	store.ClearHistory(phone)
+	// El historial NO se borra: la memoria del chat dura la ventana de 24h (regla general).
 	msg := "🚚 No se pudo completar la entrega de tu pedido 😔"
 	if strings.TrimSpace(motivo) != "" {
 		msg += " (motivo: " + strings.TrimSpace(motivo) + ")"

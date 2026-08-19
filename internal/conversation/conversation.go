@@ -24,9 +24,9 @@ const maxTurns = 100
 
 // SessionGap es el tiempo de inactividad tras el cual el próximo mensaje del cliente se
 // considera una conversación NUEVA (se limpia el historial anterior para arrancar fresco).
-// Así el bot sabe dónde empieza/termina una conversación por comportamiento real, sin
-// depender de contar turnos.
-const SessionGap = 40 * time.Minute
+// Decisión de David (2026-08): la memoria del bot dura la VENTANA COMPLETA de 24 horas de
+// WhatsApp — ningún evento (espera, entrega, cancelación) la borra; solo el paso de 24h.
+const SessionGap = 24 * time.Hour
 
 // RatingTTL es cuánto vale una calificación pendiente. Pasado este tiempo se descarta sola:
 // sin esto, un pendiente sin responder hacía que el bot pidiera la calificación en el saludo
@@ -61,6 +61,37 @@ const (
 	TicketAbierto = "abierto"
 	TicketCerrado = "cerrado"
 )
+
+// Estados de un pedido PROGRAMADO (entrega agendada fuera de horario).
+const (
+	SchedulePendiente   = "pendiente"   // esperando que llegue la hora propuesta
+	ScheduleConfirmando = "confirmando" // ya se le escribió al cliente; esperando su "sí"
+	ScheduleConfirmado  = "confirmado"  // el cliente confirmó y el pedido real se registró
+	ScheduleExpirado    = "expirado"    // no confirmó / venció la ventana de 24h
+)
+
+// ScheduledOrder es una entrega PROGRAMADA: el cliente escribió fuera del horario laboral y
+// agendó una hora (dentro del horario y de la ventana de 24h de WhatsApp). A la hora propuesta
+// el scheduler le escribe para confirmar; si confirma, se registra el pedido real.
+type ScheduledOrder struct {
+	ID             int64   `json:"id"`
+	Phone          string  `json:"phone"`
+	Identificacion string  `json:"identificacion"`
+	Nombres        string  `json:"nombres"`
+	IDCategoria    int     `json:"idcategoria"`
+	IDProducto     int     `json:"idproducto"`
+	IDColor        int     `json:"idcolor"`
+	Cantidad       int     `json:"cantidad"`
+	IDTipoPago     int     `json:"idtipopago"`
+	ProductoNombre string  `json:"producto_nombre"`
+	ColorNombre    string  `json:"color_nombre"`
+	Latitude       float64 `json:"latitude"`
+	Longitude      float64 `json:"longitude"`
+	HoraPropuesta  int64   `json:"hora_propuesta"` // unix
+	Estado         string  `json:"estado"`
+	ConfirmSentAt  int64   `json:"confirm_sent_at"`
+	CreatedAt      int64   `json:"created_at"`
+}
 
 // Ticket es un caso de SOPORTE creado cuando el bot escala (cliente pide un humano, la IA no
 // puede resolver, o hubo un error técnico). Se gestiona desde el panel: un agente lo revisa,
@@ -234,6 +265,23 @@ type Store interface {
 	GetChatMode(phone string) string
 	// SetChatMode fija el modo del chat ("bot" o "human").
 	SetChatMode(phone, mode string)
+
+	// --- Pedidos PROGRAMADOS (entregas agendadas fuera de horario) ---
+	// CreateScheduled guarda una entrega programada (estado pendiente). Devuelve su id (0 si falló).
+	CreateScheduled(s ScheduledOrder) int64
+	// DueScheduled devuelve los programados PENDIENTES cuya hora ya llegó.
+	DueScheduled(now int64) []ScheduledOrder
+	// GetConfirmingSchedule devuelve el programado EN CONFIRMACIÓN de un cliente (si hay).
+	GetConfirmingSchedule(phone string) (ScheduledOrder, bool)
+	// SetScheduledEstado cambia el estado de un programado.
+	SetScheduledEstado(id int64, estado string)
+	// MarkConfirmSent marca que ya se le escribió al cliente (estado confirmando + timestamp).
+	MarkConfirmSent(id int64, ts int64)
+	// ExpireConfirming expira los "confirmando" cuyo aviso se envió antes de `olderThan` (unix).
+	ExpireConfirming(olderThan int64)
+	// LastClientMessageAt devuelve cuándo escribió el CLIENTE por última vez (ventana de 24h
+	// de WhatsApp; sale del message_log, no de la actividad del panel).
+	LastClientMessageAt(phone string) (int64, bool)
 
 	// --- Tickets de soporte (escalaciones; durables, se gestionan desde la web) ---
 	// CreateTicket crea un ticket ABIERTO y devuelve su id (0 si falló).

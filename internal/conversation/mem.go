@@ -28,6 +28,8 @@ type memStore struct {
 	chatMode      map[string]string          // teléfono -> "bot" | "human"
 	tickets       []Ticket                   // tickets de soporte (escalaciones)
 	nextTicketID  int64
+	scheduled     []ScheduledOrder           // entregas programadas (fuera de horario)
+	nextSchedID   int64
 }
 
 // NewMemStore crea un almacén en memoria vacío.
@@ -88,6 +90,83 @@ func (s *memStore) ListConversations(limit int) []ConversationSummary {
 		out = out[:limit]
 	}
 	return out
+}
+
+func (s *memStore) CreateScheduled(o ScheduledOrder) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nextSchedID++
+	o.ID = s.nextSchedID
+	o.Estado = SchedulePendiente
+	o.CreatedAt = time.Now().Unix()
+	s.scheduled = append(s.scheduled, o)
+	return o.ID
+}
+
+func (s *memStore) DueScheduled(now int64) []ScheduledOrder {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []ScheduledOrder
+	for _, o := range s.scheduled {
+		if o.Estado == SchedulePendiente && o.HoraPropuesta <= now {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+func (s *memStore) GetConfirmingSchedule(phone string) (ScheduledOrder, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.scheduled) - 1; i >= 0; i-- {
+		if s.scheduled[i].Phone == phone && s.scheduled[i].Estado == ScheduleConfirmando {
+			return s.scheduled[i], true
+		}
+	}
+	return ScheduledOrder{}, false
+}
+
+func (s *memStore) SetScheduledEstado(id int64, estado string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.scheduled {
+		if s.scheduled[i].ID == id {
+			s.scheduled[i].Estado = estado
+		}
+	}
+}
+
+func (s *memStore) MarkConfirmSent(id int64, ts int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.scheduled {
+		if s.scheduled[i].ID == id {
+			s.scheduled[i].Estado = ScheduleConfirmando
+			s.scheduled[i].ConfirmSentAt = ts
+		}
+	}
+}
+
+func (s *memStore) ExpireConfirming(olderThan int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.scheduled {
+		if s.scheduled[i].Estado == ScheduleConfirmando && s.scheduled[i].ConfirmSentAt < olderThan {
+			s.scheduled[i].Estado = ScheduleExpirado
+		}
+	}
+}
+
+func (s *memStore) LastClientMessageAt(phone string) (int64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	msgs := s.messageLog[phone]
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			return msgs[i].CreatedAt, true
+		}
+	}
+	return 0, false
 }
 
 func (s *memStore) CreateTicket(phone, motivo, resumen string) int64 {

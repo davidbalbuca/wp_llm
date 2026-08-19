@@ -44,8 +44,12 @@ type Config struct {
 	SMTPPassword   string
 	SupportEmailTo string
 	// HumanTakeoverTimeout es la inactividad tras la cual un chat en control HUMANO vuelve solo
-	// al bot (para que un pedido nuevo lo atienda el bot y no quede colgado). Default 3h.
+	// al bot (para que un pedido nuevo lo atienda el bot y no quede colgado). Default 15 min.
 	HumanTakeoverTimeout time.Duration
+	// Horario laboral de entregas (hora Ecuador, formato HH:MM). Fuera de este horario el bot
+	// NO registra pedidos: ofrece PROGRAMAR la entrega para una hora dentro del horario.
+	BotHorarioInicio string
+	BotHorarioFin    string
 }
 
 func required(k string) string {
@@ -89,7 +93,9 @@ func Load() Config {
 		CatalogPassword: os.Getenv("CATALOG_PASSWORD"),
 		DBPath:          os.Getenv("DB_PATH"),
 		AuditLogDays:    optionalInt("AUDIT_LOG_DAYS", 15),
-		HumanTakeoverTimeout: time.Duration(optionalInt("HUMAN_TAKEOVER_TIMEOUT_MIN", 180)) * time.Minute,
+		HumanTakeoverTimeout: time.Duration(optionalInt("HUMAN_TAKEOVER_TIMEOUT_MIN", 15)) * time.Minute,
+		BotHorarioInicio: optional("BOT_HORARIO_INICIO", "06:00"),
+		BotHorarioFin:    optional("BOT_HORARIO_FIN", "19:00"),
 		SMTPHost:       os.Getenv("SMTP_HOST"),
 		SMTPPort:       optional("SMTP_PORT", "587"),
 		SMTPUser:       os.Getenv("SMTP_USER"),

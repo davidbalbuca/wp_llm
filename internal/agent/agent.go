@@ -90,6 +90,18 @@ func esFalloDeCobertura(mensaje string) bool {
 var behaviorPrompt string
 
 // Agent orquesta las llamadas a Gemini y la ejecución de herramientas.
+// Zona horaria de Ecuador continental (sin horario de verano).
+var zonaEcuador = time.FixedZone("ECT", -5*3600)
+
+// parseHoraHHMM convierte "HH:MM" a minutos del día (-1 si es inválida).
+func parseHoraHHMM(s string) int {
+	var h, m int
+	if _, err := fmt.Sscanf(strings.TrimSpace(s), "%d:%d", &h, &m); err != nil || h < 0 || h > 23 || m < 0 || m > 59 {
+		return -1
+	}
+	return h*60 + m
+}
+
 type Agent struct {
 	cfg       config.Config
 	client    *genai.Client
@@ -243,7 +255,29 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 		Parameters: &genai.Schema{Type: genai.TypeObject, Properties: map[string]*genai.Schema{}},
 	}
 
-	tools := []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{escalar, registrar, verificarCliente, calificar, mostrarMenu, cancelar, esperar, cancelarEsp}}}
+	// programar_entrega: FUERA del horario laboral (o si el cliente pide otra hora), agenda la
+	// entrega para una hora dentro del horario y de la ventana de 24h. El scheduler le escribe
+	// al cliente a esa hora para confirmar el pedido.
+	programar := &genai.FunctionDeclaration{
+		Name: "programar_entrega",
+		Description: "Agenda una ENTREGA PROGRAMADA cuando estamos fuera del horario laboral. Antes de llamarla " +
+			"necesitas: color, cantidad, la ubicación de WhatsApp YA compartida, la cédula y el nombre (si es " +
+			"cliente nuevo) y la hora deseada. Solo horas dentro del horario laboral y de las próximas 24 horas.",
+		Parameters: &genai.Schema{
+			Type: genai.TypeObject,
+			Properties: map[string]*genai.Schema{
+				"color":          {Type: genai.TypeString, Description: "Color/marca del cilindro"},
+				"cantidad":       {Type: genai.TypeInteger, Description: "Cantidad de cilindros"},
+				"hora":           {Type: genai.TypeString, Description: "Hora deseada en formato HH:MM (24 horas)"},
+				"dia":            {Type: genai.TypeString, Description: "'hoy' o 'manana' (si no se indica, se asume la próxima ocurrencia de esa hora)"},
+				"identificacion": {Type: genai.TypeString, Description: "Cédula del cliente (si es nuevo)"},
+				"nombres":        {Type: genai.TypeString, Description: "Nombre completo del cliente (si es nuevo)"},
+			},
+			Required: []string{"color", "cantidad", "hora"},
+		},
+	}
+
+	tools := []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{escalar, registrar, verificarCliente, calificar, mostrarMenu, cancelar, esperar, cancelarEsp, programar}}}
 
 	return &Agent{cfg: cfg, client: client, store: store, catalog: catalogClient, gr: grClient, tools: tools}, nil
 }
@@ -290,6 +324,31 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 			"PRIMERO a calificar_conductor con ese número, ANTES de ofrecer menús, repetir pedidos o cualquier otro "+
 			"tema. Si aún no la ha dado, pídele con amabilidad que califique del 1 al 5 a su repartidor. Si prefiere "+
 			"no calificar o lo ignora, no insistas ni lo vuelvas a mencionar.", rating.Conductor)
+	}
+
+	// Hora actual + horario laboral: fuera de horario NO se registran pedidos (regla dura,
+	// también validada en código); se ofrece PROGRAMAR la entrega.
+	ahora := time.Now().In(zonaEcuador)
+	systemPrompt += fmt.Sprintf("\n\nHORA ACTUAL: %s (Ecuador). HORARIO DE ENTREGAS: %s a %s.",
+		ahora.Format("15:04"), a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
+	if !a.dentroDeHorario(ahora) {
+		systemPrompt += " ESTAMOS FUERA DE HORARIO: a esta hora NO hay conductores disponibles, así que NO llames " +
+			"a registrar_pedido. Explícaselo con amabilidad y ofrécele PROGRAMAR la entrega con la herramienta " +
+			"programar_entrega: pide color, cantidad, su ubicación de WhatsApp, cédula y nombre (si es cliente " +
+			"nuevo) y la hora deseada (dentro del horario y de las próximas 24 horas)."
+	}
+
+	// Pedido PROGRAMADO esperando confirmación: el scheduler ya le escribió al cliente.
+	if sch, ok := a.store.GetConfirmingSchedule(from); ok {
+		a.store.SetLocation(from, sch.Latitude, sch.Longitude)
+		if sch.Identificacion != "" {
+			a.store.SetProfile(from, conversation.Profile{Identificacion: sch.Identificacion, Nombres: sch.Nombres})
+		}
+		systemPrompt += fmt.Sprintf("\n\nPEDIDO PROGRAMADO EN CONFIRMACIÓN: %d x %s color %s (los datos y la "+
+			"ubicación del cliente ya están guardados). Si el cliente CONFIRMA (\"sí\", \"dale\", \"confirmo\"), "+
+			"llama registrar_pedido con color=%s y cantidad=%d SIN pedirle nada más. Si dice que ya no lo desea, "+
+			"agradécele y no registres nada.",
+			sch.Cantidad, sch.ProductoNombre, sch.ColorNombre, sch.ColorNombre, sch.Cantidad)
 	}
 
 	cfg := &genai.GenerateContentConfig{
@@ -488,6 +547,9 @@ func (a *Agent) runTool(from, name string, args map[string]any) string {
 	case "esperar_conductor":
 		return a.esperarConductor(from)
 
+	case "programar_entrega":
+		return a.programarEntrega(from, args)
+
 	case "cancelar_espera":
 		return a.cancelarEspera(from)
 	}
@@ -506,10 +568,10 @@ func (a *Agent) verificarCliente(from string, args map[string]any) string {
 	info, err := a.gr.ClientExists(identificacion)
 	if err != nil {
 		// Fallo técnico: no bloqueamos el pedido, seguimos el registro normal.
-		return "No se pudo verificar al cliente en este momento; continúa pidiéndole su nombre y correo para registrarlo."
+		return "No se pudo verificar al cliente en este momento; continúa pidiéndole su nombre completo para registrarlo (NO pidas correo)."
 	}
 	if !info.Existe {
-		return "El cliente NO está registrado todavía. Continúa el registro: pídele su nombre completo y su correo electrónico."
+		return "El cliente NO está registrado todavía. Continúa el registro: pídele SOLO su nombre completo (NO pidas correo electrónico; no hace falta)."
 	}
 	// Cliente existente: persistimos su perfil para reutilizar sus datos y no volver a pedirlos.
 	a.store.SetProfile(from, conversation.Profile{
@@ -678,7 +740,7 @@ func (a *Agent) cancelarPedido(from string) string {
 		return "No se pudo cancelar el pedido (motivo: " + err.Error() + "). Discúlpate y dile que en un momento lo revisa el equipo."
 	}
 	a.store.ClearActivePedido(from)
-	a.store.ClearHistory(from)
+	// El historial NO se borra: la memoria del chat dura la ventana de 24h.
 	return "Pedido cancelado con éxito. Confírmale al cliente con amabilidad que su pedido fue cancelado y que " +
 		"puede hacer uno nuevo cuando lo desee."
 }
@@ -712,7 +774,7 @@ func (a *Agent) crearTicketSoporte(from, motivo, resumen string) int64 {
 func (a *Agent) cancelarEspera(from string) string {
 	a.registrarNoAsignado(from)
 	a.store.ClearPendingWait(from)
-	a.store.ClearHistory(from)
+	// El historial NO se borra: la memoria del chat dura la ventana de 24h.
 	return "El cliente no quiso esperar. Despídete con: \"Muchas gracias, espero poder ayudarte la próxima vez. 🙌\""
 }
 
@@ -776,12 +838,13 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 						}
 						store.SetLastOrder(from, conversation.LastOrder{Producto: w.ProductoNombre, Color: w.ColorNombre, Cantidad: w.Cantidad, Fecha: time.Now().Format("02/01/2006")})
 						store.ClearPendingWait(from)
-						store.ClearHistory(from)
+						// El historial NO se borra (memoria de 24h). El mensaje queda AUDITADO.
 						msg := "🎉 ¡Listo! Ya tienes un repartidor asignado"
 						if res.ConductorAsignado != "" {
 							msg += ": " + res.ConductorAsignado
 						}
 						msg += ". Sale con tu pedido en breve. ¡Gracias por tu espera!"
+						store.LogMessage(from, "system", msg)
 						_ = whatsapp.SendText(cfg, from, msg)
 						return
 					}
@@ -804,16 +867,134 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 			}
 		}
 		store.ClearPendingWait(from)
-		store.ClearHistory(from)
-		_ = whatsapp.SendText(cfg, from, "Te pedimos disculpas 🙏. Por ahora no hay ningún repartidor disponible "+
-			"para asignar tu pedido. Intenta más tarde, con gusto te ayudamos.")
+		// El historial NO se borra (memoria de 24h). El mensaje queda AUDITADO.
+		msgTimeout := "Te pedimos disculpas 🙏. Por ahora no hay ningún repartidor disponible " +
+			"para asignar tu pedido. Intenta más tarde, con gusto te ayudamos."
+		store.LogMessage(from, "system", msgTimeout)
+		_ = whatsapp.SendText(cfg, from, msgTimeout)
 	}()
 }
 
 // registrarPedido ejecuta la secuencia real de georoutes: mapea el color a IDs de
 // producto, asegura la cuenta del cliente, hace login, registra la dirección desde la
 // ubicación de WhatsApp y crea el pedido. Devuelve un texto para que el modelo responda.
+// programarEntrega agenda una entrega para una hora dentro del horario laboral y de la ventana
+// de 24h de WhatsApp. El scheduler (main.go) le escribirá al cliente a esa hora para confirmar
+// y ahí se registra el pedido real (registrar_pedido).
+func (a *Agent) programarEntrega(from string, args map[string]any) string {
+	cantidad := toInt(args["cantidad"])
+	if cantidad <= 0 {
+		return "Falta una cantidad válida de cilindros. Pregúntale al cliente cuántos desea."
+	}
+	loc, hasLoc := a.store.GetLocation(from)
+	if !hasLoc {
+		return "Aún no tengo la ubicación del cliente y es obligatoria para programar. Pídele que comparta su " +
+			"ubicación de WhatsApp 📎."
+	}
+
+	identificacion := strings.TrimSpace(str(args["identificacion"]))
+	nombres := strings.TrimSpace(str(args["nombres"]))
+	if perfil, ok := a.store.GetProfile(from); ok {
+		if identificacion == "" {
+			identificacion = perfil.Identificacion
+		}
+		if nombres == "" {
+			nombres = perfil.Nombres
+		}
+	}
+	if identificacion == "" || nombres == "" {
+		return "Para programar necesito la cédula y el nombre completo del cliente. Pídeselos."
+	}
+
+	mins := parseHoraHHMM(str(args["hora"]))
+	if mins < 0 {
+		return "La hora no es válida. Pídele la hora en formato HH:MM (por ejemplo 08:30)."
+	}
+	ini := parseHoraHHMM(a.cfg.BotHorarioInicio)
+	fin := parseHoraHHMM(a.cfg.BotHorarioFin)
+	if mins < ini || mins >= fin {
+		return fmt.Sprintf("Esa hora está fuera del horario de entregas (%s a %s). Pídele al cliente una hora "+
+			"dentro del horario.", a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
+	}
+
+	ahora := time.Now().In(zonaEcuador)
+	target := time.Date(ahora.Year(), ahora.Month(), ahora.Day(), mins/60, mins%60, 0, 0, zonaEcuador)
+	dia := strings.ToLower(strings.TrimSpace(str(args["dia"])))
+	if dia == "manana" || dia == "mañana" {
+		target = target.Add(24 * time.Hour)
+	} else if !target.After(ahora) {
+		target = target.Add(24 * time.Hour) // esa hora ya pasó hoy -> la próxima es mañana
+	}
+	if target.Sub(ahora) > 24*time.Hour {
+		return "Solo puedo programar entregas dentro de las PRÓXIMAS 24 HORAS. Dile eso al cliente con amabilidad " +
+			"y pídele una hora más cercana."
+	}
+
+	contexto, disponible := a.catalog.Get()
+	if !disponible || contexto == nil {
+		return "No puedo consultar el catálogo en este momento. Pídele al cliente que intente más tarde."
+	}
+	colorNombre := strings.TrimSpace(str(args["color"]))
+	producto, color, ok := findProductByColor(contexto.Products, colorNombre)
+	if !ok {
+		return fmt.Sprintf("El color/marca \"%s\" no está disponible. Colores disponibles: %s. "+
+			"Pregúntale al cliente cuál desea.", colorNombre, availableColors(contexto.Products))
+	}
+	idtipopago, ok := defaultPaymentID(contexto.Payments)
+	if !ok {
+		return "No hay una forma de pago configurada en el sistema. Pídele al cliente que intente más tarde."
+	}
+
+	a.store.SetProfile(from, conversation.Profile{Identificacion: identificacion, Nombres: nombres})
+	id := a.store.CreateScheduled(conversation.ScheduledOrder{
+		Phone:          from,
+		Identificacion: identificacion,
+		Nombres:        nombres,
+		IDCategoria:    producto.IDCategoria,
+		IDProducto:     producto.IDProducto,
+		IDColor:        color.ID,
+		Cantidad:       cantidad,
+		IDTipoPago:     idtipopago,
+		ProductoNombre: producto.Nombre,
+		ColorNombre:    color.Nombre,
+		Latitude:       loc.Latitude,
+		Longitude:      loc.Longitude,
+		HoraPropuesta:  target.Unix(),
+	})
+	if id <= 0 {
+		return "No se pudo guardar la programación. Discúlpate y pídele al cliente intentar de nuevo."
+	}
+	a.store.LogMessage(from, "system", fmt.Sprintf("📅 Entrega programada #%d: %d x %s %s para el %s",
+		id, cantidad, producto.Nombre, color.Nombre, target.Format("02/01 a las 15:04")))
+
+	etiquetaDia := "hoy"
+	if target.Day() != ahora.Day() {
+		etiquetaDia = "mañana"
+	}
+	return fmt.Sprintf("Entrega PROGRAMADA con éxito para %s a las %s. Confírmale al cliente que le escribiremos "+
+		"a esa hora para confirmar y enviar su pedido de %d x %s color %s. Recuérdale estar atento al chat.",
+		etiquetaDia, target.Format("15:04"), cantidad, producto.Nombre, color.Nombre)
+}
+
+// dentroDeHorario indica si `t` cae dentro del horario laboral de entregas configurado.
+func (a *Agent) dentroDeHorario(t time.Time) bool {
+	ini := parseHoraHHMM(a.cfg.BotHorarioInicio)
+	fin := parseHoraHHMM(a.cfg.BotHorarioFin)
+	if ini < 0 || fin < 0 {
+		return true // configuración inválida: no bloquear el servicio
+	}
+	mins := t.Hour()*60 + t.Minute()
+	return mins >= ini && mins < fin
+}
+
 func (a *Agent) registrarPedido(from string, args map[string]any) string {
+	// REGLA DURA de horario: fuera del horario laboral NO se registran pedidos (no hay
+	// conductores). El prompt también lo dice; esto es la garantía en código.
+	if !a.dentroDeHorario(time.Now().In(zonaEcuador)) {
+		return "FUERA DE HORARIO (" + a.cfg.BotHorarioInicio + " a " + a.cfg.BotHorarioFin + "): NO se registró " +
+			"el pedido porque a esta hora no hay conductores. Explícaselo al cliente con amabilidad y ofrécele " +
+			"PROGRAMAR la entrega con la herramienta programar_entrega."
+	}
 	cantidad := toInt(args["cantidad"])
 	if cantidad <= 0 {
 		return "Falta una cantidad válida de cilindros. Pregúntale al cliente cuántos desea."
@@ -941,7 +1122,8 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 	}
 
 	// Guardar perfil (para no re-pedir datos), el teléfono del pedido (para la calificación) y
-	// el resumen del último pedido (para ofrecer repetir). Luego limpiar historial.
+	// el resumen del último pedido (para ofrecer repetir). El historial NO se borra: la
+	// memoria del chat dura la ventana de 24h.
 	a.store.SetProfile(from, conversation.Profile{
 		Identificacion: identificacion,
 		Nombres:        nombres,
@@ -956,7 +1138,10 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 		Cantidad: cantidad,
 		Fecha:    time.Now().Format("02/01/2006"),
 	})
-	a.store.ClearHistory(from)
+	// Marca como CONFIRMADO cualquier pedido programado en confirmación de este cliente.
+	if sch, ok := a.store.GetConfirmingSchedule(from); ok {
+		a.store.SetScheduledEstado(sch.ID, conversation.ScheduleConfirmado)
+	}
 
 	mensaje := fmt.Sprintf("Pedido registrado correctamente: %d x %s (%s).", cantidad, producto.Nombre, color.Nombre)
 	if resultado.ConductorAsignado != "" {
@@ -1114,8 +1299,9 @@ func renderServiceInfo(contexto *catalog.Context, disponible bool) string {
 		fmt.Fprintf(&texto, "\n%s\n", negocio.Adicional)
 	}
 
-	texto.WriteString("\nPara concretar un pedido necesitas del cliente: cédula, nombre completo, correo, " +
-		"el color/marca deseado, la cantidad y su ubicación de WhatsApp (📎 → Ubicación).\n")
+	texto.WriteString("\nPara concretar un pedido necesitas del cliente: cédula, nombre completo, " +
+		"el color/marca deseado, la cantidad y su ubicación de WhatsApp (📎 → Ubicación). " +
+		"NUNCA pidas correo electrónico (no se necesita).\n")
 	return texto.String()
 }
 
