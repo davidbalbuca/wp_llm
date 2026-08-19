@@ -73,12 +73,22 @@ type Color struct {
 }
 
 // Product es un producto del catálogo con su precio y los colores/marcas disponibles.
+// El precio que se cobra al cliente incluye TODOS los rubros (unitario + envío +
+// instalación + servicio), no solo el unitario.
 type Product struct {
-	IDCategoria    int     `json:"idcategoria"`
-	IDProducto     int     `json:"idproducto"`
-	Nombre         string  `json:"nombre"`
-	PrecioUnitario float64 `json:"precio_unitario"`
-	Colores        []Color `json:"colores"`
+	IDCategoria      int     `json:"idcategoria"`
+	IDProducto       int     `json:"idproducto"`
+	Nombre           string  `json:"nombre"`
+	PrecioUnitario   float64 `json:"precio_unitario"`
+	CostoEnvio       float64 `json:"costo_envio"`
+	CostoInstalacion float64 `json:"costo_instalacion"`
+	CostoServicio    float64 `json:"costo_servicio"`
+	Colores          []Color `json:"colores"`
+}
+
+// PrecioTotal es lo que paga el cliente POR UNIDAD: unitario + envío + instalación + servicio.
+func (p Product) PrecioTotal() float64 {
+	return p.PrecioUnitario + p.CostoEnvio + p.CostoInstalacion + p.CostoServicio
 }
 
 // Payment es una forma de pago (TipoPago) del backend.

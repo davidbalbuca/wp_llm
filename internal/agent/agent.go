@@ -1277,7 +1277,10 @@ func renderServiceInfo(contexto *catalog.Context, disponible bool) string {
 	if len(contexto.Products) > 0 {
 		texto.WriteString("Productos disponibles (con colores/marcas y precio):\n")
 		for _, producto := range contexto.Products {
-			fmt.Fprintf(&texto, "- %s: $%.2f", producto.Nombre, producto.PrecioUnitario)
+			// PRECIO TOTAL por unidad (unitario + envío + instalación + servicio): es lo que
+			// el cliente paga de verdad. NUNCA cotizar solo el unitario.
+			fmt.Fprintf(&texto, "- %s: $%.2f por cilindro (incluye envío, instalación y servicio)",
+				producto.Nombre, producto.PrecioTotal())
 			if len(producto.Colores) > 0 {
 				var nombres []string
 				for _, color := range producto.Colores {
