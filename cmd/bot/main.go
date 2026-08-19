@@ -228,13 +228,14 @@ func main() {
 		var payload struct {
 			PedidoID int    `json:"pedido_id"`
 			Telefono string `json:"telefono"`
+			Motivo   string `json:"motivo"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		go notifyOrderNoShow(cfg, store, payload.PedidoID, payload.Telefono)
+		go notifyOrderNoShow(cfg, store, payload.PedidoID, payload.Telefono, payload.Motivo)
 	})
 
 	mux.HandleFunc("POST /internal/order-reassigned", func(w http.ResponseWriter, r *http.Request) {
@@ -602,9 +603,9 @@ func notifyOrderCancelled(cfg config.Config, store conversation.Store, pedidoID 
 	}
 }
 
-// notifyOrderNoShow avisa al cliente por WhatsApp que su pedido se cerró porque NO salió a
-// recibirlo. Limpia el pedido activo y el historial (la próxima conversación arranca fresca).
-func notifyOrderNoShow(cfg config.Config, store conversation.Store, pedidoID int, telefono string) {
+// notifyOrderNoShow avisa al cliente por WhatsApp que su pedido se cerró con un PROBLEMA en la
+// entrega (no salió / ubicación equivocada / otro). Limpia el pedido activo y el historial.
+func notifyOrderNoShow(cfg config.Config, store conversation.Store, pedidoID int, telefono, motivo string) {
 	phone := telefono
 	if p, ok := store.GetOrderPhone(pedidoID); ok && p != "" {
 		phone = p
@@ -615,7 +616,11 @@ func notifyOrderNoShow(cfg config.Config, store conversation.Store, pedidoID int
 	}
 	store.ClearActivePedido(phone)
 	store.ClearHistory(phone)
-	msg := "🚚 El conductor llegó pero no saliste a recibir tu pedido 😔. Cuando quieras, puedes hacer un nuevo pedido."
+	msg := "🚚 No se pudo completar la entrega de tu pedido 😔"
+	if strings.TrimSpace(motivo) != "" {
+		msg += " (motivo: " + strings.TrimSpace(motivo) + ")"
+	}
+	msg += ". Cuando quieras, puedes hacer un nuevo pedido."
 	store.LogMessage(phone, "system", msg)
 	if err := whatsapp.SendText(cfg, phone, msg); err != nil {
 		log.Printf("[order-no-show] error enviando a %s: %v", phone, err)
