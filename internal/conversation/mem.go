@@ -169,6 +169,18 @@ func (s *memStore) LastClientMessageAt(phone string) (int64, bool) {
 	return 0, false
 }
 
+func (s *memStore) CountScheduled(estado string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, o := range s.scheduled {
+		if o.Estado == estado {
+			n++
+		}
+	}
+	return n
+}
+
 func (s *memStore) CreateTicket(phone, motivo, resumen string) int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()

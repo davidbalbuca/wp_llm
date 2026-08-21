@@ -378,6 +378,15 @@ func (s *sqliteStore) LastClientMessageAt(phone string) (int64, bool) {
 	return ts.Int64, true
 }
 
+func (s *sqliteStore) CountScheduled(estado string) int {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM scheduled_orders WHERE estado = ?`, estado).Scan(&n); err != nil {
+		log.Printf("[sqlite] CountScheduled: %v", err)
+		return 0
+	}
+	return n
+}
+
 func (s *sqliteStore) CreateTicket(phone, motivo, resumen string) int64 {
 	res, err := s.db.Exec(
 		`INSERT INTO tickets(phone, motivo, resumen, estado, created_at) VALUES(?, ?, ?, ?, ?)`,

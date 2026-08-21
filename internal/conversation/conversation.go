@@ -282,6 +282,8 @@ type Store interface {
 	// LastClientMessageAt devuelve cuándo escribió el CLIENTE por última vez (ventana de 24h
 	// de WhatsApp; sale del message_log, no de la actividad del panel).
 	LastClientMessageAt(phone string) (int64, bool)
+	// CountScheduled cuenta los programados en un estado (para el tablero de control).
+	CountScheduled(estado string) int
 
 	// --- Tickets de soporte (escalaciones; durables, se gestionan desde la web) ---
 	// CreateTicket crea un ticket ABIERTO y devuelve su id (0 si falló).

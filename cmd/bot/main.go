@@ -354,6 +354,32 @@ func main() {
 		writeJSON(w, map[string]any{"ok": ok})
 	})
 
+	// Resumen para el TABLERO de control del panel (una sola llamada).
+	mux.HandleFunc("GET /internal/stats", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		corte := time.Now().Add(-24 * time.Hour).Unix()
+		convs := store.ListConversations(500)
+		activas, humanos := 0, 0
+		for _, c := range convs {
+			if c.LastAt >= corte {
+				activas++
+			}
+			if c.Mode == conversation.ChatModeHuman {
+				humanos++
+			}
+		}
+		writeJSON(w, map[string]any{
+			"tickets_abiertos":       len(store.ListTickets(conversation.TicketAbierto, 500)),
+			"conversaciones_activas": activas,
+			"chats_humano":           humanos,
+			"programados_pendientes": store.CountScheduled(conversation.SchedulePendiente),
+			"programados_confirmando": store.CountScheduled(conversation.ScheduleConfirmando),
+		})
+	})
+
 	// --- Scheduler de entregas PROGRAMADAS ---
 	// Ticker de 60s (simple y a prueba de reinicios: el estado vive en la tabla, no en memoria).
 	// A la hora propuesta le escribe al cliente para confirmar; solo dentro de la ventana de 24h
