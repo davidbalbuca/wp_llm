@@ -10,8 +10,8 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math"
@@ -125,8 +125,8 @@ func (a *Agent) ClearEscalated()   { a.escalated = false }
 
 // MenuSent indica si en el último mensaje se envió un menú interactivo (para que el
 // llamador no mande un texto adicional). ClearMenuSent lo resetea.
-func (a *Agent) MenuSent() bool  { return a.menuSent }
-func (a *Agent) ClearMenuSent()  { a.menuSent = false }
+func (a *Agent) MenuSent() bool { return a.menuSent }
+func (a *Agent) ClearMenuSent() { a.menuSent = false }
 
 // LastMenuText devuelve la pregunta + opciones del último menú enviado (para auditar el chat).
 func (a *Agent) LastMenuText() string { return a.lastMenuText }
@@ -336,6 +336,15 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 			"a registrar_pedido. Explícaselo con amabilidad y ofrécele PROGRAMAR la entrega con la herramienta " +
 			"programar_entrega: pide color, cantidad, su ubicación de WhatsApp, cédula y nombre (si es cliente " +
 			"nuevo) y la hora deseada (dentro del horario y de las próximas 24 horas)."
+	} else {
+		// Decirlo EN POSITIVO es necesario: si solo se avisa cuando estamos fuera, el modelo ve
+		// la hora cerca del cierre y deduce solo que "la jornada terminó". Paso en produccion el
+		// 26/08 a las 17:50 (con el horario hasta las 19:00): ofrecio programar para el dia
+		// siguiente y luego se contradijo en la misma frase.
+		systemPrompt += " ESTAMOS DENTRO DEL HORARIO: el servicio está ACTIVO y SÍ hay entregas ahora mismo, " +
+			"aunque falte poco para cerrar. Si el cliente quiere su gas, usa registrar_pedido. NO ofrezcas " +
+			"programar_entrega salvo que el cliente PIDA EXPRESAMENTE otra hora, y NUNCA le digas que la " +
+			"jornada terminó ni que no hay disponibilidad."
 	}
 
 	// Pedido PROGRAMADO esperando confirmación: el scheduler ya le escribió al cliente.
@@ -521,7 +530,6 @@ func (a *Agent) runTool(from, name string, args map[string]any) string {
 
 	case "verificar_cliente":
 		return a.verificarCliente(from, args)
-
 
 	case "mostrar_menu":
 		return a.mostrarMenu(from, args)
@@ -882,6 +890,14 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 // de 24h de WhatsApp. El scheduler (main.go) le escribirá al cliente a esa hora para confirmar
 // y ahí se registra el pedido real (registrar_pedido).
 func (a *Agent) programarEntrega(from string, args map[string]any) string {
+	// REGLA DURA, espejo de la de registrarPedido: DENTRO del horario no se programa salvo que
+	// el cliente pida otra hora explicitamente (viene 'hora' en los argumentos). Sin esto, el
+	// modelo programaba entregas para el dia siguiente estando el servicio activo.
+	if a.dentroDeHorario(time.Now().In(zonaEcuador)) && strings.TrimSpace(str(args["hora"])) == "" {
+		return "ESTAMOS DENTRO DEL HORARIO (" + a.cfg.BotHorarioInicio + " a " + a.cfg.BotHorarioFin + "): " +
+			"no se programa nada porque el servicio está ACTIVO ahora. Usa registrar_pedido para tomar el " +
+			"pedido de una vez. Solo programa si el cliente pidió EXPRESAMENTE otra hora."
+	}
 	cantidad := toInt(args["cantidad"])
 	if cantidad <= 0 {
 		return "Falta una cantidad válida de cilindros. Pregúntale al cliente cuántos desea."
