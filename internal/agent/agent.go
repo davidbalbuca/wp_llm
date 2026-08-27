@@ -46,9 +46,11 @@ const mensajeSinCobertura = "IMPORTANTE: En este momento no hay repartidores dis
 const mensajeOfrecerEspera = "IMPORTANTE: En este momento no hay un repartidor disponible cerca, pero el " +
 	"pedido quedó listo. Ofrécele al cliente ESPERAR usando la herramienta mostrar_menu con el cuerpo: " +
 	"'Los repartidores están un poco lejos 🚚. Podría tardar hasta 5 minutos en asignarse. ¿Deseas esperar?' " +
-	"y las opciones exactas [\"Esperar\", \"Cancelar\"]. Si el cliente elige esperar, llama a la herramienta " +
-	"esperar_conductor. Si elige cancelar, llama a cancelar_espera. NO derives al dueño ni le pidas de nuevo " +
-	"los datos ni la ubicación."
+	"y las opciones exactas [\"Esperar\", \"Programar\", \"Cancelar\"]. Si el cliente elige esperar, llama a " +
+	"la herramienta esperar_conductor. Si elige PROGRAMAR, pregúntale para qué hora la quiere (más tarde HOY " +
+	"o MAÑANA, siempre dentro del horario de entregas y de las próximas 24 horas) y llama a programar_entrega. " +
+	"Si elige cancelar, llama a cancelar_espera. NO derives al dueño ni le pidas de nuevo los datos ni la " +
+	"ubicación."
 
 // mensajePedirNombreDireccion se devuelve cuando el cliente va a usar una ubicación NUEVA pero
 // aún no le puso nombre. Nombrar es obligatorio para que la dirección no quede genérica en la BD.
@@ -783,7 +785,10 @@ func (a *Agent) cancelarEspera(from string) string {
 	a.registrarNoAsignado(from)
 	a.store.ClearPendingWait(from)
 	// El historial NO se borra: la memoria del chat dura la ventana de 24h.
-	return "El cliente no quiso esperar. Despídete con: \"Muchas gracias, espero poder ayudarte la próxima vez. 🙌\""
+	return "El cliente no quiso esperar; el pedido quedó registrado para gestión manual. ANTES de despedirte, " +
+		"ofrécele PROGRAMAR la entrega para más tarde hoy o para mañana (dentro del horario de entregas y de " +
+		"las próximas 24 horas): si acepta, pídele la hora y llama a programar_entrega. Si tampoco quiere, " +
+		"despídete con: \"Muchas gracias, espero poder ayudarte la próxima vez. 🙌\""
 }
 
 // registrarNoAsignado guarda el pedido pendiente como NO ASIGNADO en el backend (gestión manual).
@@ -893,7 +898,12 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	// REGLA DURA, espejo de la de registrarPedido: DENTRO del horario no se programa salvo que
 	// el cliente pida otra hora explicitamente (viene 'hora' en los argumentos). Sin esto, el
 	// modelo programaba entregas para el dia siguiente estando el servicio activo.
-	if a.dentroDeHorario(time.Now().In(zonaEcuador)) && strings.TrimSpace(str(args["hora"])) == "" {
+	// Excepcion: si el pedido quedo en espera por FALTA DE CONDUCTORES, programar SI es valido
+	// aunque estemos dentro del horario (lo pidio el jefe el 26/08): se puede reagendar para mas
+	// tarde el mismo dia o para el dia siguiente, dentro del horario y de las 24 h.
+	_, esperandoConductor := a.store.GetPendingWait(from)
+	if a.dentroDeHorario(time.Now().In(zonaEcuador)) && strings.TrimSpace(str(args["hora"])) == "" &&
+		!esperandoConductor {
 		return "ESTAMOS DENTRO DEL HORARIO (" + a.cfg.BotHorarioInicio + " a " + a.cfg.BotHorarioFin + "): " +
 			"no se programa nada porque el servicio está ACTIVO ahora. Usa registrar_pedido para tomar el " +
 			"pedido de una vez. Solo programa si el cliente pidió EXPRESAMENTE otra hora."
@@ -982,6 +992,11 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	}
 	a.store.LogMessage(from, "system", fmt.Sprintf("📅 Entrega programada #%d: %d x %s %s para el %s",
 		id, cantidad, producto.Nombre, color.Nombre, target.Format("02/01 a las 15:04")))
+	// Si venia de una espera por falta de conductor, se cierra: el pedido ya quedo agendado y no
+	// debe registrarse ademas como NO ASIGNADO cuando venza la espera.
+	if esperandoConductor {
+		a.store.ClearPendingWait(from)
+	}
 
 	etiquetaDia := "hoy"
 	if target.Day() != ahora.Day() {
