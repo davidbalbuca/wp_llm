@@ -1024,6 +1024,22 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	}
 
 	a.store.SetProfile(from, conversation.Profile{Identificacion: identificacion, Nombres: nombres})
+
+	// El cliente se registra AL AGENDAR, no solo al confirmar. Antes sus datos vivian unicamente
+	// en la base del bot hasta que confirmara: si algo fallaba en el camino (paso el 27/08 con
+	// Ana Veronica Coronel), la persona habia dado cedula, nombre y ubicacion y NO figuraba en
+	// ningun lado del sistema. Quien agenda ya es un cliente real aunque su entrega sea mañana.
+	// WppGetOrCreateClient es get-or-create: si ya existe no lo duplica.
+	if _, yaTiene := a.store.GetAccount(from); !yaTiene {
+		if cuenta, err := a.gr.WppGetOrCreateClient(identificacion, nombres, from); err == nil && cuenta != nil {
+			a.store.SetAccount(from, conversation.Account{Username: cuenta.Username, Password: cuenta.Password})
+		} else if err != nil {
+			// No se aborta la programacion por esto: la entrega igual queda agendada y al
+			// confirmar se reintenta. Solo se deja constancia.
+			log.Printf("[schedule] no se pudo registrar al cliente %s al agendar: %v", from, err)
+		}
+	}
+
 	id := a.store.CreateScheduled(conversation.ScheduledOrder{
 		Phone:          from,
 		Identificacion: identificacion,
