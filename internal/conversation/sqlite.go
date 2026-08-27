@@ -345,6 +345,21 @@ func (s *sqliteStore) ListScheduled(estado string, limit int) []ScheduledOrder {
 	return out
 }
 
+// CancelScheduled borra las entregas agendadas del cliente que todavia no se cumplieron.
+// Se BORRAN en vez de marcarlas: el bot le dice al cliente que quedo cancelada, y una fila que
+// sigue viva reaparece en el panel y le dispara el mensaje de confirmacion a su hora.
+func (s *sqliteStore) CancelScheduled(phone string) int {
+	res, err := s.db.Exec(`
+        DELETE FROM scheduled_orders WHERE phone = ? AND estado IN (?, ?)`,
+		phone, SchedulePendiente, ScheduleConfirmando)
+	if err != nil {
+		log.Printf("[sqlite] CancelScheduled %s: %v", phone, err)
+		return 0
+	}
+	n, _ := res.RowsAffected()
+	return int(n)
+}
+
 func (s *sqliteStore) CreateScheduled(o ScheduledOrder) int64 {
 	res, err := s.db.Exec(`
         INSERT INTO scheduled_orders(phone, identificacion, nombres, idcategoria, idproducto,

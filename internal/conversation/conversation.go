@@ -269,6 +269,9 @@ type Store interface {
 	// ListScheduled lista las entregas agendadas (para verlas en el panel de Pedidos).
 	// estado vacío = todas; si no, filtra por ese estado.
 	ListScheduled(estado string, limit int) []ScheduledOrder
+	// CancelScheduled BORRA las entregas agendadas de un cliente que aún no se cumplieron.
+	// Devuelve cuántas se eliminaron.
+	CancelScheduled(phone string) int
 	// GetChatMode devuelve el modo del chat ("bot" por defecto).
 	GetChatMode(phone string) string
 	// SetChatMode fija el modo del chat ("bot" o "human").

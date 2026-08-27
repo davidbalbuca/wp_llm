@@ -280,7 +280,18 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 		},
 	}
 
-	tools := []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{escalar, registrar, verificarCliente, calificar, mostrarMenu, cancelar, esperar, cancelarEsp, programar}}}
+	// cancelar_programacion: el cliente ya no quiere la entrega que habia agendado. Sin esta
+	// herramienta el modelo respondia "he cancelado la programacion" y la entrega seguia viva:
+	// aparecia en el panel y le llegaba el mensaje de confirmacion a su hora.
+	cancelarProg := &genai.FunctionDeclaration{
+		Name: "cancelar_programacion",
+		Description: "Cancela la ENTREGA PROGRAMADA que el cliente tenía agendada. Úsala cuando diga que " +
+			"ya no la quiere, que la anules o que prefiere pedir en otro momento. NUNCA le digas que " +
+			"cancelaste una programación sin haber llamado a esta herramienta.",
+		Parameters: &genai.Schema{Type: genai.TypeObject, Properties: map[string]*genai.Schema{}},
+	}
+
+	tools := []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{escalar, registrar, verificarCliente, calificar, mostrarMenu, cancelar, esperar, cancelarEsp, programar, cancelarProg}}}
 
 	return &Agent{cfg: cfg, client: client, store: store, catalog: catalogClient, gr: grClient, tools: tools}, nil
 }
@@ -562,6 +573,9 @@ func (a *Agent) runTool(from, name string, args map[string]any) string {
 
 	case "programar_entrega":
 		return a.programarEntrega(from, args)
+
+	case "cancelar_programacion":
+		return a.cancelarProgramacion(from)
 
 	case "cancelar_espera":
 		return a.cancelarEspera(from)
@@ -1011,6 +1025,18 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	return fmt.Sprintf("Entrega PROGRAMADA con éxito para %s a las %s. Confírmale al cliente que le escribiremos "+
 		"a esa hora para confirmar y enviar su pedido de %d x %s color %s. Recuérdale estar atento al chat.",
 		etiquetaDia, target.Format("15:04"), cantidad, producto.Nombre, color.Nombre)
+}
+
+// cancelarProgramacion borra la entrega agendada del cliente. Es la contraparte de
+// programarEntrega: sin ella el modelo decia que cancelaba y la entrega seguia en pie.
+func (a *Agent) cancelarProgramacion(from string) string {
+	n := a.store.CancelScheduled(from)
+	if n == 0 {
+		return "El cliente no tiene ninguna entrega programada pendiente. Aclaraselo con amabilidad " +
+			"y preguntale si quiere hacer un pedido ahora."
+	}
+	a.store.LogMessage(from, "system", "🗑️ Entrega programada cancelada por el cliente")
+	return "Entrega programada CANCELADA. Confirmaselo al cliente y ofrecele hacer un pedido cuando lo necesite."
 }
 
 // dentroDeHorario indica si `t` cae dentro del horario laboral de entregas configurado.

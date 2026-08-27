@@ -123,6 +123,23 @@ func (s *memStore) ListScheduled(estado string, limit int) []ScheduledOrder {
 	return out
 }
 
+// CancelScheduled borra las agendadas pendientes del cliente (equivalente en memoria).
+func (s *memStore) CancelScheduled(phone string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var quedan []ScheduledOrder
+	n := 0
+	for _, o := range s.scheduled {
+		if o.Phone == phone && (o.Estado == SchedulePendiente || o.Estado == ScheduleConfirmando) {
+			n++
+			continue
+		}
+		quedan = append(quedan, o)
+	}
+	s.scheduled = quedan
+	return n
+}
+
 func (s *memStore) DueScheduled(now int64) []ScheduledOrder {
 	s.mu.Lock()
 	defer s.mu.Unlock()
