@@ -328,13 +328,18 @@ func (s *sqliteStore) ListScheduled(estado string, limit int) []ScheduledOrder {
 	var out []ScheduledOrder
 	for rows.Next() {
 		var o ScheduledOrder
+		// confirm_sent_at es NULL mientras no se le haya escrito al cliente, o sea en TODOS los
+		// agendados que aun no llegan a su hora. Leerlo como int64 pelado fallaba y la fila se
+		// saltaba en silencio: el panel mostraba 1 agendado cuando habia 3.
+		var confirmado sql.NullInt64
 		if err := rows.Scan(&o.ID, &o.Phone, &o.Identificacion, &o.Nombres, &o.IDCategoria,
 			&o.IDProducto, &o.IDColor, &o.Cantidad, &o.IDTipoPago, &o.ProductoNombre,
 			&o.ColorNombre, &o.Latitude, &o.Longitude, &o.HoraPropuesta, &o.Estado,
-			&o.ConfirmSentAt, &o.CreatedAt); err != nil {
+			&confirmado, &o.CreatedAt); err != nil {
 			log.Printf("[sqlite] ListScheduled scan: %v", err)
 			continue
 		}
+		o.ConfirmSentAt = confirmado.Int64
 		out = append(out, o)
 	}
 	return out
