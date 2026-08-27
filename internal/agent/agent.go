@@ -532,6 +532,20 @@ func extractLeakedMenu(s string) (cuerpo string, opciones []string, preamble str
 }
 
 func (a *Agent) runTool(from, name string, args map[string]any) string {
+	// Se registra CADA herramienta con sus argumentos y lo que devolvio. Sin esto, cuando el
+	// bot hace algo raro en produccion solo queda su mensaje final y hay que adivinar que
+	// llamo: asi paso el 27/08 con la reprogramacion de una clienta real.
+	log.Printf("[tool] %s %s args=%v", from, name, args)
+	res := a.runToolInterno(from, name, args)
+	corte := res
+	if len(corte) > 160 {
+		corte = corte[:160] + "..."
+	}
+	log.Printf("[tool] %s %s -> %s", from, name, strings.ReplaceAll(corte, "\n", " "))
+	return res
+}
+
+func (a *Agent) runToolInterno(from, name string, args map[string]any) string {
 	switch name {
 	case "escalar_al_dueno":
 		a.escalated = true
@@ -916,6 +930,17 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	// REGLA DURA, espejo de la de registrarPedido: DENTRO del horario no se programa salvo que
 	// el cliente pida otra hora explicitamente (viene 'hora' en los argumentos). Sin esto, el
 	// modelo programaba entregas para el dia siguiente estando el servicio activo.
+	// CANDADO DURO: si el cliente esta CONFIRMANDO una entrega que ya tenia agendada, jamas se
+	// vuelve a programar. Paso en produccion el 27/08 con una clienta real: confirmo a las 06:03
+	// la entrega del dia anterior, no habia conductor, y el bot la reprogramo para el dia
+	// siguiente. Ya habia esperado un dia entero; mandarla a esperar otro es el peor final
+	// posible. Si no hay repartidor, se le ofrece ESPERAR o CANCELAR, nunca reagendar.
+	if _, confirmando := a.store.GetConfirmingSchedule(from); confirmando {
+		return "El cliente está CONFIRMANDO una entrega que ya tenía agendada: NO se puede volver " +
+			"a programar, ya esperó su turno. Usa registrar_pedido. Si no hay repartidor disponible, " +
+			"ofrécele ESPERAR o CANCELAR, pero NUNCA reagendar para otro día."
+	}
+
 	// Excepcion: si el pedido quedo en espera por FALTA DE CONDUCTORES, programar SI es valido
 	// aunque estemos dentro del horario (lo pidio el jefe el 26/08): se puede reagendar para mas
 	// tarde el mismo dia o para el dia siguiente, dentro del horario y de las 24 h.
@@ -969,7 +994,14 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	if dia == "manana" || dia == "mañana" {
 		target = target.Add(24 * time.Hour)
 	} else if !target.After(ahora) {
-		target = target.Add(24 * time.Hour) // esa hora ya pasó hoy -> la próxima es mañana
+		// Esa hora YA PASO hoy. Antes se saltaba a mañana en silencio, y asi un cliente que
+		// confirmaba a las 06:03 su entrega de las 06:00 terminaba reagendado para el dia
+		// siguiente sin haberlo pedido. Ahora se le pregunta: el salto de dia lo decide el
+		// cliente, no el codigo.
+		return fmt.Sprintf("Las %s de HOY ya pasaron (son las %s). Preguntale al cliente si "+
+			"quiere para mas tarde HOY (dile otra hora dentro del horario) o para MAÑANA a esa "+
+			"misma hora. No decidas tu: que lo diga el.",
+			target.Format("15:04"), ahora.Format("15:04"))
 	}
 	if target.Sub(ahora) > 24*time.Hour {
 		return "Solo puedo programar entregas dentro de las PRÓXIMAS 24 HORAS. Dile eso al cliente con amabilidad " +
