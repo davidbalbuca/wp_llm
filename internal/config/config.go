@@ -11,6 +11,15 @@ import (
 
 // Config agrupa toda la configuración del servicio.
 type Config struct {
+	// LLMProvider elige quien atiende las conversaciones: "gemini" (el de siempre, default)
+	// o "anthropic". Se cambia con una linea del .env y se vuelve atras igual de rapido; la
+	// configuracion del otro proveedor se queda donde esta, sin borrarse.
+	LLMProvider string
+	// Anthropic (Claude). Solo se usan si LLMProvider es "anthropic".
+	AnthropicAPIKey    string
+	AnthropicModel     string
+	AnthropicMaxTokens int
+
 	GoogleAPIKey    string
 	GeminiModel     string
 	WhatsAppToken   string
@@ -78,28 +87,50 @@ func optionalInt(k string, def int) int {
 
 // Load construye la Config leyendo el entorno. Aborta el arranque si falta una obligatoria.
 func Load() Config {
+	// Se exige la clave del proveedor ELEGIDO, no la de los dos: asi se puede probar Anthropic
+	// sin borrar lo de Gemini, y volver a Gemini sin tener que conseguir la otra clave.
+	proveedor := strings.ToLower(strings.TrimSpace(optional("LLM_PROVIDER", "gemini")))
+	googleKey := os.Getenv("GOOGLE_API_KEY")
+	anthropicKey := os.Getenv("ANTHROPIC_API_KEY")
+	switch proveedor {
+	case "gemini":
+		if googleKey == "" {
+			log.Fatalf("Falta la variable de entorno obligatoria: GOOGLE_API_KEY")
+		}
+	case "anthropic":
+		if anthropicKey == "" {
+			log.Fatalf("LLM_PROVIDER=anthropic pero falta ANTHROPIC_API_KEY")
+		}
+	default:
+		log.Fatalf("LLM_PROVIDER no reconocido: %q (usa \"gemini\" o \"anthropic\")", proveedor)
+	}
+
 	return Config{
-		GoogleAPIKey:    required("GOOGLE_API_KEY"),
-		GeminiModel:     optional("GEMINI_MODEL", "gemini-3.1-flash-lite"),
-		WhatsAppToken:   required("WHATSAPP_TOKEN"),
-		PhoneNumberID:   required("WHATSAPP_PHONE_NUMBER_ID"),
-		VerifyToken:     required("WEBHOOK_VERIFY_TOKEN"),
-		OwnerPhone:      required("OWNER_PHONE_NUMBER"),
-		Port:            optional("PORT", "3000"),
-		GraphAPIVersion: "v21.0",
-		BackendURL:      strings.TrimRight(optional("BACKEND_URL", "http://127.0.0.1:8000"), "/"),
-		ChannelSecret:   os.Getenv("BACKEND_CHANNEL_SECRET"),
-		CatalogUser:     os.Getenv("CATALOG_USER"),
-		CatalogPassword: os.Getenv("CATALOG_PASSWORD"),
-		DBPath:          os.Getenv("DB_PATH"),
-		AuditLogDays:    optionalInt("AUDIT_LOG_DAYS", 15),
+		LLMProvider:          proveedor,
+		AnthropicAPIKey:      anthropicKey,
+		AnthropicModel:       optional("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
+		AnthropicMaxTokens:   optionalInt("ANTHROPIC_MAX_TOKENS", 1024),
+		GoogleAPIKey:         googleKey,
+		GeminiModel:          optional("GEMINI_MODEL", "gemini-3.1-flash-lite"),
+		WhatsAppToken:        required("WHATSAPP_TOKEN"),
+		PhoneNumberID:        required("WHATSAPP_PHONE_NUMBER_ID"),
+		VerifyToken:          required("WEBHOOK_VERIFY_TOKEN"),
+		OwnerPhone:           required("OWNER_PHONE_NUMBER"),
+		Port:                 optional("PORT", "3000"),
+		GraphAPIVersion:      "v21.0",
+		BackendURL:           strings.TrimRight(optional("BACKEND_URL", "http://127.0.0.1:8000"), "/"),
+		ChannelSecret:        os.Getenv("BACKEND_CHANNEL_SECRET"),
+		CatalogUser:          os.Getenv("CATALOG_USER"),
+		CatalogPassword:      os.Getenv("CATALOG_PASSWORD"),
+		DBPath:               os.Getenv("DB_PATH"),
+		AuditLogDays:         optionalInt("AUDIT_LOG_DAYS", 15),
 		HumanTakeoverTimeout: time.Duration(optionalInt("HUMAN_TAKEOVER_TIMEOUT_MIN", 15)) * time.Minute,
-		BotHorarioInicio: optional("BOT_HORARIO_INICIO", "07:00"),
-		BotHorarioFin:    optional("BOT_HORARIO_FIN", "19:00"),
-		SMTPHost:       os.Getenv("SMTP_HOST"),
-		SMTPPort:       optional("SMTP_PORT", "587"),
-		SMTPUser:       os.Getenv("SMTP_USER"),
-		SMTPPassword:   os.Getenv("SMTP_PASSWORD"),
-		SupportEmailTo: os.Getenv("SUPPORT_EMAIL_TO"),
+		BotHorarioInicio:     optional("BOT_HORARIO_INICIO", "07:00"),
+		BotHorarioFin:        optional("BOT_HORARIO_FIN", "19:00"),
+		SMTPHost:             os.Getenv("SMTP_HOST"),
+		SMTPPort:             optional("SMTP_PORT", "587"),
+		SMTPUser:             os.Getenv("SMTP_USER"),
+		SMTPPassword:         os.Getenv("SMTP_PASSWORD"),
+		SupportEmailTo:       os.Getenv("SUPPORT_EMAIL_TO"),
 	}
 }

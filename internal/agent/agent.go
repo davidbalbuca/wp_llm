@@ -20,6 +20,8 @@ import (
 
 	"google.golang.org/genai"
 
+	"wp-llm-gas/internal/llm"
+
 	"wp-llm-gas/internal/catalog"
 	"wp-llm-gas/internal/config"
 	"wp-llm-gas/internal/conversation"
@@ -106,8 +108,10 @@ func parseHoraHHMM(s string) int {
 }
 
 type Agent struct {
-	cfg       config.Config
-	client    *genai.Client
+	cfg config.Config
+	// modelo es quien contesta: Gemini o Claude, segun LLM_PROVIDER. El bucle de abajo es
+	// el mismo para los dos.
+	modelo    llm.Provider
 	store     conversation.Store
 	catalog   *catalog.Client
 	gr        *georoutes.Client
@@ -136,13 +140,18 @@ func (a *Agent) LastMenuText() string { return a.lastMenuText }
 
 // New crea un Agent con el cliente de Gemini y las herramientas declaradas.
 func New(ctx context.Context, cfg config.Config, store conversation.Store, catalogClient *catalog.Client, grClient *georoutes.Client) (*Agent, error) {
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  cfg.GoogleAPIKey,
-		Backend: genai.BackendGeminiAPI,
-	})
+	var modelo llm.Provider
+	var err error
+	switch cfg.LLMProvider {
+	case "anthropic":
+		modelo, err = llm.NewAnthropic(cfg.AnthropicAPIKey, cfg.AnthropicModel, cfg.AnthropicMaxTokens)
+	default:
+		modelo, err = llm.NewGemini(ctx, cfg.GoogleAPIKey, cfg.GeminiModel)
+	}
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("[llm] proveedor=%s modelo=%s", modelo.Nombre(), modelo.Modelo())
 
 	escalar := &genai.FunctionDeclaration{
 		Name: "escalar_al_dueno",
@@ -293,7 +302,7 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 
 	tools := []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{escalar, registrar, verificarCliente, calificar, mostrarMenu, cancelar, esperar, cancelarEsp, programar, cancelarProg}}}
 
-	return &Agent{cfg: cfg, client: client, store: store, catalog: catalogClient, gr: grClient, tools: tools}, nil
+	return &Agent{cfg: cfg, modelo: modelo, store: store, catalog: catalogClient, gr: grClient, tools: tools}, nil
 }
 
 // HandleMessage procesa un mensaje del cliente y devuelve la respuesta para WhatsApp.
@@ -376,37 +385,26 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 			sch.Cantidad, sch.ProductoNombre, sch.ColorNombre, sch.ColorNombre, sch.Cantidad)
 	}
 
-	cfg := &genai.GenerateContentConfig{
-		SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: systemPrompt}}},
-		Tools:             a.tools,
-	}
-
 	reply := ""
 	for round := 0; round < maxToolRounds; round++ {
-		resp, err := a.client.Models.GenerateContent(ctx, a.cfg.GeminiModel, contents, cfg)
+		resp, err := a.modelo.Generate(ctx, systemPrompt, contents, a.tools)
 		if err != nil {
 			return "", err
 		}
-		if len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil {
-			break
-		}
-		cand := resp.Candidates[0]
-
-		// ¿Hay llamadas a función?
-		var calls []*genai.FunctionCall
-		for _, p := range cand.Content.Parts {
-			if p.FunctionCall != nil {
-				calls = append(calls, p.FunctionCall)
-			}
+		if resp.Content == nil {
+			break // el modelo no devolvio nada utilizable
 		}
 
-		if len(calls) > 0 {
-			contents = append(contents, cand.Content) // turno del modelo con las llamadas
-			respParts := make([]*genai.Part, 0, len(calls))
-			for _, c := range calls {
+		if len(resp.Calls) > 0 {
+			contents = append(contents, resp.Content) // turno del modelo con las llamadas
+			respParts := make([]*genai.Part, 0, len(resp.Calls))
+			for _, c := range resp.Calls {
 				result := a.runTool(from, c.Name, c.Args)
 				respParts = append(respParts, &genai.Part{
 					FunctionResponse: &genai.FunctionResponse{
+						// El ID es lo que empareja el resultado con su llamada. Gemini casa
+						// por nombre y lo deja vacio sin quejarse; Anthropic lo exige.
+						ID:       c.ID,
 						Name:     c.Name,
 						Response: map[string]any{"result": result},
 					},
@@ -422,7 +420,7 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 			continue // vuelve a llamar al modelo con los resultados
 		}
 
-		reply = strings.TrimSpace(resp.Text())
+		reply = strings.TrimSpace(resp.Text)
 		break
 	}
 

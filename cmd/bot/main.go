@@ -427,7 +427,11 @@ func main() {
 		}
 	}()
 
-	log.Printf("Modelo Gemini: %s", cfg.GeminiModel)
+	if cfg.LLMProvider == "anthropic" {
+		log.Printf("Modelo: anthropic %s (max_tokens=%d)", cfg.AnthropicModel, cfg.AnthropicMaxTokens)
+	} else {
+		log.Printf("Modelo: gemini %s", cfg.GeminiModel)
+	}
 	log.Fatal(http.ListenAndServe(":"+cfg.Port, mux))
 }
 

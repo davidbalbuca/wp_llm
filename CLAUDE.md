@@ -24,15 +24,24 @@ internal/georoutes/             # cliente HTTP del flujo real (auth, dirección,
 internal/conversation/          # estado por teléfono (Store: memoria o SQLite)
 internal/catalog/catalog.go     # datos del negocio (productos, pagos, zonas)
 internal/escalation/            # derivación al dueño
+internal/llm/                   # proveedor de modelo (gemini | anthropic)
 ```
 
-Dependencias entre paquetes (sin ciclos): `agent` → {config, conversation, georoutes, escalation, catalog}; `escalation` → {config, whatsapp}; `whatsapp`/`georoutes`/`catalog` → config.
+Solo se exige la clave del proveedor ELEGIDO: se puede probar Anthropic sin borrar lo de
+Gemini y volver atrás cambiando `LLM_PROVIDER`. Los tipos de `genai` se usan como formato
+común entre el agente y los proveedores (ver el comentario de `internal/llm/llm.go`).
+
+Dependencias entre paquetes (sin ciclos): `agent` → {config, conversation, georoutes, escalation, catalog, llm}; `llm` → genai; `escalation` → {config, whatsapp}; `whatsapp`/`georoutes`/`catalog` → config.
 
 ## Variables de entorno (`.env`)
 
 ```
-GOOGLE_API_KEY              # Gemini API key
+LLM_PROVIDER                # gemini (default) | anthropic
+GOOGLE_API_KEY              # Gemini API key (obligatoria si LLM_PROVIDER=gemini)
 GEMINI_MODEL                # (default: gemini-3.1-flash-lite)
+ANTHROPIC_API_KEY           # API key de la Console (obligatoria si LLM_PROVIDER=anthropic)
+ANTHROPIC_MODEL             # (default: claude-haiku-4-5-20251001)
+ANTHROPIC_MAX_TOKENS        # (default: 1024)
 WHATSAPP_TOKEN              # Graph API token
 WHATSAPP_PHONE_NUMBER_ID    # ID del número de WhatsApp
 WEBHOOK_VERIFY_TOKEN        # token de verificación del webhook
