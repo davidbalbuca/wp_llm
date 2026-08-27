@@ -142,6 +142,11 @@ func (a *Agent) confirmarYRegistrar(from string, sch conversation.ScheduledOrder
 		if w, ok := a.store.GetPendingWait(from); ok {
 			a.startWaitForDriver(from, w)
 		}
+		// La entrega queda ATENDIDA aunque todavia no haya repartidor: el cliente ya confirmo y
+		// su pedido esta en cola. Sin esto, un segundo "si" (el cliente impaciente que insiste)
+		// volveria a entrar aqui, arrancaria otra busqueda en paralelo y le llegarian avisos
+		// duplicados. registrar_pedido solo marca la entrega cuando el pedido sale asignado.
+		a.store.SetScheduledEstado(sch.ID, conversation.ScheduleConfirmado)
 		log.Printf("[confirmacion] %s confirmó #%d pero no hay repartidor; se arrancó la espera",
 			from, sch.ID)
 		return "¡Confirmado! 🎉 Tu pedido ya quedó registrado. En este momento los repartidores " +
