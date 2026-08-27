@@ -140,13 +140,13 @@ func (c *Client) CancelOrder(jwt string, idpedido int) error {
 
 // SavedDirection es una dirección que el cliente ya tiene guardada en el backend.
 type SavedDirection struct {
-	ID        int     `json:"id"`
-	Alias     string  `json:"alias"`
-	Direccion string  `json:"direccion"`
-	Referencia string `json:"referencia"`
-	Principal bool    `json:"principal"`
-	Latitude  float64 `json:"latitude"`
-	Longitude float64 `json:"longitude"`
+	ID         int     `json:"id"`
+	Alias      string  `json:"alias"`
+	Direccion  string  `json:"direccion"`
+	Referencia string  `json:"referencia"`
+	Principal  bool    `json:"principal"`
+	Latitude   float64 `json:"latitude"`
+	Longitude  float64 `json:"longitude"`
 }
 
 // GetDirections devuelve las direcciones guardadas del cliente (GET /getDirectionsClient/,

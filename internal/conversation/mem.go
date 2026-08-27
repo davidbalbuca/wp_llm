@@ -173,6 +173,20 @@ func (s *memStore) SetScheduledEstado(id int64, estado string) {
 	}
 }
 
+func (s *memStore) CerrarProgramadoEnEspera(phone string, asignado bool) {
+	estado := ScheduleSinRepartidor
+	if asignado {
+		estado = ScheduleConfirmado
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.scheduled {
+		if s.scheduled[i].Phone == phone && s.scheduled[i].Estado == ScheduleEnEspera {
+			s.scheduled[i].Estado = estado
+		}
+	}
+}
+
 func (s *memStore) MarkConfirmSent(id int64, ts int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

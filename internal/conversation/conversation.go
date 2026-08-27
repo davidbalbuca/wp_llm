@@ -72,7 +72,14 @@ const (
 	SchedulePendiente   = "pendiente"   // esperando que llegue la hora propuesta
 	ScheduleConfirmando = "confirmando" // ya se le escribió al cliente; esperando su "sí"
 	ScheduleConfirmado  = "confirmado"  // el cliente confirmó y el pedido real se registró
-	ScheduleExpirado    = "expirado"    // no confirmó / venció la ventana de 24h
+	// ScheduleEnEspera: el cliente confirmó pero no había repartidor libre, así que el pedido
+	// está en la cola de asignación y TODAVÍA no existe en el backend. Es un estado aparte y no
+	// "confirmado" porque si no el panel miente: decía confirmado y en Pedidos no había nada.
+	ScheduleEnEspera = "buscando_repartidor"
+	// ScheduleSinRepartidor: se acabaron los 5 minutos de busqueda sin nadie libre. El pedido
+	// pasa a la lista de No asignados para que alguien lo gestione a mano.
+	ScheduleSinRepartidor = "sin_repartidor"
+	ScheduleExpirado      = "expirado" // no confirmó / venció la ventana de 24h
 )
 
 // ScheduledOrder es una entrega PROGRAMADA: el cliente escribió fuera del horario laboral y
@@ -284,6 +291,11 @@ type Store interface {
 	DueScheduled(now int64) []ScheduledOrder
 	// GetConfirmingSchedule devuelve el programado EN CONFIRMACIÓN de un cliente (si hay).
 	GetConfirmingSchedule(phone string) (ScheduledOrder, bool)
+	// CerrarProgramadoEnEspera cierra la entrega agendada que quedo buscando repartidor: pasa a
+	// confirmado si se asigno, o a sin_repartidor si se agotaron los 5 minutos. Sin esto el panel
+	// se queda diciendo "buscando" para siempre. No hace nada si el cliente no venia de una
+	// entrega agendada, que es el caso del pedido normal.
+	CerrarProgramadoEnEspera(phone string, asignado bool)
 	// SetScheduledEstado cambia el estado de un programado.
 	SetScheduledEstado(id int64, estado string)
 	// MarkConfirmSent marca que ya se le escribió al cliente (estado confirmando + timestamp).

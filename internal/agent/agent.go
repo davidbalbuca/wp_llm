@@ -908,6 +908,8 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 							msg += ": " + res.ConductorAsignado
 						}
 						msg += ". Sale con tu pedido en breve. ¡Gracias por tu espera!"
+						// Si venia de una entrega agendada, deja de estar "buscando repartidor".
+						store.CerrarProgramadoEnEspera(from, true)
 						if err := whatsapp.SendText(cfg, from, msg); err == nil {
 							store.LogMessage(from, "system", msg)
 							// Tambien a la memoria del modelo: si el cliente responde a este aviso,
@@ -938,6 +940,9 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 		// El historial NO se borra (memoria de 24h). El mensaje queda AUDITADO.
 		msgTimeout := "Te pedimos disculpas 🙏. Por ahora no hay ningún repartidor disponible " +
 			"para asignar tu pedido. Intenta más tarde, con gusto te ayudamos."
+		// Se acabaron los 5 minutos sin nadie: el pedido queda en No asignados y la entrega
+		// agendada lo refleja, en vez de quedarse en "buscando" para siempre.
+		store.CerrarProgramadoEnEspera(from, false)
 		if err := whatsapp.SendText(cfg, from, msgTimeout); err == nil {
 			store.LogMessage(from, "system", msgTimeout)
 			// Tambien a la memoria del modelo: si el cliente responde a este aviso,

@@ -430,6 +430,18 @@ func (s *sqliteStore) SetScheduledEstado(id int64, estado string) {
 	}
 }
 
+func (s *sqliteStore) CerrarProgramadoEnEspera(phone string, asignado bool) {
+	estado := ScheduleSinRepartidor
+	if asignado {
+		estado = ScheduleConfirmado
+	}
+	if _, err := s.db.Exec(
+		`UPDATE scheduled_orders SET estado = ? WHERE phone = ? AND estado = ?`,
+		estado, phone, ScheduleEnEspera); err != nil {
+		log.Printf("[sqlite] CerrarProgramadoEnEspera %s: %v", phone, err)
+	}
+}
+
 func (s *sqliteStore) MarkConfirmSent(id int64, ts int64) {
 	if _, err := s.db.Exec(`UPDATE scheduled_orders SET estado = ?, confirm_sent_at = ? WHERE id = ?`,
 		ScheduleConfirmando, ts, id); err != nil {

@@ -162,12 +162,17 @@ func (a *Agent) confirmarYRegistrar(from string, sch conversation.ScheduledOrder
 		// su pedido esta en cola. Sin esto, un segundo "si" (el cliente impaciente que insiste)
 		// volveria a entrar aqui, arrancaria otra busqueda en paralelo y le llegarian avisos
 		// duplicados. registrar_pedido solo marca la entrega cuando el pedido sale asignado.
-		a.store.SetScheduledEstado(sch.ID, conversation.ScheduleConfirmado)
+		a.store.SetScheduledEstado(sch.ID, conversation.ScheduleEnEspera)
 		log.Printf("[confirmacion] %s confirmó #%d pero no hay repartidor; se arrancó la espera",
 			from, sch.ID)
+		// El plazo va EXPLICITO. La primera version decia solo "te escribo apenas se asigne", y lo
+		// primero que preguntó David al probarlo fue: ¿y si nunca me responde? Con razon: el
+		// cliente no tiene forma de saber si son dos minutos o una hora. La espera siempre cierra
+		// en 5 minutos, asi que se lo decimos.
 		return "¡Confirmado! 🎉 Tu pedido ya quedó registrado. En este momento los repartidores " +
-			"están un poco lejos, así que estoy buscando uno para ti 🚚. Te escribo apenas se " +
-			"asigne, no tienes que hacer nada más."
+			"están un poco lejos, así que estoy buscando uno para ti 🚚. En menos de 5 minutos " +
+			"te confirmo si lo conseguí. No tienes que hacer nada; si prefieres cancelar, " +
+			"escríbeme \"cancelar\"."
 
 	default:
 		// Falló el registro (backend caído, credenciales, etc.). La entrega NO se marca como
