@@ -19,6 +19,10 @@ type Config struct {
 	AnthropicAPIKey    string
 	AnthropicModel     string
 	AnthropicMaxTokens int
+	// AnthropicCacheTTL: "5m" (default) o "1h". Cuanto vive el prompt cacheado. Con poco
+	// trafico conviene "1h" (sobrevive entre conversaciones, aunque escribirla cueste mas);
+	// con conversaciones seguidas alcanza con los 5 minutos.
+	AnthropicCacheTTL string
 
 	GoogleAPIKey    string
 	GeminiModel     string
@@ -110,6 +114,7 @@ func Load() Config {
 		AnthropicAPIKey:      anthropicKey,
 		AnthropicModel:       optional("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
 		AnthropicMaxTokens:   optionalInt("ANTHROPIC_MAX_TOKENS", 1024),
+		AnthropicCacheTTL:    optional("ANTHROPIC_CACHE_TTL", "5m"),
 		GoogleAPIKey:         googleKey,
 		GeminiModel:          optional("GEMINI_MODEL", "gemini-3.1-flash-lite"),
 		WhatsAppToken:        required("WHATSAPP_TOKEN"),

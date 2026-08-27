@@ -144,7 +144,7 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 	var err error
 	switch cfg.LLMProvider {
 	case "anthropic":
-		modelo, err = llm.NewAnthropic(cfg.AnthropicAPIKey, cfg.AnthropicModel, cfg.AnthropicMaxTokens)
+		modelo, err = llm.NewAnthropic(cfg.AnthropicAPIKey, cfg.AnthropicModel, cfg.AnthropicMaxTokens, cfg.AnthropicCacheTTL)
 	default:
 		modelo, err = llm.NewGemini(ctx, cfg.GoogleAPIKey, cfg.GeminiModel)
 	}
@@ -318,7 +318,12 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 	// del servicio (dinámica, traída del backend con caché). Así reflejamos cambios de
 	// productos, colores o precios sin reiniciar el agente.
 	contexto, disponible := a.catalog.Get()
-	systemPrompt := strings.TrimSpace(behaviorPrompt) + "\n\nINFORMACIÓN DEL SERVICIO:\n" + renderServiceInfo(contexto, disponible)
+	// El prompt se arma en DOS piezas que despues se pegan: lo fijo (reglas + informacion
+	// del servicio) y lo que cambia en cada mensaje. Juntas dan exactamente el mismo texto
+	// de antes; la division existe para poder cachear la parte fija (ver internal/llm), que
+	// es el 65% de lo que se paga y viaja identica unas seis veces por conversacion.
+	sistemaFijo := strings.TrimSpace(behaviorPrompt) + "\n\nINFORMACIÓN DEL SERVICIO:\n" + renderServiceInfo(contexto, disponible)
+	systemPrompt := ""
 
 	// Si ya conocemos al cliente (pidió antes), inyectamos sus datos para que el bot NO se
 	// los vuelva a pedir. La IA los reutiliza directamente al registrar el pedido.
@@ -387,7 +392,7 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 
 	reply := ""
 	for round := 0; round < maxToolRounds; round++ {
-		resp, err := a.modelo.Generate(ctx, systemPrompt, contents, a.tools)
+		resp, err := a.modelo.Generate(ctx, llm.System{Estatico: sistemaFijo, Volatil: systemPrompt}, contents, a.tools)
 		if err != nil {
 			return "", err
 		}

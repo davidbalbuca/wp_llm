@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ func TestIntegracionAnthropicLlamaHerramienta(t *testing.T) {
 	if modelo == "" {
 		modelo = "claude-haiku-4-5-20251001"
 	}
-	p, err := NewAnthropic(clave, modelo, 512)
+	p, err := NewAnthropic(clave, modelo, 512, "5m")
 	if err != nil {
 		t.Fatalf("no se pudo crear el proveedor: %v", err)
 	}
@@ -43,9 +44,15 @@ func TestIntegracionAnthropicLlamaHerramienta(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	// La parte fija tiene que pasar el minimo cacheable para que la API la guarde, igual que
+	// el behavior.md real (unos 2.900 tokens). Se rellena hasta ese tamaño.
+	fijo := "Eres el bot de pedidos de gas de Ubi. Si el cliente pide gas y da color y cantidad, llama a registrar_pedido de una vez.\n"
+	fijo += strings.Repeat("Regla de atencion: se amable, breve y no inventes precios ni horarios que no esten aqui.\n", 120)
+	sistema := System{Estatico: fijo, Volatil: "\n\nHORA ACTUAL: 15:04 (Ecuador)."}
+
 	// Primer turno: el modelo debería querer llamar a la herramienta.
 	historial := []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "Quiero 2 cilindros blancos, ya tienes todos mis datos."}}}}
-	resp, err := p.Generate(ctx, "Eres el bot de pedidos de gas de Ubi. Si el cliente pide gas y da color y cantidad, llama a registrar_pedido de una vez.", historial, tools)
+	resp, err := p.Generate(ctx, sistema, historial, tools)
 	if err != nil {
 		t.Fatalf("la llamada a la API falló: %v", err)
 	}
@@ -67,7 +74,9 @@ func TestIntegracionAnthropicLlamaHerramienta(t *testing.T) {
 			Response: map[string]any{"result": "Pedido 999 creado. El repartidor Juan llega en 15 minutos."},
 		},
 	}}})
-	resp2, err := p.Generate(ctx, "Eres el bot de pedidos de gas de Ubi. Confirma al cliente en una frase corta.", historial, tools)
+	// El mismo bloque fijo: esta segunda llamada debe LEER de cache lo que escribio la primera.
+	// En el log sale como cache_lee=N; si sale 0, el cacheo no esta funcionando.
+	resp2, err := p.Generate(ctx, sistema, historial, tools)
 	if err != nil {
 		t.Fatalf("el segundo turno falló (emparejamiento de tool_result): %v", err)
 	}

@@ -29,9 +29,10 @@ func NewGemini(ctx context.Context, apiKey, modelo string) (Provider, error) {
 func (g *geminiProvider) Nombre() string { return "gemini" }
 func (g *geminiProvider) Modelo() string { return g.modelo }
 
-func (g *geminiProvider) Generate(ctx context.Context, system string, history []*genai.Content, tools []*genai.Tool) (Response, error) {
+func (g *geminiProvider) Generate(ctx context.Context, system System, history []*genai.Content, tools []*genai.Tool) (Response, error) {
 	cfg := &genai.GenerateContentConfig{
-		SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: system}}},
+		// Gemini recibe el prompt de una pieza, exactamente como antes de partirlo en dos.
+		SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: system.Completo()}}},
 		Tools:             tools,
 	}
 	resp, err := g.client.Models.GenerateContent(ctx, g.modelo, history, cfg)

@@ -42,6 +42,7 @@ GEMINI_MODEL                # (default: gemini-3.1-flash-lite)
 ANTHROPIC_API_KEY           # API key de la Console (obligatoria si LLM_PROVIDER=anthropic)
 ANTHROPIC_MODEL             # (default: claude-haiku-4-5-20251001)
 ANTHROPIC_MAX_TOKENS        # (default: 1024)
+ANTHROPIC_CACHE_TTL         # 5m (default) | 1h - cuanto vive el prompt cacheado
 WHATSAPP_TOKEN              # Graph API token
 WHATSAPP_PHONE_NUMBER_ID    # ID del número de WhatsApp
 WEBHOOK_VERIFY_TOKEN        # token de verificación del webhook

@@ -30,21 +30,28 @@ type anthropicProvider struct {
 	apiKey    string
 	modelo    string
 	maxTokens int
-	http      *http.Client
+	// cacheTTL es cuanto vive el prompt cacheado: "" son los 5 minutos por defecto, "1h" la
+	// hora. Cual conviene depende del ritmo real de conversaciones (ver marcarCache).
+	cacheTTL string
+	http     *http.Client
 }
 
 // NewAnthropic crea el proveedor de Claude.
-func NewAnthropic(apiKey, modelo string, maxTokens int) (Provider, error) {
+func NewAnthropic(apiKey, modelo string, maxTokens int, cacheTTL string) (Provider, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("falta ANTHROPIC_API_KEY")
 	}
 	if maxTokens <= 0 {
 		maxTokens = 1024
 	}
+	if cacheTTL != "1h" {
+		cacheTTL = "" // cualquier otra cosa: los 5 minutos por defecto de la API
+	}
 	return &anthropicProvider{
 		apiKey:    apiKey,
 		modelo:    modelo,
 		maxTokens: maxTokens,
+		cacheTTL:  cacheTTL,
 		// El webhook de WhatsApp ya respondió 200 antes de llegar aquí, así que este timeout
 		// solo acota cuánto esperamos al modelo antes de darnos por vencidos.
 		http: &http.Client{Timeout: 90 * time.Second},
@@ -64,7 +71,7 @@ type anthMensaje struct {
 type anthPeticion struct {
 	Model     string           `json:"model"`
 	MaxTokens int              `json:"max_tokens"`
-	System    string           `json:"system,omitempty"`
+	System    []map[string]any `json:"system,omitempty"`
 	Messages  []anthMensaje    `json:"messages"`
 	Tools     []map[string]any `json:"tools,omitempty"`
 }
@@ -83,6 +90,9 @@ type anthRespuesta struct {
 	Usage      struct {
 		InputTokens  int `json:"input_tokens"`
 		OutputTokens int `json:"output_tokens"`
+		// Lo que se escribio en cache (se cobra 1.25x) y lo que se leyo de ella (0.1x).
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	} `json:"usage"`
 	Error *struct {
 		Type    string `json:"type"`
@@ -90,15 +100,16 @@ type anthRespuesta struct {
 	} `json:"error"`
 }
 
-func (a *anthropicProvider) Generate(ctx context.Context, system string, history []*genai.Content, tools []*genai.Tool) (Response, error) {
+func (a *anthropicProvider) Generate(ctx context.Context, system System, history []*genai.Content, tools []*genai.Tool) (Response, error) {
 	mensajes := mensajesAnthropic(history)
 	if len(mensajes) == 0 {
 		return Response{}, fmt.Errorf("no hay mensajes que enviar")
 	}
+	a.marcarCache(mensajes)
 	peticion := anthPeticion{
 		Model:     a.modelo,
 		MaxTokens: a.maxTokens,
-		System:    system,
+		System:    a.sistemaEnBloques(system),
 		Messages:  mensajes,
 		Tools:     herramientasAnthropic(tools),
 	}
@@ -128,8 +139,9 @@ func (a *anthropicProvider) Generate(ctx context.Context, system string, history
 
 	// Consumo a la vista: es lo que se factura, y con el bot en producción conviene poder
 	// mirarlo en el log sin entrar a la consola de Anthropic.
-	log.Printf("[llm] anthropic %s entrada=%d salida=%d motivo=%s",
-		a.modelo, datos.Usage.InputTokens, datos.Usage.OutputTokens, datos.StopReason)
+	log.Printf("[llm] anthropic %s entrada=%d cache_lee=%d cache_escribe=%d salida=%d motivo=%s",
+		a.modelo, datos.Usage.InputTokens, datos.Usage.CacheReadInputTokens,
+		datos.Usage.CacheCreationInputTokens, datos.Usage.OutputTokens, datos.StopReason)
 
 	var textos []string
 	var calls []*genai.FunctionCall
@@ -189,6 +201,9 @@ func (a *anthropicProvider) enviar(ctx context.Context, cuerpo []byte) (anthResp
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("x-api-key", a.apiKey)
 	req.Header.Set("anthropic-version", anthropicVersion)
+	if a.cacheTTL == "1h" {
+		req.Header.Set("anthropic-beta", "extended-cache-ttl-2025-04-11")
+	}
 
 	res, err := a.http.Do(req)
 	if err != nil {
@@ -213,6 +228,59 @@ func (a *anthropicProvider) enviar(ctx context.Context, cuerpo []byte) (anthResp
 		return datos, fmt.Errorf("anthropic: %s", datos.Error.Message)
 	}
 	return datos, nil
+}
+
+// --- Cacheo del prompt ---
+//
+// Anthropic cobra a la decima parte el texto que ya vio, siempre que el PRINCIPIO del prompt
+// sea identico byte a byte. En este bot la mayor parte de cada llamada es exactamente eso:
+// las reglas del bot y las diez herramientas viajan enteras en cada mensaje, y se repiten
+// unas seis veces por conversacion.
+//
+// Cachear NO cambia lo que el modelo lee ni lo que contesta: es el mismo prompt, cobrado
+// distinto. Solo cambia el precio.
+//
+// Se marcan dos cortes: uno al final de la parte fija del sistema (que arrastra tambien a las
+// herramientas, porque van antes en el prompt) y otro al final del ultimo mensaje, para que la
+// conversacion acumulada tampoco se pague entera en cada vuelta.
+
+// bloqueCache devuelve la marca de cacheo con el TTL configurado.
+func (a *anthropicProvider) bloqueCache() map[string]any {
+	cc := map[string]any{"type": "ephemeral"}
+	if a.cacheTTL != "" {
+		cc["ttl"] = a.cacheTTL
+	}
+	return cc
+}
+
+// sistemaEnBloques parte el prompt de sistema en fijo (cacheado) y volatil.
+func (a *anthropicProvider) sistemaEnBloques(system System) []map[string]any {
+	var out []map[string]any
+	if fijo := system.Estatico; fijo != "" {
+		bloque := map[string]any{"type": "text", "text": fijo}
+		// Por debajo del minimo cacheable la API ignora la marca; no se pone y listo.
+		if len(fijo) > 8000 {
+			bloque["cache_control"] = a.bloqueCache()
+		}
+		out = append(out, bloque)
+	}
+	if system.Volatil != "" {
+		out = append(out, map[string]any{"type": "text", "text": system.Volatil})
+	}
+	return out
+}
+
+// marcarCache marca el final de la conversacion para que la proxima vuelta no vuelva a pagar
+// el historial completo. Cada llamada solo escribe en cache lo que se agrego desde la anterior.
+func (a *anthropicProvider) marcarCache(mensajes []anthMensaje) {
+	if len(mensajes) == 0 {
+		return
+	}
+	ultimo := mensajes[len(mensajes)-1]
+	if len(ultimo.Content) == 0 {
+		return
+	}
+	ultimo.Content[len(ultimo.Content)-1]["cache_control"] = a.bloqueCache()
 }
 
 // --- Traducciones ---
