@@ -108,6 +108,21 @@ func avisarCliente(cfg config.Config, store conversation.Store, phone, texto str
 	return nil
 }
 
+// avisarClienteMenu manda un aviso con BOTONES. Para una confirmacion es mejor que el texto
+// libre: lo que vuelve es el titulo exacto del boton, no un "si" escrito de veinte maneras que
+// haya que interpretar. Si el menu falla por lo que sea, se cae a texto plano: el aviso tiene
+// que salir igual.
+func avisarClienteMenu(cfg config.Config, store conversation.Store, phone, cuerpo string, opciones []string, respaldo string) error {
+	if err := whatsapp.SendMenu(cfg, phone, cuerpo, opciones); err != nil {
+		log.Printf("[aviso] el menú falló para %s (%v); se envía como texto", phone, err)
+		return avisarCliente(cfg, store, phone, respaldo)
+	}
+	registro := cuerpo + " [" + strings.Join(opciones, " / ") + "]"
+	store.LogMessage(phone, "system", "📋 "+registro)
+	store.AppendModel(phone, registro)
+	return nil
+}
+
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
@@ -435,10 +450,12 @@ func main() {
 					log.Printf("[schedule] programado #%d de %s expirado (ventana 24h cerrada)", sch.ID, sch.Phone)
 					continue
 				}
-				msg := fmt.Sprintf("⏰ ¡Hola! Tenemos programada tu entrega de %d x %s color %s. "+
-					"¿Confirmas tu pedido ahora? Responde \"Sí\" para enviarlo 🚚",
-					sch.Cantidad, sch.ProductoNombre, sch.ColorNombre)
-				if err := avisarCliente(cfg, store, sch.Phone, msg); err != nil {
+				cuerpo := fmt.Sprintf("⏰ ¡Hola! Tenemos programada tu entrega de %d x %s color %s. "+
+					"¿La enviamos ahora? 🚚", sch.Cantidad, sch.ProductoNombre, sch.ColorNombre)
+				// Respaldo por si el menú interactivo no sale: el aviso no se puede perder.
+				respaldo := cuerpo + " Responde \"Sí\" para enviarlo."
+				if err := avisarClienteMenu(cfg, store, sch.Phone, cuerpo,
+					[]string{agent.BotonConfirmarEntrega, agent.BotonCancelarEntrega}, respaldo); err != nil {
 					log.Printf("[schedule] error escribiendo a %s: %v (reintento en 1 min)", sch.Phone, err)
 					continue // sigue 'pendiente'; el próximo tick reintenta
 				}

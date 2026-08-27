@@ -28,6 +28,22 @@ import (
 	"wp-llm-gas/internal/conversation"
 )
 
+// Textos de los botones con los que se pregunta por una entrega agendada. Un boton tocado
+// llega como texto EXACTO, sin faltas ni variantes, asi que la confirmacion deja de depender
+// de adivinar que quiso decir el cliente. Se mantienen cortos: WhatsApp corta los titulos de
+// boton a 20 caracteres.
+const (
+	BotonConfirmarEntrega = "Sí, enviar"
+	BotonCancelarEntrega  = "No, cancelar"
+)
+
+func init() {
+	// Los botones se registran solos como respuestas validas: si mañana se les cambia el texto,
+	// el clasificador no se queda atras.
+	respuestasAfirmativas[normalizarRespuesta(BotonConfirmarEntrega)] = true
+	respuestasNegativas[normalizarRespuesta(BotonCancelarEntrega)] = true
+}
+
 // Respuestas que cuentan como un sí. La lista es corta y cerrada a propósito: se compara el
 // mensaje ENTERO ya normalizado, no se busca dentro. "si" confirma; "si pero mañana" no.
 var respuestasAfirmativas = map[string]bool{

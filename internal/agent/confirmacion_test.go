@@ -41,6 +41,25 @@ func TestRespuestasQueCancelan(t *testing.T) {
 	}
 }
 
+func TestLosBotonesSiempreSeReconocen(t *testing.T) {
+	// El aviso de una entrega agendada se manda con botones. Si el titulo del boton dejara de
+	// caer en el clasificador, el cliente tocaria "Si, enviar" y no pasaria nada: exactamente el
+	// bug que se esta arreglando. Por eso se registran solos en init(), y esto lo vigila.
+	if !respuestasAfirmativas[normalizarRespuesta(BotonConfirmarEntrega)] {
+		t.Fatalf("el botón %q no cuenta como confirmación", BotonConfirmarEntrega)
+	}
+	if !respuestasNegativas[normalizarRespuesta(BotonCancelarEntrega)] {
+		t.Fatalf("el botón %q no cuenta como negativa", BotonCancelarEntrega)
+	}
+	// WhatsApp corta los títulos de botón a 20 caracteres: si se pasa, el texto que vuelve no
+	// es el que se registró y deja de reconocerse.
+	for _, b := range []string{BotonConfirmarEntrega, BotonCancelarEntrega} {
+		if len([]rune(b)) > 20 {
+			t.Errorf("el botón %q pasa de 20 caracteres y WhatsApp lo va a cortar", b)
+		}
+	}
+}
+
 func TestLoAmbiguoNoSeDecideEnCodigo(t *testing.T) {
 	// Lo importante del diseño: si el cliente no dio un sí o un no limpio, NO se registra ni se
 	// cancela nada por nuestra cuenta. Eso sí es conversación y va al modelo.
