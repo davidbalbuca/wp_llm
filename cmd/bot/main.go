@@ -563,6 +563,19 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		}
 	}
 
+	// Entrega AGENDADA esperando confirmacion: el "si" del cliente no puede depender de que el
+	// modelo decida llamar a la herramienta. Paso tres veces el 27/08 en produccion, con dos
+	// modelos distintos: el cliente confirmo y el bot le contesto "¿necesitas algo mas?" sin
+	// crear nada. Aqui el pedido se registra en codigo. Si la respuesta no es un si o un no
+	// inequivoco, no se toca y sigue al modelo (ver internal/agent/confirmacion.go).
+	if inc.IsText {
+		if reply, manejado := ag.ConfirmarProgramado(context.Background(), inc.From, inc.Text); manejado {
+			log.Printf("[webhook] confirmacion de entrega agendada resuelta para %s", inc.From)
+			_ = replyClient(cfg, store, inc.From, reply)
+			return
+		}
+	}
+
 	reply, err := ag.HandleMessage(context.Background(), inc.From, messageForAgent)
 	if err != nil {
 		log.Printf("[server] Error procesando mensaje: %v", err)

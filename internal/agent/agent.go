@@ -107,6 +107,17 @@ func parseHoraHHMM(s string) int {
 	return h*60 + m
 }
 
+// resultadoPedido es el desenlace de un registrar_pedido, para quien lo llame desde codigo.
+type resultadoPedido struct {
+	ok        bool // el pedido se creo en el backend
+	enEspera  bool // se creo pero no habia repartidor: quedo en cola (PendingWait)
+	IDPedido  int
+	Conductor string
+	Producto  string
+	Color     string
+	Cantidad  int
+}
+
 type Agent struct {
 	cfg config.Config
 	// modelo es quien contesta: Gemini o Claude, segun LLM_PROVIDER. El bucle de abajo es
@@ -120,6 +131,11 @@ type Agent struct {
 	// menuSent indica que en este turno la IA ya envió un MENÚ interactivo por WhatsApp
 	// (vía la tool mostrar_menu); el llamador NO debe enviar además el texto de respuesta.
 	menuSent bool
+	// ultimoPedido guarda QUE paso en el ultimo registrar_pedido de este turno. El texto que
+	// esa funcion devuelve esta escrito para el modelo ("Ofrecele al cliente ESPERAR usando la
+	// herramienta..."), no para el cliente, asi que el flujo determinista de confirmacion
+	// (confirmacion.go) necesita el resultado en limpio y no adivinarlo del texto.
+	ultimoPedido resultadoPedido
 	// lastMenuText es la PREGUNTA del último menú enviado en este turno (cuerpo + opciones).
 	// Se guarda en el historial como turno del modelo, porque el historial solo persiste TEXTO
 	// (no function calls): sin esto los menús quedaban invisibles y el modelo, al no "recordar"
@@ -1228,6 +1244,12 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 				Identificacion: identificacion,
 				Nombres:        nombres,
 			})
+			a.ultimoPedido = resultadoPedido{
+				enEspera: true,
+				Producto: producto.Nombre,
+				Color:    color.Nombre,
+				Cantidad: cantidad,
+			}
 			return mensajeOfrecerEspera
 		}
 		a.escalated = true
@@ -1255,6 +1277,15 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 	// Marca como CONFIRMADO cualquier pedido programado en confirmación de este cliente.
 	if sch, ok := a.store.GetConfirmingSchedule(from); ok {
 		a.store.SetScheduledEstado(sch.ID, conversation.ScheduleConfirmado)
+	}
+
+	a.ultimoPedido = resultadoPedido{
+		ok:        true,
+		IDPedido:  resultado.IDPedido,
+		Conductor: resultado.ConductorAsignado,
+		Producto:  producto.Nombre,
+		Color:     color.Nombre,
+		Cantidad:  cantidad,
 	}
 
 	mensaje := fmt.Sprintf("Pedido registrado correctamente: %d x %s (%s).", cantidad, producto.Nombre, color.Nombre)
