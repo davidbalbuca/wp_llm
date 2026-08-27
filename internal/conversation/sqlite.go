@@ -300,6 +300,46 @@ func (s *sqliteStore) tienePendiente(query, phone string) bool {
 	return true
 }
 
+// ListScheduled lista las entregas agendadas para el panel de Pedidos, de la mas proxima a la
+// mas lejana. Sin filtro de estado devuelve todas.
+func (s *sqliteStore) ListScheduled(estado string, limit int) []ScheduledOrder {
+	if limit <= 0 {
+		limit = 200
+	}
+	query := `
+        SELECT id, phone, identificacion, nombres, idcategoria, idproducto, idcolor, cantidad,
+               idtipopago, producto_nombre, color_nombre, latitude, longitude, hora_propuesta,
+               estado, confirm_sent_at, created_at
+        FROM scheduled_orders`
+	args := []any{}
+	if estado != "" {
+		query += " WHERE estado = ?"
+		args = append(args, estado)
+	}
+	query += " ORDER BY hora_propuesta ASC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		log.Printf("[sqlite] ListScheduled: %v", err)
+		return nil
+	}
+	defer rows.Close()
+	var out []ScheduledOrder
+	for rows.Next() {
+		var o ScheduledOrder
+		if err := rows.Scan(&o.ID, &o.Phone, &o.Identificacion, &o.Nombres, &o.IDCategoria,
+			&o.IDProducto, &o.IDColor, &o.Cantidad, &o.IDTipoPago, &o.ProductoNombre,
+			&o.ColorNombre, &o.Latitude, &o.Longitude, &o.HoraPropuesta, &o.Estado,
+			&o.ConfirmSentAt, &o.CreatedAt); err != nil {
+			log.Printf("[sqlite] ListScheduled scan: %v", err)
+			continue
+		}
+		out = append(out, o)
+	}
+	return out
+}
+
 func (s *sqliteStore) CreateScheduled(o ScheduledOrder) int64 {
 	res, err := s.db.Exec(`
         INSERT INTO scheduled_orders(phone, identificacion, nombres, idcategoria, idproducto,

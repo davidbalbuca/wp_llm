@@ -266,6 +266,9 @@ type Store interface {
 	GetConversation(phone string, limit int) []LoggedMessage
 	// ListConversations lista los chats recientes con su último mensaje y modo.
 	ListConversations(limit int) []ConversationSummary
+	// ListScheduled lista las entregas agendadas (para verlas en el panel de Pedidos).
+	// estado vacío = todas; si no, filtra por ese estado.
+	ListScheduled(estado string, limit int) []ScheduledOrder
 	// GetChatMode devuelve el modo del chat ("bot" por defecto).
 	GetChatMode(phone string) string
 	// SetChatMode fija el modo del chat ("bot" o "human").

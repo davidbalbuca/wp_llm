@@ -329,6 +329,16 @@ func main() {
 
 	// --- Tickets de soporte (panel web; secreto de canal) ---
 	// Lista de tickets: ?estado=abierto|cerrado (vacío = todos).
+	// Entregas AGENDADAS, para mostrarlas en el panel de Pedidos. Viven aqui (SQLite del bot)
+	// y no en la base del backend, porque hasta que se confirman no son pedidos todavia.
+	mux.HandleFunc("GET /internal/scheduled", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		writeJSON(w, store.ListScheduled(r.URL.Query().Get("estado"),
+			atoiDefault(r.URL.Query().Get("limit"), 200)))
+	})
 	mux.HandleFunc("GET /internal/tickets", func(w http.ResponseWriter, r *http.Request) {
 		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -372,10 +382,10 @@ func main() {
 			}
 		}
 		writeJSON(w, map[string]any{
-			"tickets_abiertos":       len(store.ListTickets(conversation.TicketAbierto, 500)),
-			"conversaciones_activas": activas,
-			"chats_humano":           humanos,
-			"programados_pendientes": store.CountScheduled(conversation.SchedulePendiente),
+			"tickets_abiertos":        len(store.ListTickets(conversation.TicketAbierto, 500)),
+			"conversaciones_activas":  activas,
+			"chats_humano":            humanos,
+			"programados_pendientes":  store.CountScheduled(conversation.SchedulePendiente),
 			"programados_confirmando": store.CountScheduled(conversation.ScheduleConfirmando),
 		})
 	})
