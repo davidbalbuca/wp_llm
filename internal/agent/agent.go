@@ -47,8 +47,9 @@ const mensajeOfrecerEspera = "IMPORTANTE: En este momento no hay un repartidor d
 	"pedido quedó listo. Ofrécele al cliente ESPERAR usando la herramienta mostrar_menu con el cuerpo: " +
 	"'Los repartidores están un poco lejos 🚚. Podría tardar hasta 5 minutos en asignarse. ¿Deseas esperar?' " +
 	"y las opciones exactas [\"Esperar\", \"Programar\", \"Cancelar\"]. Si el cliente elige esperar, llama a " +
-	"la herramienta esperar_conductor. Si elige PROGRAMAR, pregúntale para qué hora la quiere (más tarde HOY " +
-	"o MAÑANA, siempre dentro del horario de entregas y de las próximas 24 horas) y llama a programar_entrega. " +
+	"la herramienta esperar_conductor. Si elige PROGRAMAR, dile el horario de atención y pídele que ESCRIBA " +
+	"la hora que prefiera (más tarde HOY o MAÑANA, dentro de ese horario y de las próximas 24 horas); NO le " +
+	"ofrezcas horas como opciones ni uses mostrar_menu para eso. Luego llama a programar_entrega. " +
 	"Si elige cancelar, llama a cancelar_espera. NO derives al dueño ni le pidas de nuevo los datos ni la " +
 	"ubicación."
 
@@ -337,7 +338,9 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 		systemPrompt += " ESTAMOS FUERA DE HORARIO: a esta hora NO hay conductores disponibles, así que NO llames " +
 			"a registrar_pedido. Explícaselo con amabilidad y ofrécele PROGRAMAR la entrega con la herramienta " +
 			"programar_entrega: pide color, cantidad, su ubicación de WhatsApp, cédula y nombre (si es cliente " +
-			"nuevo) y la hora deseada (dentro del horario y de las próximas 24 horas)."
+			"nuevo) y la hora deseada. Para la hora, DILE EL HORARIO DE ATENCIÓN y deja que el cliente escriba " +
+			"la que prefiera (dentro de ese horario y de las próximas 24 horas): NO le ofrezcas horas como " +
+			"opciones ni uses mostrar_menu para eso."
 	} else {
 		// Decirlo EN POSITIVO es necesario: si solo se avisa cuando estamos fuera, el modelo ve
 		// la hora cerca del cierre y deduce solo que "la jornada terminó". Paso en produccion el
@@ -786,8 +789,9 @@ func (a *Agent) cancelarEspera(from string) string {
 	a.store.ClearPendingWait(from)
 	// El historial NO se borra: la memoria del chat dura la ventana de 24h.
 	return "El cliente no quiso esperar; el pedido quedó registrado para gestión manual. ANTES de despedirte, " +
-		"ofrécele PROGRAMAR la entrega para más tarde hoy o para mañana (dentro del horario de entregas y de " +
-		"las próximas 24 horas): si acepta, pídele la hora y llama a programar_entrega. Si tampoco quiere, " +
+		"ofrécele PROGRAMAR la entrega para más tarde hoy o para mañana: si acepta, dile el horario de atención " +
+		"y deja que ESCRIBA la hora que prefiera (dentro de ese horario y de las próximas 24 horas, sin " +
+		"ofrecerle opciones), y llama a programar_entrega. Si tampoco quiere, " +
 		"despídete con: \"Muchas gracias, espero poder ayudarte la próxima vez. 🙌\""
 }
 
@@ -934,7 +938,9 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 
 	mins := parseHoraHHMM(str(args["hora"]))
 	if mins < 0 {
-		return "La hora no es válida. Pídele la hora en formato HH:MM (por ejemplo 08:30)."
+		return fmt.Sprintf("Aún no tengo una hora válida. Dile que atendemos de %s a %s y pídele que escriba "+
+			"a qué hora quiere recibirlo (formato HH:MM). NO le ofrezcas horas como opciones.",
+			a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
 	}
 	ini := parseHoraHHMM(a.cfg.BotHorarioInicio)
 	fin := parseHoraHHMM(a.cfg.BotHorarioFin)

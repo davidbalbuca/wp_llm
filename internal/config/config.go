@@ -94,7 +94,7 @@ func Load() Config {
 		DBPath:          os.Getenv("DB_PATH"),
 		AuditLogDays:    optionalInt("AUDIT_LOG_DAYS", 15),
 		HumanTakeoverTimeout: time.Duration(optionalInt("HUMAN_TAKEOVER_TIMEOUT_MIN", 15)) * time.Minute,
-		BotHorarioInicio: optional("BOT_HORARIO_INICIO", "06:00"),
+		BotHorarioInicio: optional("BOT_HORARIO_INICIO", "07:00"),
 		BotHorarioFin:    optional("BOT_HORARIO_FIN", "19:00"),
 		SMTPHost:       os.Getenv("SMTP_HOST"),
 		SMTPPort:       optional("SMTP_PORT", "587"),

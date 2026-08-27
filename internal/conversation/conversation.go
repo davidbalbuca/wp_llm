@@ -43,7 +43,7 @@ const (
 // conversación, incluidas las notificaciones del sistema. Se conserva varios días (durable, NO lo
 // borra ClearHistory ni el TTL corto del historial del bot), para revisar/gestionar desde la web.
 type LoggedMessage struct {
-	Role      string `json:"role"`       // "user" (cliente) | "model" (bot) | "system" (notificación) | "human" (respuesta manual)
+	Role      string `json:"role"` // "user" (cliente) | "model" (bot) | "system" (notificación) | "human" (respuesta manual)
 	Content   string `json:"content"`
 	CreatedAt int64  `json:"created_at"` // unix (segundos)
 }
@@ -54,6 +54,11 @@ type ConversationSummary struct {
 	Mode        string `json:"mode"`
 	LastMessage string `json:"last_message"`
 	LastAt      int64  `json:"last_at"`
+	// Para separar los chats en el panel: sin estas banderas todas las conversaciones se ven
+	// iguales y no se distingue cual esta agendada, cual quedo esperando conductor y cual ya
+	// se resolvio.
+	Programado bool `json:"programado"` // tiene una entrega agendada pendiente
+	EnEspera   bool `json:"en_espera"`  // quedo esperando conductor / sin pedido asignado
 }
 
 // Estados de un ticket de soporte.

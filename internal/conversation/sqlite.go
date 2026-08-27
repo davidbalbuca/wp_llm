@@ -277,11 +277,27 @@ func (s *sqliteStore) ListConversations(limit int) []ConversationSummary {
 		out = append(out, c)
 	}
 	rows.Close()
-	// El modo se consulta aparte (evita anidar queries mientras se itera el cursor).
+	// El modo y las banderas se consultan aparte (evita anidar queries mientras se itera el
+	// cursor). Son consultas por indice sobre tablas chicas: no pesan.
 	for i := range out {
 		out[i].Mode = s.GetChatMode(out[i].Phone)
+		out[i].Programado = s.tienePendiente(`
+            SELECT 1 FROM scheduled_orders WHERE phone = ? AND estado IN ('pendiente','confirmando') LIMIT 1`,
+			out[i].Phone)
+		out[i].EnEspera = s.tienePendiente(`
+            SELECT 1 FROM pending_wait WHERE phone = ? LIMIT 1`, out[i].Phone)
 	}
 	return out
+}
+
+// tienePendiente devuelve true si la consulta (que debe seleccionar 1 columna) trae alguna fila.
+// Best-effort: ante cualquier error responde false, para no romper el listado del panel.
+func (s *sqliteStore) tienePendiente(query, phone string) bool {
+	var x int
+	if err := s.db.QueryRow(query, phone).Scan(&x); err != nil {
+		return false
+	}
+	return true
 }
 
 func (s *sqliteStore) CreateScheduled(o ScheduledOrder) int64 {
