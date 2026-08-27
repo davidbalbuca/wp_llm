@@ -908,8 +908,12 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 							msg += ": " + res.ConductorAsignado
 						}
 						msg += ". Sale con tu pedido en breve. ¡Gracias por tu espera!"
-						store.LogMessage(from, "system", msg)
-						_ = whatsapp.SendText(cfg, from, msg)
+						if err := whatsapp.SendText(cfg, from, msg); err == nil {
+							store.LogMessage(from, "system", msg)
+							// Tambien a la memoria del modelo: si el cliente responde a este aviso,
+							// la IA tiene que saber que se lo mandamos.
+							store.AppendModel(from, msg)
+						}
 						return
 					}
 				}
@@ -934,8 +938,12 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 		// El historial NO se borra (memoria de 24h). El mensaje queda AUDITADO.
 		msgTimeout := "Te pedimos disculpas 🙏. Por ahora no hay ningún repartidor disponible " +
 			"para asignar tu pedido. Intenta más tarde, con gusto te ayudamos."
-		store.LogMessage(from, "system", msgTimeout)
-		_ = whatsapp.SendText(cfg, from, msgTimeout)
+		if err := whatsapp.SendText(cfg, from, msgTimeout); err == nil {
+			store.LogMessage(from, "system", msgTimeout)
+			// Tambien a la memoria del modelo: si el cliente responde a este aviso,
+			// la IA tiene que saber que se lo mandamos.
+			store.AppendModel(from, msgTimeout)
+		}
 	}()
 }
 

@@ -83,18 +83,26 @@ func (a *Agent) ConfirmarProgramado(ctx context.Context, from, texto string) (st
 		return "", false
 	}
 
+	var salida string
 	switch {
 	case respuestasAfirmativas[respuesta]:
-		return a.confirmarYRegistrar(from, sch), true
+		salida = a.confirmarYRegistrar(from, sch)
 	case respuestasNegativas[respuesta]:
 		a.store.SetScheduledEstado(sch.ID, conversation.ScheduleExpirado)
 		log.Printf("[confirmacion] %s rechazó su entrega agendada #%d", from, sch.ID)
-		return "Entendido, cancelé tu entrega programada. Cuando necesites tu gas escríbeme y lo " +
-			"vemos al instante. ¡Que tengas buen día! 🙌", true
+		salida = "Entendido, cancelé tu entrega programada. Cuando necesites tu gas escríbeme y lo " +
+			"vemos al instante. ¡Que tengas buen día! 🙌"
 	default:
 		// Ni sí ni no: el cliente está preguntando o pidiendo otra cosa. Eso sí es conversación.
 		return "", false
 	}
+
+	// Este turno no pasó por HandleMessage, que es quien normalmente guarda la conversación. Se
+	// guarda aquí para que el modelo no quede ciego a lo que acaba de ocurrir: si el cliente
+	// escribe después ("¿cuánto falta?"), tiene que saber que confirmó y que hay un pedido.
+	a.store.AppendUser(from, texto)
+	a.store.AppendModel(from, salida)
+	return salida, true
 }
 
 // confirmarYRegistrar crea el pedido de la entrega agendada y redacta la respuesta al cliente.

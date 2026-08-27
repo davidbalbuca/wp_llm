@@ -86,6 +86,28 @@ func replyClient(cfg config.Config, store conversation.Store, phone, text string
 	return whatsapp.SendText(cfg, phone, text)
 }
 
+// avisarCliente manda un mensaje que NO nace de una respuesta del cliente -la confirmacion de
+// una entrega agendada, el conductor que llego, el pedido cancelado- y lo deja en DOS sitios:
+// la auditoria (lo que se ve en el panel) y la memoria del modelo.
+//
+// Lo segundo es lo que faltaba, y costo caro. Estos avisos se guardaban solo con LogMessage,
+// que alimenta el panel pero NO el historial que lee la IA. Por eso el 27/08 el sistema le
+// pregunto a un cliente "¿Confirmas tu pedido?" a las 11:30, el contesto "Si" a las 11:37, y
+// para el modelo la conversacion era: bot "¡Que disfrutes tu gas! 😊" -> cliente "Si". Un si a
+// nada. Respondio "¿Necesitas algo mas?" sin registrar el pedido, y visto lo que veia, tenia
+// razon: nadie le habia preguntado nada. Si el bot le habla al cliente, el modelo se entera.
+//
+// Primero se envia y solo despues se registra: nunca se le hace creer al modelo que dijo algo
+// que el cliente jamas recibio.
+func avisarCliente(cfg config.Config, store conversation.Store, phone, texto string) error {
+	if err := whatsapp.SendText(cfg, phone, texto); err != nil {
+		return err
+	}
+	store.LogMessage(phone, "system", texto)
+	store.AppendModel(phone, texto)
+	return nil
+}
+
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
@@ -416,11 +438,10 @@ func main() {
 				msg := fmt.Sprintf("⏰ ¡Hola! Tenemos programada tu entrega de %d x %s color %s. "+
 					"¿Confirmas tu pedido ahora? Responde \"Sí\" para enviarlo 🚚",
 					sch.Cantidad, sch.ProductoNombre, sch.ColorNombre)
-				if err := whatsapp.SendText(cfg, sch.Phone, msg); err != nil {
+				if err := avisarCliente(cfg, store, sch.Phone, msg); err != nil {
 					log.Printf("[schedule] error escribiendo a %s: %v (reintento en 1 min)", sch.Phone, err)
 					continue // sigue 'pendiente'; el próximo tick reintenta
 				}
-				store.LogMessage(sch.Phone, "system", msg)
 				store.MarkConfirmSent(sch.ID, now)
 				log.Printf("[schedule] confirmación enviada al cliente %s (programado #%d)", sch.Phone, sch.ID)
 			}
@@ -649,8 +670,7 @@ func notifyOrderFinished(cfg config.Config, store conversation.Store, pedidoID i
 	} else {
 		msg += "¿Cómo calificarías a tu repartidor? Responde con un número del 1 al 5 ⭐ (y si quieres, un breve comentario)."
 	}
-	store.LogMessage(phone, "system", msg)
-	if err := whatsapp.SendText(cfg, phone, msg); err != nil {
+	if err := avisarCliente(cfg, store, phone, msg); err != nil {
 		log.Printf("[order-finished] error enviando a %s: %v", phone, err)
 	}
 }
@@ -667,8 +687,7 @@ func notifyOrderArrived(cfg config.Config, store conversation.Store, pedidoID in
 		return
 	}
 	msg := "🛵 El conductor llegó a tu ubicación. Por favor, sal a recibir tu pedido. 📦"
-	store.LogMessage(phone, "system", msg)
-	if err := whatsapp.SendText(cfg, phone, msg); err != nil {
+	if err := avisarCliente(cfg, store, phone, msg); err != nil {
 		log.Printf("[order-arrived] error enviando a %s: %v", phone, err)
 	}
 }
@@ -687,8 +706,7 @@ func notifyOrderCancelled(cfg config.Config, store conversation.Store, pedidoID 
 	store.ClearActivePedido(phone)
 	// El historial NO se borra: la memoria del chat dura la ventana de 24h (regla general).
 	msg := "😔 Tu pedido fue cancelado por el conductor. Disculpa las molestias. Cuando quieras, puedes hacer un nuevo pedido."
-	store.LogMessage(phone, "system", msg)
-	if err := whatsapp.SendText(cfg, phone, msg); err != nil {
+	if err := avisarCliente(cfg, store, phone, msg); err != nil {
 		log.Printf("[order-cancelled] error enviando a %s: %v", phone, err)
 	}
 }
@@ -711,8 +729,7 @@ func notifyOrderNoShow(cfg config.Config, store conversation.Store, pedidoID int
 		msg += " (motivo: " + strings.TrimSpace(motivo) + ")"
 	}
 	msg += ". Cuando quieras, puedes hacer un nuevo pedido."
-	store.LogMessage(phone, "system", msg)
-	if err := whatsapp.SendText(cfg, phone, msg); err != nil {
+	if err := avisarCliente(cfg, store, phone, msg); err != nil {
 		log.Printf("[order-no-show] error enviando a %s: %v", phone, err)
 	}
 }
@@ -733,8 +750,7 @@ func notifyOrderReassigned(cfg config.Config, store conversation.Store, pedidoID
 		msg += ": " + conductor
 	}
 	msg += ". ¡Ya va en camino!"
-	store.LogMessage(phone, "system", msg)
-	if err := whatsapp.SendText(cfg, phone, msg); err != nil {
+	if err := avisarCliente(cfg, store, phone, msg); err != nil {
 		log.Printf("[order-reassigned] error enviando a %s: %v", phone, err)
 	}
 }
