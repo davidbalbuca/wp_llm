@@ -48,8 +48,18 @@ func revisarCierres(cfg config.Config, store conversation.Store) {
 		}
 	}()
 
+	// Los chats con un ticket abierto quedan fuera: ese cliente esta esperando que le escriba
+	// una persona, no que el bot se despida. Se consultan UNA vez por barrido.
+	derivados := map[string]bool{}
+	for _, t := range store.ListTickets(conversation.TicketAbierto, 200) {
+		derivados[t.Phone] = true
+	}
+
 	ahora := time.Now()
 	for _, chat := range store.ListConversations(100) {
+		if derivados[chat.Phone] {
+			continue
+		}
 		if !mereceCierre(store, chat, ahora, cfg.CierreInactividad, cfg.CierreVentanaMax) {
 			continue
 		}
@@ -87,6 +97,14 @@ func mereceCierre(store conversation.Store, chat conversation.ConversationSummar
 	// El último en hablar tiene que ser el bot: si quedó colgado un mensaje DEL CLIENTE sin
 	// responder, lo que corresponde es contestarle, no despedirse.
 	if chat.LastRole == "user" {
+		return false
+	}
+	// Y el bot tiene que haber dejado una PREGUNTA sin responder. Si su último mensaje fue un
+	// cierre normal -"¡Hasta pronto!", "ya avisé al dueño"- la conversación no quedó a medias:
+	// termino. Sin esta condición pasaba lo que vio David con Juan Solano: el bot se despedía,
+	// y siete minutos después soltaba "parece que te ocupaste" sobre una conversación que ya
+	// estaba cerrada. En español la pregunta siempre trae "?", venga de un menú o de un texto.
+	if !strings.Contains(chat.LastMessage, "?") {
 		return false
 	}
 	// Ya se despidió antes. Como la despedida queda de último mensaje, con mirar ese basta y no

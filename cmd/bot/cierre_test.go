@@ -101,6 +101,31 @@ func TestNoSeDespideEnMedioDeOtroFlujo(t *testing.T) {
 	}
 }
 
+func TestNoSeDespideSiElBotYaCerroLaConversacion(t *testing.T) {
+	// El caso de Juan Solano (28/08): pidió un color que no existe, el bot terminó la
+	// conversación, y siete minutos después le soltó "parece que te ocupaste" encima de un chat
+	// que ya estaba cerrado. Si el bot no dejó ninguna pregunta abierta, no hay nada que retomar.
+	store := conversation.NewMemStore()
+	chat := chatDe(store, "593983709153", 8*minutos)
+
+	for _, cierre := range []string{
+		"Perfecto, Juan. Voy a avisar al dueño sobre tu solicitud del color verde.",
+		"¡Listo! Gracias por tu confianza. ¡Hasta pronto! 👋",
+		"Entiendo. Lamentablemente el verde no está disponible. Solo tenemos Blanco, Amarillo, Naranja y Azul.",
+	} {
+		chat.LastMessage = cierre
+		if mereceCierre(store, chat, time.Now(), 7*minutos, 60*minutos) {
+			t.Errorf("no quedó ninguna pregunta abierta, no había que despedirse: %q", cierre)
+		}
+	}
+
+	// Con una pregunta sin responder sí corresponde.
+	chat.LastMessage = "¿Cuál es tu número de cédula?"
+	if !mereceCierre(store, chat, time.Now(), 7*minutos, 60*minutos) {
+		t.Error("quedó una pregunta sin responder: ahí sí se cierra")
+	}
+}
+
 func TestNoSeDespideDeQuienApenasSaludo(t *testing.T) {
 	store := conversation.NewMemStore()
 	store.LogMessage("593984187615", "user", "Hola")
