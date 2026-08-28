@@ -84,7 +84,9 @@ func (s *memStore) ListConversations(limit int) []ConversationSummary {
 		if mode == "" {
 			mode = ChatModeBot
 		}
-		out = append(out, ConversationSummary{Phone: phone, Mode: mode, LastMessage: last.Content, LastAt: last.CreatedAt})
+		out = append(out, ConversationSummary{
+			Phone: phone, Mode: mode, LastMessage: last.Content, LastAt: last.CreatedAt, LastRole: last.Role,
+		})
 	}
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]

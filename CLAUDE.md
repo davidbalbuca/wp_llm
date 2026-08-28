@@ -43,6 +43,8 @@ ANTHROPIC_API_KEY           # API key de la Console (obligatoria si LLM_PROVIDER
 ANTHROPIC_MODEL             # (default: claude-haiku-4-5-20251001)
 ANTHROPIC_MAX_TOKENS        # (default: 1024)
 ANTHROPIC_CACHE_TTL         # 5m (default) | 1h - cuanto vive el prompt cacheado
+BOT_CIERRE_INACTIVIDAD_MIN  # silencio tras el cual el bot se despide (default: 7)
+BOT_CIERRE_VENTANA_MAX_MIN  # techo: pasado esto ya no se despide (default: 60)
 WHATSAPP_TOKEN              # Graph API token
 WHATSAPP_PHONE_NUMBER_ID    # ID del número de WhatsApp
 WEBHOOK_VERIFY_TOKEN        # token de verificación del webhook

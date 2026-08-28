@@ -261,7 +261,7 @@ func (s *sqliteStore) ListConversations(limit int) []ConversationSummary {
 		limit = 100
 	}
 	rows, err := s.db.Query(`
-        SELECT m.phone, m.content, m.created_at FROM message_log m
+        SELECT m.phone, m.content, m.created_at, m.role FROM message_log m
         JOIN (SELECT phone, MAX(id) AS mid FROM message_log GROUP BY phone) t ON t.mid = m.id
         ORDER BY m.created_at DESC LIMIT ?`, limit)
 	if err != nil {
@@ -271,7 +271,7 @@ func (s *sqliteStore) ListConversations(limit int) []ConversationSummary {
 	var out []ConversationSummary
 	for rows.Next() {
 		var c ConversationSummary
-		if err := rows.Scan(&c.Phone, &c.LastMessage, &c.LastAt); err != nil {
+		if err := rows.Scan(&c.Phone, &c.LastMessage, &c.LastAt, &c.LastRole); err != nil {
 			continue
 		}
 		out = append(out, c)

@@ -465,6 +465,9 @@ func main() {
 		}
 	}()
 
+	// Cierre amable de las conversaciones que quedan a medias (ver cierre.go).
+	go cerrarConversacionesInactivas(cfg, store)
+
 	if cfg.LLMProvider == "anthropic" {
 		log.Printf("Modelo: anthropic %s (max_tokens=%d)", cfg.AnthropicModel, cfg.AnthropicMaxTokens)
 	} else {

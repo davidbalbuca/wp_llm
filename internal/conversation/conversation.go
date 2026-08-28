@@ -54,6 +54,9 @@ type ConversationSummary struct {
 	Mode        string `json:"mode"`
 	LastMessage string `json:"last_message"`
 	LastAt      int64  `json:"last_at"`
+	// LastRole dice quien hablo de ultimo ("user" o "model"/"system"). Sirve para saber si la
+	// conversacion quedo esperando al CLIENTE, que es la unica que tiene sentido cerrar.
+	LastRole string `json:"last_role"`
 	// Para separar los chats en el panel: sin estas banderas todas las conversaciones se ven
 	// iguales y no se distingue cual esta agendada, cual quedo esperando conductor y cual ya
 	// se resolvio.

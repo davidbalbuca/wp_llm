@@ -59,6 +59,11 @@ type Config struct {
 	// HumanTakeoverTimeout es la inactividad tras la cual un chat en control HUMANO vuelve solo
 	// al bot (para que un pedido nuevo lo atienda el bot y no quede colgado). Default 15 min.
 	HumanTakeoverTimeout time.Duration
+	// CierreInactividad es el silencio tras el cual el bot se despide de una conversacion que
+	// quedo a medias. CierreVentanaMax es el techo: pasado ese tiempo ya no se dice nada, para
+	// no salir a despedirse de los chats viejos al reiniciar el servicio.
+	CierreInactividad time.Duration
+	CierreVentanaMax  time.Duration
 	// Horario laboral de entregas (hora Ecuador, formato HH:MM). Fuera de este horario el bot
 	// NO registra pedidos: ofrece PROGRAMAR la entrega para una hora dentro del horario.
 	BotHorarioInicio string
@@ -130,6 +135,8 @@ func Load() Config {
 		DBPath:               os.Getenv("DB_PATH"),
 		AuditLogDays:         optionalInt("AUDIT_LOG_DAYS", 15),
 		HumanTakeoverTimeout: time.Duration(optionalInt("HUMAN_TAKEOVER_TIMEOUT_MIN", 15)) * time.Minute,
+		CierreInactividad:    time.Duration(optionalInt("BOT_CIERRE_INACTIVIDAD_MIN", 7)) * time.Minute,
+		CierreVentanaMax:     time.Duration(optionalInt("BOT_CIERRE_VENTANA_MAX_MIN", 60)) * time.Minute,
 		BotHorarioInicio:     optional("BOT_HORARIO_INICIO", "07:00"),
 		BotHorarioFin:        optional("BOT_HORARIO_FIN", "19:00"),
 		SMTPHost:             os.Getenv("SMTP_HOST"),
