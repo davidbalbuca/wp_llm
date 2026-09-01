@@ -286,6 +286,15 @@ func (s *sqliteStore) ListConversations(limit int) []ConversationSummary {
 			out[i].Phone)
 		out[i].EnEspera = s.tienePendiente(`
             SELECT 1 FROM pending_wait WHERE phone = ? LIMIT 1`, out[i].Phone)
+		// Su pedido quedo sin conductor: lo dice el ticket que abre el backend, que sigue
+		// abierto hasta que alguien lo resuelve. Asi la pestana se vacia sola al gestionarlo.
+		out[i].NoAsignado = s.tienePendiente(`
+            SELECT 1 FROM tickets WHERE phone = ? AND estado = 'abierto'
+              AND motivo LIKE 'Pedido sin conductor%' LIMIT 1`, out[i].Phone)
+		// Hablo y no hay NINGUN pedido de por medio: ni uno en curso, ni una entrega agendada,
+		// ni un no asignado esperando. Es la conversacion que quedo a medio camino.
+		out[i].SinPedido = !out[i].NoAsignado && !out[i].Programado && !out[i].EnEspera &&
+			!s.tienePendiente(`SELECT 1 FROM active_pedido WHERE phone = ? LIMIT 1`, out[i].Phone)
 	}
 	return out
 }
