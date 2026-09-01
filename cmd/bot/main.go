@@ -349,10 +349,25 @@ func main() {
 		var payload struct {
 			Phone string `json:"phone"`
 			Text  string `json:"text"`
+			// MaxHoras: si viene, el mensaje solo sale si el cliente escribio hace menos de esas
+			// horas. Lo usa el panel para avisar una entrega hecha por un repartidor externo: un
+			// "tu pedido fue entregado" que llega seis horas tarde no le informa nada al cliente
+			// -ya recibio su gas- y solo delata que alguien se olvido de marcarlo. Sin este
+			// campo el comportamiento es el de siempre (se manda y punto).
+			MaxHoras float64 `json:"max_horas"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Phone) == "" || strings.TrimSpace(payload.Text) == "" {
 			w.WriteHeader(http.StatusBadRequest)
 			return
+		}
+		if payload.MaxHoras > 0 {
+			ultimo, hay := store.LastClientMessageAt(payload.Phone)
+			if !hay || time.Since(time.Unix(ultimo, 0)).Hours() > payload.MaxHoras {
+				// 409: no es un error del que llama, es que ya no corresponde mandarlo.
+				w.WriteHeader(http.StatusConflict)
+				writeJSON(w, map[string]any{"ok": false, "motivo": "fuera de la ventana de tiempo"})
+				return
+			}
 		}
 		store.TouchActivity(payload.Phone) // mantiene viva la sesión de control humano
 		store.LogMessage(payload.Phone, "human", payload.Text)
@@ -384,6 +399,58 @@ func main() {
 		writeJSON(w, store.ListTickets(r.URL.Query().Get("estado"), atoiDefault(r.URL.Query().Get("limit"), 200)))
 	})
 	// Cerrar un ticket con su solución.
+	// Crear un ticket DESDE EL BACKEND. Hoy lo usa el aviso de "pedido sin conductor": ese
+	// pedido es una venta que se pierde si nadie lo ve a tiempo, y antes solo quedaba esperando
+	// a que alguien mirara la pantalla de no asignados. Se crea el ticket y sale el correo, la
+	// misma via que ya usan las derivaciones.
+	mux.HandleFunc("POST /internal/ticket-create", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			Phone   string `json:"phone"`
+			Motivo  string `json:"motivo"`
+			Resumen string `json:"resumen"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Motivo) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		id := store.CreateTicket(payload.Phone, payload.Motivo, payload.Resumen)
+		if id == 0 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if payload.Phone != "" {
+			store.LogMessage(payload.Phone, "system",
+				fmt.Sprintf("🎫 Ticket de soporte #%d creado — %s", id, payload.Motivo))
+		}
+		go escalation.SendSupportEmail(cfg, id, payload.Phone, payload.Motivo, payload.Resumen)
+		log.Printf("[ticket] #%d creado desde el backend: %s", id, payload.Motivo)
+		writeJSON(w, map[string]any{"ok": true, "id": id})
+	})
+
+	// Cuando escribio el cliente por ultima vez. El panel lo consulta para mostrar la casilla de
+	// "avisar al cliente" desactivada CON el motivo, en vez de dejar marcarla y que no pase nada.
+	mux.HandleFunc("GET /internal/last-client-message", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		phone := strings.TrimSpace(r.URL.Query().Get("phone"))
+		if phone == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		ts, hay := store.LastClientMessageAt(phone)
+		if !hay {
+			writeJSON(w, map[string]any{"ok": true, "ts": nil})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "ts": ts})
+	})
+
 	mux.HandleFunc("POST /internal/ticket-close", func(w http.ResponseWriter, r *http.Request) {
 		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
 			w.WriteHeader(http.StatusUnauthorized)
