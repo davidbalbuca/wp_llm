@@ -37,13 +37,23 @@ func NewSQLiteStore(dbPath string, auditDays int) (Store, error) {
 	}
 
 	// _busy_timeout evita errores "database is locked" bajo escrituras concurrentes.
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	// wal_autocheckpoint baja el umbral de volcado del WAL a la base (el default son 1000
+	// páginas). El bot escribe muy seguido y siempre sobre las MISMAS páginas -cada mensaje
+	// toca message_log y activity-, así que el WAL crece por número de escrituras, no por
+	// volumen de datos: en prod llegó a 4 MB con una base de 300 KB. El checkpoint automático
+	// es "passive" y se rinde en silencio si alguien está leyendo, cosa que aquí pasa
+	// constantemente. Con el umbral más bajo lo intenta mucho antes y encuentra la ventana.
+	db, err := sql.Open("sqlite", dbPath+
+		"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=wal_autocheckpoint(200)")
 	if err != nil {
 		return nil, err
 	}
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
+	// Una sola conexión de escritura: SQLite serializa las escrituras igual, y así se evita que
+	// varias conexiones abiertas mantengan al checkpoint sin poder completarse nunca.
+	db.SetMaxOpenConns(1)
 
 	schema := `
 CREATE TABLE IF NOT EXISTS turns (
@@ -214,7 +224,18 @@ CREATE TABLE IF NOT EXISTS tickets (
     created_at INTEGER NOT NULL,
     closed_at  INTEGER
 );
-CREATE INDEX IF NOT EXISTS idx_tickets_estado ON tickets(estado, id);`
+CREATE INDEX IF NOT EXISTS idx_tickets_estado ON tickets(estado, id);
+
+-- Hilo de Telegram por cliente (grupo de alertas con Temas). Guarda el message_thread_id que
+-- devuelve createForumTopic para reusarlo: sin esto el bot abriria un hilo nuevo en cada aviso.
+-- avisado_at es la ultima vez que se notifico el INICIO de una conversacion, para mandar un
+-- solo aviso por sesion (ver SessionGap) en vez de uno por mensaje.
+CREATE TABLE IF NOT EXISTS telegram_threads (
+    phone      TEXT    PRIMARY KEY,
+    thread_id  INTEGER NOT NULL,
+    avisado_at INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);`
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, err
@@ -959,4 +980,49 @@ func (s *sqliteStore) ClearPendingVerification(phone string) {
 	if _, err := s.db.Exec(`DELETE FROM pending_verif WHERE phone = ?`, phone); err != nil {
 		log.Printf("[sqlite] ClearPendingVerification %s: %v", phone, err)
 	}
+}
+
+// --- Hilos de Telegram ---
+
+func (s *sqliteStore) GetTelegramThread(phone string) (int64, bool) {
+	var id int64
+	err := s.db.QueryRow(`SELECT thread_id FROM telegram_threads WHERE phone = ?`, phone).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, false
+	}
+	if err != nil {
+		log.Printf("[sqlite] GetTelegramThread %s: %v", phone, err)
+		return 0, false
+	}
+	return id, true
+}
+
+func (s *sqliteStore) SetTelegramThread(phone string, threadID int64) {
+	if _, err := s.db.Exec(`
+        INSERT INTO telegram_threads(phone, thread_id, avisado_at, created_at) VALUES(?, ?, 0, ?)
+        ON CONFLICT(phone) DO UPDATE SET thread_id = excluded.thread_id`,
+		phone, threadID, time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] SetTelegramThread %s: %v", phone, err)
+	}
+}
+
+// MarcarAvisoInicio devuelve true solo si toca avisar (no se avisó dentro de `ventana`). La
+// comprobación y la marca van en un solo UPDATE condicional para que dos mensajes que lleguen a
+// la vez (cada webhook corre en su goroutine) no generen dos avisos del mismo inicio.
+func (s *sqliteStore) MarcarAvisoInicio(phone string, ventana time.Duration) bool {
+	ahora := time.Now().Unix()
+	corte := ahora - int64(ventana.Seconds())
+	res, err := s.db.Exec(`
+        INSERT INTO telegram_threads(phone, thread_id, avisado_at, created_at) VALUES(?, 0, ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET avisado_at = excluded.avisado_at
+          WHERE telegram_threads.avisado_at < ?`, phone, ahora, ahora, corte)
+	if err != nil {
+		log.Printf("[sqlite] MarcarAvisoInicio %s: %v", phone, err)
+		return false
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false
+	}
+	return n > 0
 }

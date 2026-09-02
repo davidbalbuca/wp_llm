@@ -64,6 +64,13 @@ type Config struct {
 	// no salir a despedirse de los chats viejos al reiniciar el servicio.
 	CierreInactividad time.Duration
 	CierreVentanaMax  time.Duration
+	// Telegram: grupo de alertas de operación para la etapa de test productivo (avisos de inicio
+	// de conversación y de fallos). Si falta el token o el chat, la función queda APAGADA y el
+	// bot sigue igual: los avisos son un observador, nunca parte del flujo del cliente.
+	// TelegramAvisarInicio permite dejar solo los errores (los verdes son los ruidosos).
+	TelegramBotToken     string
+	TelegramChatID       string
+	TelegramAvisarInicio bool
 	// Horario laboral de entregas (hora Ecuador, formato HH:MM). Fuera de este horario el bot
 	// NO registra pedidos: ofrece PROGRAMAR la entrega para una hora dentro del horario.
 	BotHorarioInicio string
@@ -144,5 +151,18 @@ func Load() Config {
 		SMTPUser:             os.Getenv("SMTP_USER"),
 		SMTPPassword:         os.Getenv("SMTP_PASSWORD"),
 		SupportEmailTo:       os.Getenv("SUPPORT_EMAIL_TO"),
+		TelegramBotToken:     os.Getenv("TELEGRAM_BOT_TOKEN"),
+		TelegramChatID:       os.Getenv("TELEGRAM_CHAT_ID"),
+		TelegramAvisarInicio: optionalBool("TELEGRAM_AVISAR_INICIO", true),
 	}
+}
+
+// optionalBool lee una bandera del entorno. Cuenta como false "0", "false" y "no" (sin importar
+// mayúsculas); cualquier otro valor no vacío es true.
+func optionalBool(k string, def bool) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(k)))
+	if v == "" {
+		return def
+	}
+	return v != "0" && v != "false" && v != "no"
 }

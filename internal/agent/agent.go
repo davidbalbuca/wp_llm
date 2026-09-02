@@ -27,6 +27,7 @@ import (
 	"wp-llm-gas/internal/conversation"
 	"wp-llm-gas/internal/escalation"
 	"wp-llm-gas/internal/georoutes"
+	"wp-llm-gas/internal/notify"
 	"wp-llm-gas/internal/whatsapp"
 )
 
@@ -826,6 +827,11 @@ func (a *Agent) crearTicketSoporte(from, motivo, resumen string) int64 {
 		a.store.LogMessage(from, "system", fmt.Sprintf("🎫 Ticket de soporte #%d creado — %s", id, motivo))
 	}
 	go escalation.SendSupportEmail(a.cfg, id, from, motivo, resumen)
+	var nombre string
+	if p, ok := a.store.GetProfile(from); ok {
+		nombre = p.Nombres
+	}
+	notify.Default.Fallo(from, nombre, motivo, resumen)
 	return id
 }
 
@@ -856,12 +862,14 @@ func (a *Agent) registrarNoAsignado(from string) {
 	}
 	tokens, err := a.gr.Login(account.Username, account.Password)
 	if err != nil {
-		log.Printf("[no-asignado] login falló para %s: %v", from, err)
+		a.crearTicketSoporte(from, "Pedido sin conductor no quedó registrado",
+			fmt.Sprintf("Falló el login para guardarlo como NO ASIGNADO: %v. El pedido no está en ninguna lista; hay que contactar al cliente.", err))
 		return
 	}
 	if err := a.gr.WppRegistrarPedidoNoAsignado(tokens.Access, loc.Latitude, loc.Longitude, w.IDTipoPago,
 		[]georoutes.OrderProduct{{IDCategoria: w.IDCategoria, IDProducto: w.IDProducto, IDColor: w.IDColor, Cantidad: w.Cantidad}}); err != nil {
-		log.Printf("[no-asignado] registro falló para %s: %v", from, err)
+		a.crearTicketSoporte(from, "Pedido sin conductor no quedó registrado",
+			fmt.Sprintf("El backend rechazó guardarlo como NO ASIGNADO: %v. El pedido no está en ninguna lista; hay que contactar al cliente.", err))
 	}
 }
 

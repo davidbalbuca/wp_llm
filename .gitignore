@@ -11,3 +11,8 @@
 
 # Base de datos SQLite
 /data/
+
+# Copia del .env de PRODUCCION (secretos reales). NUNCA a git.
+deploy/prod/
+.env.prod
+.env.*

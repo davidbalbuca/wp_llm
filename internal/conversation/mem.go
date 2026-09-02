@@ -31,6 +31,8 @@ type memStore struct {
 	nextTicketID    int64
 	scheduled       []ScheduledOrder // entregas programadas (fuera de horario)
 	nextSchedID     int64
+	tgThreads       map[string]int64     // teléfono -> hilo de Telegram (grupo de alertas)
+	tgAvisado       map[string]time.Time // teléfono -> último aviso de inicio de conversación
 }
 
 // NewMemStore crea un almacén en memoria vacío.
@@ -51,7 +53,35 @@ func NewMemStore() Store {
 		pendingWait:     make(map[string]PendingWait),
 		messageLog:      make(map[string][]LoggedMessage),
 		chatMode:        make(map[string]string),
+		tgThreads:       make(map[string]int64),
+		tgAvisado:       make(map[string]time.Time),
 	}
+}
+
+// --- Hilos de Telegram ---
+
+func (s *memStore) GetTelegramThread(phone string) (int64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id, ok := s.tgThreads[phone]
+	return id, ok && id > 0
+}
+
+func (s *memStore) SetTelegramThread(phone string, threadID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tgThreads[phone] = threadID
+}
+
+// MarcarAvisoInicio devuelve true solo si toca avisar (no se avisó dentro de `ventana`).
+func (s *memStore) MarcarAvisoInicio(phone string, ventana time.Duration) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if last, ok := s.tgAvisado[phone]; ok && time.Since(last) < ventana {
+		return false
+	}
+	s.tgAvisado[phone] = time.Now()
+	return true
 }
 
 func (s *memStore) LogMessage(phone, role, content string) {

@@ -327,6 +327,16 @@ type Store interface {
 	ListTickets(estado string, limit int) []Ticket
 	// CloseTicket cierra un ticket con su solución. Devuelve false si no existe o ya está cerrado.
 	CloseTicket(id int64, solucion string) bool
+
+	// --- Hilos de Telegram (grupo de alertas del test productivo) ---
+	// GetTelegramThread devuelve el hilo ya abierto para ese cliente (0, false si no hay).
+	GetTelegramThread(phone string) (int64, bool)
+	// SetTelegramThread guarda el hilo recién creado para reusarlo en los próximos avisos.
+	SetTelegramThread(phone string, threadID int64)
+	// MarcarAvisoInicio registra que ya se avisó el inicio de conversación y devuelve true SOLO
+	// la primera vez de la sesión: si el último aviso fue hace menos de `ventana`, devuelve false.
+	// Así el grupo recibe un aviso por sesión y no uno por mensaje.
+	MarcarAvisoInicio(phone string, ventana time.Duration) bool
 }
 
 // turn es la forma serializable de un turno de conversación. Se usa para persistir

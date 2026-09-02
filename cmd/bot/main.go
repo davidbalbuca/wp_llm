@@ -23,6 +23,7 @@ import (
 	"wp-llm-gas/internal/conversation"
 	"wp-llm-gas/internal/escalation"
 	"wp-llm-gas/internal/georoutes"
+	"wp-llm-gas/internal/notify"
 	"wp-llm-gas/internal/whatsapp"
 )
 
@@ -128,6 +129,46 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// avisos es el notificador de Telegram del proceso. Global porque los fallos que hay que reportar
+// nacen en sitios muy repartidos (handlers, goroutines del scheduler, la espera de conductor) y
+// enhebrarlo por firma hasta cada uno obligaría a tocar código que no tiene nada que ver con
+// esto. Se asigna una sola vez en main, antes de que exista cualquier goroutine, y es nil cuando
+// Telegram no está configurado: los métodos sobre un *Notifier nil no hacen nada.
+var avisos *notify.Notifier
+
+// reportarFallo deja constancia de un error que el CLIENTE no puede ver y que nadie miraría en el
+// log: ticket en el panel, correo al equipo y aviso a Telegram. Es el camino que ya usaba el
+// fallo de la IA (el único instrumentado hasta ahora), extraído para poder usarlo en los demás.
+//
+// Todo lo de aquí es best-effort: si el SMTP no está configurado o Telegram falla, el ticket ya
+// quedó guardado y el chat del cliente sigue su curso. Nunca devuelve error a propósito — quien
+// llama está en un camino donde ya no hay nada que decidir.
+func reportarFallo(cfg config.Config, store conversation.Store, phone, motivo, detalle string) {
+	log.Printf("[fallo] %s (%s): %s", motivo, phone, detalle)
+	var tid int64
+	if phone != "" {
+		tid = store.CreateTicket(phone, motivo, detalle)
+		if tid > 0 {
+			// Queda en la conversación: al abrir el chat en el panel se ve DÓNDE se rompió.
+			store.LogMessage(phone, "system", fmt.Sprintf("🎫 Ticket #%d — %s", tid, motivo))
+		}
+	}
+	go escalation.SendSupportEmail(cfg, tid, phone, motivo, detalle)
+	avisos.Fallo(phone, nombreDe(store, phone), motivo, detalle)
+}
+
+// nombreDe busca el nombre del cliente para que el aviso diga quién es y no solo un número.
+// Devuelve "" si todavía no lo conocemos (cliente nuevo), y el aviso se arregla sin él.
+func nombreDe(store conversation.Store, phone string) string {
+	if phone == "" {
+		return ""
+	}
+	if p, ok := store.GetProfile(phone); ok {
+		return strings.TrimSpace(p.Nombres)
+	}
+	return ""
+}
+
 func atoiDefault(s string, def int) int {
 	if n, err := strconv.Atoi(s); err == nil && n > 0 {
 		return n
@@ -152,6 +193,11 @@ func main() {
 		store = conversation.NewMemStore()
 		log.Printf("Historial: en memoria (sin DB_PATH; se pierde al reiniciar)")
 	}
+
+	// Avisos de operación a Telegram (test productivo). Queda en nil si no está configurado y
+	// el bot funciona exactamente igual, solo que sin avisar.
+	avisos = notify.New(cfg.TelegramBotToken, cfg.TelegramChatID, cfg.TelegramAvisarInicio, store)
+	notify.Default = avisos // para los paquetes hondos (agent), que no reciben el notificador
 
 	// Cliente de la API georoutes del backend (mismo flujo que la app móvil), compartido
 	// por el catálogo (lectura) y el agente (registro de pedidos).
@@ -622,6 +668,11 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		store.LogMessage(inc.From, "user", inboundAudit)
 	}
 
+	// Aviso al grupo de Telegram de que alguien empezó a escribir. Va DESPUÉS de registrar el
+	// mensaje y antes de responder, para que el equipo pueda seguir la conversación desde el
+	// principio durante el test. El propio notificador se encarga de mandar uno solo por sesión.
+	avisos.AvisarInicio(inc.From, nombreDe(store, inc.From), inboundAudit)
+
 	// En control HUMANO el bot NO responde: solo deja registrado el mensaje para que un humano
 	// conteste desde la web. (Las notificaciones de pedido llegó/entregado siguen igual.)
 	if humanControlled {
@@ -775,7 +826,8 @@ func notifyOrderFinished(cfg config.Config, store conversation.Store, pedidoID i
 		msg += "¿Cómo calificarías a tu repartidor? Responde con un número del 1 al 5 ⭐ (y si quieres, un breve comentario)."
 	}
 	if err := avisarCliente(cfg, store, phone, msg); err != nil {
-		log.Printf("[order-finished] error enviando a %s: %v", phone, err)
+		reportarFallo(cfg, store, phone, "No se pudo avisar la ENTREGA ni pedir la calificación",
+			fmt.Sprintf("Pedido #%d. El mensaje no salió: %v", pedidoID, err))
 	}
 }
 
@@ -792,7 +844,8 @@ func notifyOrderArrived(cfg config.Config, store conversation.Store, pedidoID in
 	}
 	msg := "🛵 El conductor llegó a tu ubicación. Por favor, sal a recibir tu pedido. 📦"
 	if err := avisarCliente(cfg, store, phone, msg); err != nil {
-		log.Printf("[order-arrived] error enviando a %s: %v", phone, err)
+		reportarFallo(cfg, store, phone, "No se pudo avisar que el conductor LLEGÓ",
+			fmt.Sprintf("Pedido #%d. El mensaje no salió: %v", pedidoID, err))
 	}
 }
 
@@ -811,7 +864,8 @@ func notifyOrderCancelled(cfg config.Config, store conversation.Store, pedidoID 
 	// El historial NO se borra: la memoria del chat dura la ventana de 24h (regla general).
 	msg := "😔 Tu pedido fue cancelado por el conductor. Disculpa las molestias. Cuando quieras, puedes hacer un nuevo pedido."
 	if err := avisarCliente(cfg, store, phone, msg); err != nil {
-		log.Printf("[order-cancelled] error enviando a %s: %v", phone, err)
+		reportarFallo(cfg, store, phone, "No se pudo avisar la CANCELACIÓN del pedido",
+			fmt.Sprintf("Pedido #%d. El mensaje no salió: %v", pedidoID, err))
 	}
 }
 
@@ -834,7 +888,8 @@ func notifyOrderNoShow(cfg config.Config, store conversation.Store, pedidoID int
 	}
 	msg += ". Cuando quieras, puedes hacer un nuevo pedido."
 	if err := avisarCliente(cfg, store, phone, msg); err != nil {
-		log.Printf("[order-no-show] error enviando a %s: %v", phone, err)
+		reportarFallo(cfg, store, phone, "No se pudo avisar el cierre por AUSENCIA del cliente",
+			fmt.Sprintf("Pedido #%d. El mensaje no salió: %v", pedidoID, err))
 	}
 }
 
@@ -855,6 +910,7 @@ func notifyOrderReassigned(cfg config.Config, store conversation.Store, pedidoID
 	}
 	msg += ". ¡Ya va en camino!"
 	if err := avisarCliente(cfg, store, phone, msg); err != nil {
-		log.Printf("[order-reassigned] error enviando a %s: %v", phone, err)
+		reportarFallo(cfg, store, phone, "No se pudo avisar la REASIGNACIÓN a otro conductor",
+			fmt.Sprintf("Pedido #%d. El mensaje no salió: %v", pedidoID, err))
 	}
 }

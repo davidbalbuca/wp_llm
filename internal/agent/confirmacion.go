@@ -177,7 +177,9 @@ func (a *Agent) confirmarYRegistrar(from string, sch conversation.ScheduledOrder
 	default:
 		// Falló el registro (backend caído, credenciales, etc.). La entrega NO se marca como
 		// atendida: queda en confirmando para que se pueda retomar, y el equipo se entera.
-		log.Printf("[confirmacion] ERROR registrando el pedido confirmado de %s (#%d)", from, sch.ID)
+		// El cliente acaba de leer "ya avisé a nuestro equipo": esto es lo que lo hace cierto.
+		a.crearTicketSoporte(from, "Pedido agendado NO se pudo registrar",
+			fmt.Sprintf("El cliente confirmó la entrega agendada #%d y el registro falló. Queda en \"confirmando\" para retomarla a mano.", sch.ID))
 		return "Recibí tu confirmación ✅, pero tuve un inconveniente técnico al registrar el " +
 			"pedido. Ya avisé a nuestro equipo para que te contacte enseguida. Disculpa la demora."
 	}
