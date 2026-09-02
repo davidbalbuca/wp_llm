@@ -835,9 +835,32 @@ func (a *Agent) crearTicketSoporte(from, motivo, resumen string) int64 {
 	return id
 }
 
+// avisarSinRepartidor manda al grupo de Telegram el pedido que quedó sin conductor. No es un
+// error -el bot buscó, no encontró y se lo dijo al cliente- sino un cliente con ubicación,
+// producto y cantidad que NADIE va a atender salvo que una persona lo gestione. Antes solo
+// quedaba marcado en el panel, donde había que estar mirando: el 02/09 un cliente esperó los 5
+// minutos, se le dijo que no había repartidor y su pedido murió ahí sin que nadie se enterara.
+func (a *Agent) avisarSinRepartidor(from string, w conversation.PendingWait, motivo string) {
+	pedido := fmt.Sprintf("%d × %s %s", w.Cantidad, w.ProductoNombre, w.ColorNombre)
+	nombre := strings.TrimSpace(w.Nombres)
+	if nombre == "" {
+		if p, ok := a.store.GetProfile(from); ok {
+			nombre = strings.TrimSpace(p.Nombres)
+		}
+	}
+	var lat, lng float64
+	if loc, ok := a.store.GetLocation(from); ok {
+		lat, lng = loc.Latitude, loc.Longitude
+	}
+	notify.Default.SinRepartidor(from, nombre, pedido, motivo, lat, lng)
+}
+
 // cancelarEspera descarta el pedido en espera cuando el cliente NO quiere esperar. Antes de
 // descartarlo lo registra como NO ASIGNADO en el backend, para gestión manual.
 func (a *Agent) cancelarEspera(from string) string {
+	if w, ok := a.store.GetPendingWait(from); ok {
+		a.avisarSinRepartidor(from, w, "El cliente NO quiso esperar. Quedó en No asignados.")
+	}
 	a.registrarNoAsignado(from)
 	a.store.ClearPendingWait(from)
 	// El historial NO se borra: la memoria del chat dura la ventana de 24h.
@@ -944,6 +967,8 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 				}
 			}
 		}
+		// Al grupo ANTES de limpiar el estado: es cuando todavía se tiene el pedido completo.
+		a.avisarSinRepartidor(from, w, "El cliente esperó los 5 minutos y no se le asignó nadie.")
 		store.ClearPendingWait(from)
 		// El historial NO se borra (memoria de 24h). El mensaje queda AUDITADO.
 		msgTimeout := "Te pedimos disculpas 🙏. Por ahora no hay ningún repartidor disponible " +

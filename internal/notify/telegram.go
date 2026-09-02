@@ -55,8 +55,9 @@ type Notifier struct {
 	cliente      *http.Client
 
 	mu sync.Mutex
-	// hiloErrores se resuelve una sola vez (el primer fallo lo crea) y se recuerda aquí.
-	hiloErrores int64
+	// Hilos fijos del grupo: se resuelven una sola vez (el primer aviso los crea).
+	hiloErrores       int64
+	hiloSinRepartidor int64
 	// vistos cuenta fallos por motivo dentro de ventanaTope, para el anti-inundación.
 	vistos map[string]*contador
 }
@@ -156,6 +157,41 @@ func (n *Notifier) Fallo(phone, nombre, motivo, detalle string) {
 	})
 }
 
+// SinRepartidor avisa de un pedido que quedó sin conductor: el cliente tiene ubicación, producto
+// y cantidad, pero nadie se lo va a llevar salvo que una persona lo gestione.
+//
+// Va aparte de Fallo a propósito, y con su propio hilo. No es un error -el bot buscó, no encontró
+// y se lo dijo al cliente, todo correcto- sino una VENTA en riesgo, y las dos cosas se atienden
+// distinto. Mezcladas en el mismo hilo terminarían ignorándose las dos.
+//
+// Tampoco pasa por el anti-inundación: si cinco clientes se quedan sin repartidor a la vez, hay
+// que ver los cinco. Cada uno es un cliente distinto esperando, no la misma alerta repetida.
+func (n *Notifier) SinRepartidor(phone, nombre, pedido, motivo string, lat, lng float64) {
+	if n == nil {
+		return
+	}
+	go n.protegido("SinRepartidor", func() {
+		quien := nombre
+		if quien == "" {
+			quien = "cliente"
+		}
+		texto := fmt.Sprintf("🟠 <b>PEDIDO SIN REPARTIDOR</b> — hay que gestionarlo\n\n"+
+			"<b>%s</b>\n<code>+%s</code>\n📦 %s",
+			html.EscapeString(quien), html.EscapeString(phone), html.EscapeString(pedido))
+		if lat != 0 || lng != 0 {
+			texto += fmt.Sprintf("\n📍 <a href=\"https://maps.google.com/?q=%.6f,%.6f\">ver ubicación</a>", lat, lng)
+		}
+		if motivo != "" {
+			texto += "\n\n" + html.EscapeString(motivo)
+		}
+		// Con sonido: alguien tiene que hacer algo, y cuanto antes.
+		n.enviar(n.hiloSinRepartidorID(), texto, false)
+		if hilo := n.hiloDe(phone, nombre); hilo != 0 {
+			n.enviar(hilo, texto, true)
+		}
+	})
+}
+
 // Resumen manda un texto ya armado al hilo de errores (parte diaria). Silencioso.
 func (n *Notifier) Resumen(texto string) {
 	if n == nil {
@@ -208,22 +244,36 @@ func (n *Notifier) hiloDe(phone, nombre string) int64 {
 	return id
 }
 
-// hiloErroresID devuelve (creando la primera vez) el hilo donde van todos los errores.
+// hiloErroresID / hiloSinRepartidorID son los dos hilos FIJOS del grupo (no dependen del
+// cliente). Se crean la primera vez que hacen falta y se recuerdan en memoria: si el bot
+// reinicia se crea uno nuevo, cosa asumible para hilos de bandeja.
 func (n *Notifier) hiloErroresID() int64 {
+	return n.hiloFijo(&n.hiloErrores, "⚠️ Errores del sistema", 16478047) // rojo
+}
+
+func (n *Notifier) hiloSinRepartidorID() int64 {
+	return n.hiloFijo(&n.hiloSinRepartidor, "🟠 Pedidos sin atender", 16766590) // naranja
+}
+
+// hiloFijo devuelve el hilo apuntado por destino, creándolo la primera vez. La creación queda
+// FUERA del lock: es una llamada de red y retenerlo dejaría bloqueado a todo el que quiera
+// avisar. Si dos goroutines entran a la vez puede crearse un hilo de más; se prefiere eso a
+// serializar los avisos detrás de una petición HTTP.
+func (n *Notifier) hiloFijo(destino *int64, nombre string, color int) int64 {
 	n.mu.Lock()
-	if n.hiloErrores != 0 {
+	if *destino != 0 {
 		defer n.mu.Unlock()
-		return n.hiloErrores
+		return *destino
 	}
 	n.mu.Unlock()
 
-	id, err := n.crearHilo("⚠️ Errores del sistema", 16478047) // rojo
+	id, err := n.crearHilo(nombre, color)
 	if err != nil {
-		log.Printf("[telegram] no se pudo crear el hilo de errores: %v", err)
+		log.Printf("[telegram] no se pudo crear el hilo %q: %v", nombre, err)
 		return 0
 	}
 	n.mu.Lock()
-	n.hiloErrores = id
+	*destino = id
 	n.mu.Unlock()
 	return id
 }
