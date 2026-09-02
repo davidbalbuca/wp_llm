@@ -291,19 +291,23 @@ func (s *sqliteStore) ListConversations(limit int) []ConversationSummary {
 		out[i].NoAsignado = s.tienePendiente(`
             SELECT 1 FROM tickets WHERE phone = ? AND estado = 'abierto'
               AND motivo LIKE 'Pedido sin conductor%' LIMIT 1`, out[i].Phone)
-		// Hablo y no hay NINGUN pedido de por medio: ni uno en curso, ni una entrega agendada,
-		// ni un no asignado esperando. Es la conversacion que quedo a medio camino.
+		// Hablaron y NO compraron. La primera version solo miraba que no hubiera un pedido en
+		// curso, y con eso caia casi toda la lista: cualquiera que no estuviera recibiendo su
+		// gas en ese instante aparecia como "sin pedido", incluido quien acababa de pedir y
+		// escribio "gracias". Ahora tambien tiene que no haber comprado en las ultimas 24 h.
 		out[i].SinPedido = !out[i].NoAsignado && !out[i].Programado && !out[i].EnEspera &&
-			!s.tienePendiente(`SELECT 1 FROM active_pedido WHERE phone = ? LIMIT 1`, out[i].Phone)
+			!s.tienePendiente(`SELECT 1 FROM active_pedido WHERE phone = ? LIMIT 1`, out[i].Phone) &&
+			!s.tienePendiente(`SELECT 1 FROM last_orders WHERE phone = ? AND updated_at > ? LIMIT 1`,
+				out[i].Phone, time.Now().Add(-24*time.Hour).Unix())
 	}
 	return out
 }
 
 // tienePendiente devuelve true si la consulta (que debe seleccionar 1 columna) trae alguna fila.
 // Best-effort: ante cualquier error responde false, para no romper el listado del panel.
-func (s *sqliteStore) tienePendiente(query, phone string) bool {
+func (s *sqliteStore) tienePendiente(query string, args ...any) bool {
 	var x int
-	if err := s.db.QueryRow(query, phone).Scan(&x); err != nil {
+	if err := s.db.QueryRow(query, args...).Scan(&x); err != nil {
 		return false
 	}
 	return true
