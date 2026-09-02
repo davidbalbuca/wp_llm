@@ -62,9 +62,13 @@ type ConversationSummary struct {
 	// se resolvio.
 	Programado bool `json:"programado"` // tiene una entrega agendada pendiente
 	EnEspera   bool `json:"en_espera"`  // quedo esperando conductor / sin pedido asignado
-	// NoAsignado: su pedido se quedo sin conductor y todavia nadie lo ha resuelto. Se deduce
-	// del ticket abierto que abre el backend, asi que no hace falta guardar nada aparte.
+	// NoAsignado: su pedido se quedo sin conductor y todavia nadie lo ha resuelto. Lo calcula
+	// el BACKEND con su propia base y sobreescribe lo que venga de aqui.
 	NoAsignado bool `json:"no_asignado"`
+	// NoLeido: el cliente escribio despues de la ultima vez que alguien abrio este chat en el
+	// panel. Que el bot ya le haya contestado no cuenta: lo que se marca es si una PERSONA lo
+	// vio, igual que en WhatsApp.
+	NoLeido bool `json:"no_leido"`
 }
 
 // Estados de un ticket de soporte.
@@ -289,6 +293,8 @@ type Store interface {
 	GetChatMode(phone string) string
 	// SetChatMode fija el modo del chat ("bot" o "human").
 	SetChatMode(phone, mode string)
+	// MarcarChatLeido deja constancia de que alguien abrio este chat en el panel ahora.
+	MarcarChatLeido(phone string)
 
 	// --- Pedidos PROGRAMADOS (entregas agendadas fuera de horario) ---
 	// CreateScheduled guarda una entrega programada (estado pendiente). Devuelve su id (0 si falló).

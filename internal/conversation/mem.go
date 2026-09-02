@@ -11,6 +11,7 @@ import (
 // NOTA: se pierde al reiniciar y no sirve con múltiples instancias; para eso está redisStore.
 type memStore struct {
 	mu              sync.Mutex
+	chatLeido       map[string]int64
 	data            map[string][]*genai.Content
 	locations       map[string]Location
 	accounts        map[string]Account
@@ -173,6 +174,15 @@ func (s *memStore) SetScheduledEstado(id int64, estado string) {
 			s.scheduled[i].Estado = estado
 		}
 	}
+}
+
+func (s *memStore) MarcarChatLeido(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.chatLeido == nil {
+		s.chatLeido = map[string]int64{}
+	}
+	s.chatLeido[phone] = time.Now().Unix()
 }
 
 func (s *memStore) CerrarProgramadoEnEspera(phone string, asignado bool) {

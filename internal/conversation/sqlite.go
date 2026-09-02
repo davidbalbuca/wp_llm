@@ -166,6 +166,14 @@ CREATE INDEX IF NOT EXISTS idx_msglog_phone ON message_log(phone, id);
 CREATE INDEX IF NOT EXISTS idx_msglog_created ON message_log(created_at);
 
 -- Control del chat: modo "bot" (responde el bot) o "human" (control manual desde la web).
+-- Hasta cuando se leyo cada chat desde el panel. Sirve para marcar en negrita los que
+-- tienen mensajes del cliente sin ver, como en WhatsApp. Es por CHAT, no por operador: el
+-- panel lo usa un equipo chico y lo que importa es que alguien ya lo haya visto.
+CREATE TABLE IF NOT EXISTS chat_read (
+    phone   TEXT    PRIMARY KEY,
+    read_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS chat_control (
     phone      TEXT    PRIMARY KEY,
     mode       TEXT    NOT NULL,
@@ -291,6 +299,12 @@ func (s *sqliteStore) ListConversations(limit int) []ConversationSummary {
 		out[i].NoAsignado = s.tienePendiente(`
             SELECT 1 FROM tickets WHERE phone = ? AND estado = 'abierto'
               AND motivo LIKE 'Pedido sin conductor%' LIMIT 1`, out[i].Phone)
+		// Hay algun mensaje DEL CLIENTE posterior a la ultima vez que se abrio el chat.
+		out[i].NoLeido = s.tienePendiente(`
+            SELECT 1 FROM message_log m
+            LEFT JOIN chat_read r ON r.phone = m.phone
+            WHERE m.phone = ? AND m.role = 'user'
+              AND m.created_at > COALESCE(r.read_at, 0) LIMIT 1`, out[i].Phone)
 	}
 	return out
 }
@@ -432,6 +446,15 @@ func (s *sqliteStore) GetConfirmingSchedule(phone string) (ScheduledOrder, bool)
 func (s *sqliteStore) SetScheduledEstado(id int64, estado string) {
 	if _, err := s.db.Exec(`UPDATE scheduled_orders SET estado = ? WHERE id = ?`, estado, id); err != nil {
 		log.Printf("[sqlite] SetScheduledEstado %d: %v", id, err)
+	}
+}
+
+func (s *sqliteStore) MarcarChatLeido(phone string) {
+	if _, err := s.db.Exec(`
+        INSERT INTO chat_read(phone, read_at) VALUES(?, ?)
+        ON CONFLICT(phone) DO UPDATE SET read_at=excluded.read_at`,
+		phone, time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] MarcarChatLeido %s: %v", phone, err)
 	}
 }
 

@@ -321,6 +321,23 @@ func main() {
 		})
 	})
 	// Cambiar el modo de un chat: "bot" (responde el bot) o "human" (respondes tú desde la web).
+	// El panel avisa que alguien ABRIO un chat, para dejar de marcarlo como no leido.
+	mux.HandleFunc("POST /internal/chat-read", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			Phone string `json:"phone"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Phone) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		store.MarcarChatLeido(payload.Phone)
+		writeJSON(w, map[string]any{"ok": true})
+	})
+
 	mux.HandleFunc("POST /internal/chat-control", func(w http.ResponseWriter, r *http.Request) {
 		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
 			w.WriteHeader(http.StatusUnauthorized)
