@@ -62,10 +62,6 @@ type ConversationSummary struct {
 	// se resolvio.
 	Programado bool `json:"programado"` // tiene una entrega agendada pendiente
 	EnEspera   bool `json:"en_espera"`  // quedo esperando conductor / sin pedido asignado
-	// SinPedido: hablo con el bot y NO hay ningun pedido de por medio. Antes esta pestana
-	// miraba pending_wait, que solo tiene filas durante los 5 minutos que dura la busqueda de
-	// repartidor, asi que estaba vacia practicamente siempre.
-	SinPedido bool `json:"sin_pedido"`
 	// NoAsignado: su pedido se quedo sin conductor y todavia nadie lo ha resuelto. Se deduce
 	// del ticket abierto que abre el backend, asi que no hace falta guardar nada aparte.
 	NoAsignado bool `json:"no_asignado"`
