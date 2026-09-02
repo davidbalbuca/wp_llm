@@ -58,6 +58,7 @@ type Notifier struct {
 	// Hilos fijos del grupo: se resuelven una sola vez (el primer aviso los crea).
 	hiloErrores       int64
 	hiloSinRepartidor int64
+	hiloSondeo        int64
 	// vistos cuenta fallos por motivo dentro de ventanaTope, para el anti-inundación.
 	vistos map[string]*contador
 }
@@ -192,6 +193,36 @@ func (n *Notifier) SinRepartidor(phone, nombre, pedido, motivo string, lat, lng 
 	})
 }
 
+// Sondeo avisa de alguien que parece estar sacando información del negocio en vez de pedir gas:
+// preguntas por la operación interna, por los números, por datos de otros clientes, o intentos de
+// manipular al asistente para que se salte sus reglas.
+//
+// NO es una alarma de que algo se filtró: el bot solo habla de gas y usa el catálogo, así que no
+// tiene nada que contar. Es para que una persona MIRE quién está preguntando — el patrón de una
+// conversación entera de preguntas raras dice algo que un mensaje suelto no dice.
+//
+// Silencioso a propósito: no hay nada que atender de urgencia, y una alerta que suena por algo
+// que no requiere acción inmediata es la que hace que se silencie el grupo entero.
+func (n *Notifier) Sondeo(phone, nombre, detalle string) {
+	if n == nil {
+		return
+	}
+	go n.protegido("Sondeo", func() {
+		quien := nombre
+		if quien == "" {
+			quien = "desconocido"
+		}
+		texto := fmt.Sprintf("🕵️ <b>POSIBLE SONDEO</b> — alguien pregunta cosas que no son del servicio\n\n"+
+			"<b>%s</b>\n<code>+%s</code>\n\n%s\n\n"+
+			"<i>El bot no le contestó nada de esto (solo habla de gas). Mira el chat si te parece raro.</i>",
+			html.EscapeString(quien), html.EscapeString(phone), html.EscapeString(detalle))
+		n.enviar(n.hiloSondeoID(), texto, true)
+		if hilo := n.hiloDe(phone, nombre); hilo != 0 {
+			n.enviar(hilo, texto, true)
+		}
+	})
+}
+
 // Resumen manda un texto ya armado al hilo de errores (parte diaria). Silencioso.
 func (n *Notifier) Resumen(texto string) {
 	if n == nil {
@@ -253,6 +284,10 @@ func (n *Notifier) hiloErroresID() int64 {
 
 func (n *Notifier) hiloSinRepartidorID() int64 {
 	return n.hiloFijo(&n.hiloSinRepartidor, "🟠 Pedidos sin atender", 16766590) // naranja
+}
+
+func (n *Notifier) hiloSondeoID() int64 {
+	return n.hiloFijo(&n.hiloSondeo, "🕵️ Posibles sondeos", 9367192) // morado
 }
 
 // hiloFijo devuelve el hilo apuntado por destino, creándolo la primera vez. La creación queda

@@ -326,6 +326,12 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, error) {
 	a.menuSent = false // se pone en true si la IA envía un menú interactivo en este turno
 	a.lastMenuText = ""
+
+	// Vigilancia pasiva: avisa al grupo si el mensaje parece un sondeo del negocio en vez de un
+	// pedido. Va en su propia goroutine y NO altera la respuesta: el modelo ya tiene prohibido
+	// hablar de otra cosa, así que esto solo hace que un humano se entere.
+	go a.revisarSondeo(from, text)
+
 	contents := append(a.store.History(from), &genai.Content{
 		Role:  "user",
 		Parts: []*genai.Part{{Text: text}},
@@ -1040,6 +1046,22 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 		return "Para programar necesito la cédula y el nombre completo del cliente. Pídeselos."
 	}
 
+	// CANDADO DURO: la hora tiene que haberla dicho EL CLIENTE, no el modelo. El prompt ya pedía
+	// "deja que el cliente escriba la hora", y aun así el 02/09 un cliente compartió su ubicación
+	// a las 22:49 y el bot le agendó una entrega para las 06:00 que él nunca pidió: como era
+	// cliente conocido, la cédula y el nombre salían del perfil, la cantidad y el color ya
+	// estaban del menú, y la hora se la inventó el modelo. Todas las validaciones pasaban.
+	// Al día siguiente le llegó la confirmación de una entrega fantasma y terminó escribiendo
+	// "deberías arreglar esto porque generas confusión en las personas".
+	//
+	// Programar es un COMPROMISO: si el cliente no escribió la hora, no hay compromiso que honrar.
+	if !a.clienteMencionoHora(from, str(args["hora"])) {
+		return fmt.Sprintf("El cliente NO ha escrito a qué hora quiere su entrega, y sin eso no se "+
+			"programa nada (no inventes una hora tú). Pregúntale primero si desea PROGRAMAR la entrega; "+
+			"si acepta, dile que atendemos de %s a %s y deja que él escriba la hora (formato HH:MM).",
+			a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
+	}
+
 	mins := parseHoraHHMM(str(args["hora"]))
 	if mins < 0 {
 		return fmt.Sprintf("Aún no tengo una hora válida. Dile que atendemos de %s a %s y pídele que escriba "+
@@ -1539,4 +1561,50 @@ func (a *Agent) ResumeOrder(ctx context.Context, from string) (string, error) {
 	synthetic := fmt.Sprintf("Ya validé mi código de verificación. Procede a registrar mi pedido: "+
 		"%d cilindro(s) color/marca %s. Ya compartí mi ubicación antes.", draft.Cantidad, draft.Color)
 	return a.HandleMessage(ctx, from, synthetic)
+}
+
+// clienteMencionoHora comprueba que la hora que el modelo quiere agendar la haya dicho EL
+// CLIENTE, buscándola en lo que escribió en las últimas horas (el message_log, que es lo que
+// de verdad se recibió por WhatsApp, no lo que el modelo recuerda).
+//
+// Acepta las formas en que la gente escribe una hora en un chat: "14:30", "2:30 pm", "a las 3",
+// "15h". Basta con que coincida la HORA; los minutos exactos son cosa del modelo.
+func (a *Agent) clienteMencionoHora(from, hora string) bool {
+	mins := parseHoraHHMM(hora)
+	if mins < 0 {
+		return false // sin hora válida no hay nada que verificar
+	}
+	h := mins / 60
+
+	// Solo mensajes DEL CLIENTE, y de la sesión en curso.
+	var dichos []string
+	for _, m := range a.store.GetConversation(from, 40) {
+		if m.Role == "user" {
+			dichos = append(dichos, strings.ToLower(m.Content))
+		}
+	}
+	if len(dichos) == 0 {
+		return false
+	}
+	texto := strings.Join(dichos, " ")
+
+	// Formas equivalentes de la misma hora: 15:00, 15h, 3 pm, 3:00...
+	formas := []string{
+		fmt.Sprintf("%d:", h), fmt.Sprintf("%02d:", h), // 15:  /  09:
+		fmt.Sprintf("%dh", h), fmt.Sprintf("%02dh", h), // 15h
+		fmt.Sprintf("las %d", h), fmt.Sprintf("las %02d", h), // a las 15
+	}
+	if h > 12 { // 15:00 -> "3 pm", "3pm", "las 3"
+		d := h - 12
+		formas = append(formas, fmt.Sprintf("%d pm", d), fmt.Sprintf("%dpm", d),
+			fmt.Sprintf("las %d", d), fmt.Sprintf("%d:", d))
+	} else if h > 0 { // 09:00 -> "9 am"
+		formas = append(formas, fmt.Sprintf("%d am", h), fmt.Sprintf("%dam", h))
+	}
+	for _, f := range formas {
+		if strings.Contains(texto, f) {
+			return true
+		}
+	}
+	return false
 }

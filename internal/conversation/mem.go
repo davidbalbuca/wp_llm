@@ -33,6 +33,7 @@ type memStore struct {
 	nextSchedID     int64
 	tgThreads       map[string]int64     // teléfono -> hilo de Telegram (grupo de alertas)
 	tgAvisado       map[string]time.Time // teléfono -> último aviso de inicio de conversación
+	tgSondeo        map[string]time.Time // teléfono -> último aviso de posible sondeo
 }
 
 // NewMemStore crea un almacén en memoria vacío.
@@ -55,6 +56,7 @@ func NewMemStore() Store {
 		chatMode:        make(map[string]string),
 		tgThreads:       make(map[string]int64),
 		tgAvisado:       make(map[string]time.Time),
+		tgSondeo:        make(map[string]time.Time),
 	}
 }
 
@@ -547,4 +549,14 @@ func (s *memStore) ClearPendingWait(phone string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.pendingWait, phone)
+}
+
+func (s *memStore) MarcarAvisoSondeo(phone string, ventana time.Duration) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if last, ok := s.tgSondeo[phone]; ok && time.Since(last) < ventana {
+		return false
+	}
+	s.tgSondeo[phone] = time.Now()
+	return true
 }

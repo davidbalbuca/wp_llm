@@ -333,6 +333,9 @@ type Store interface {
 	GetTelegramThread(phone string) (int64, bool)
 	// SetTelegramThread guarda el hilo recién creado para reusarlo en los próximos avisos.
 	SetTelegramThread(phone string, threadID int64)
+	// MarcarAvisoSondeo registra que ya se avisó un posible sondeo y devuelve true SOLO la
+	// primera vez de la sesión (mismo criterio que MarcarAvisoInicio).
+	MarcarAvisoSondeo(phone string, ventana time.Duration) bool
 	// MarcarAvisoInicio registra que ya se avisó el inicio de conversación y devuelve true SOLO
 	// la primera vez de la sesión: si el último aviso fue hace menos de `ventana`, devuelve false.
 	// Así el grupo recibe un aviso por sesión y no uno por mensaje.

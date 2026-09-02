@@ -43,8 +43,10 @@ func NewSQLiteStore(dbPath string, auditDays int) (Store, error) {
 	// volumen de datos: en prod llegó a 4 MB con una base de 300 KB. El checkpoint automático
 	// es "passive" y se rinde en silencio si alguien está leyendo, cosa que aquí pasa
 	// constantemente. Con el umbral más bajo lo intenta mucho antes y encuentra la ventana.
+	// 400 páginas (~1.6 MB) es el punto medio: con 200 el checkpoint entra tan seguido que se
+	// paga I/O de más sin ganar nada, y con el default de 1000 el WAL ya se había ido a 4 MB.
 	db, err := sql.Open("sqlite", dbPath+
-		"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=wal_autocheckpoint(200)")
+		"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=wal_autocheckpoint(400)")
 	if err != nil {
 		return nil, err
 	}
@@ -234,13 +236,47 @@ CREATE TABLE IF NOT EXISTS telegram_threads (
     phone      TEXT    PRIMARY KEY,
     thread_id  INTEGER NOT NULL,
     avisado_at INTEGER NOT NULL DEFAULT 0,
+    sondeo_at  INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL
 );`
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, err
 	}
-	return &sqliteStore{db: db, auditTTL: time.Duration(auditDays) * 24 * time.Hour}, nil
+	st := &sqliteStore{db: db, auditTTL: time.Duration(auditDays) * 24 * time.Hour}
+	st.arrancarCheckpoints()
+	return st, nil
+}
+
+// arrancarCheckpoints fuerza cada 10 minutos un checkpoint TRUNCATE, que vuelca el WAL a la base
+// y deja el archivo en cero.
+//
+// El automático no basta por sí solo: es PASSIVE, o sea que si hay alguien leyendo se rinde en
+// silencio y lo reintenta más tarde. El bot lee y escribe todo el tiempo (el panel refresca la
+// lista cada 8 s y el chat abierto cada segundo), así que puede no encontrar la ventana en horas
+// -en prod el WAL llegó a 4 MB con una base de 300 KB, con UN solo checkpoint en 4 horas-.
+// TRUNCATE sí espera a que los lectores terminen, y 10 minutos es suficientemente espaciado para
+// no competir con el tráfico.
+//
+// Best-effort: si un ciclo falla se loguea y se sigue; el siguiente lo intenta de nuevo.
+func (s *sqliteStore) arrancarCheckpoints() {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[sqlite] panic recuperado en el checkpoint: %v", r)
+			}
+		}()
+		for range time.Tick(10 * time.Minute) {
+			var fila, movidas, puestas int
+			if err := s.db.QueryRow(`PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&fila, &movidas, &puestas); err != nil {
+				log.Printf("[sqlite] checkpoint: %v", err)
+				continue
+			}
+			if fila != 0 { // 1 = no pudo completarse (algún lector seguía activo)
+				log.Printf("[sqlite] checkpoint incompleto (paginas en WAL: %d)", movidas)
+			}
+		}
+	}()
 }
 
 // LogMessage añade una línea al registro de auditoría y purga (perezosamente) lo más viejo que la
@@ -1025,4 +1061,20 @@ func (s *sqliteStore) MarcarAvisoInicio(phone string, ventana time.Duration) boo
 		return false
 	}
 	return n > 0
+}
+
+// MarcarAvisoSondeo: igual que MarcarAvisoInicio pero para el aviso de posible sondeo.
+func (s *sqliteStore) MarcarAvisoSondeo(phone string, ventana time.Duration) bool {
+	ahora := time.Now().Unix()
+	corte := ahora - int64(ventana.Seconds())
+	res, err := s.db.Exec(`
+        INSERT INTO telegram_threads(phone, thread_id, sondeo_at, created_at) VALUES(?, 0, ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET sondeo_at = excluded.sondeo_at
+          WHERE telegram_threads.sondeo_at < ?`, phone, ahora, ahora, corte)
+	if err != nil {
+		log.Printf("[sqlite] MarcarAvisoSondeo %s: %v", phone, err)
+		return false
+	}
+	n, err := res.RowsAffected()
+	return err == nil && n > 0
 }
