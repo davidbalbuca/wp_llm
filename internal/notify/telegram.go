@@ -353,7 +353,11 @@ func (n *Notifier) enviar(hilo int64, texto string, silencioso bool) {
 	}
 	if !resp.OK {
 		log.Printf("[telegram] rechazado: %s", resp.Description)
+		return
 	}
+	// Una sola línea por aviso enviado: si falla el anti-inundación o la creación de hilo
+	// callados, al menos queda constancia de que SALIO al grupo.
+	log.Printf("[telegram] enviado a hilo=%d (silencioso=%v)", hilo, silencioso)
 }
 
 func (n *Notifier) llamar(metodo string, cuerpo map[string]any, salida any) error {
