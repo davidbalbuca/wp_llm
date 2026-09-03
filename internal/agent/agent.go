@@ -131,6 +131,9 @@ type Agent struct {
 	// menuSent indica que en este turno la IA ya envió un MENÚ interactivo por WhatsApp
 	// (vía la tool mostrar_menu); el llamador NO debe enviar además el texto de respuesta.
 	menuSent bool
+	// canceloEnEsteTurno se pone en true si en este turno se ejecutó cancelar_pedido. Sirve para
+	// el candado que fuerza la cancelación cuando el modelo la AFIRMA sin llamar a la herramienta.
+	canceloEnEsteTurno bool
 	// ultimoPedido guarda QUE paso en el ultimo registrar_pedido de este turno. El texto que
 	// esa funcion devuelve esta escrito para el modelo ("Ofrecele al cliente ESPERAR usando la
 	// herramienta..."), no para el cliente, asi que el flujo determinista de confirmacion
@@ -326,6 +329,7 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 	a.menuSent = false // se pone en true si la IA envía un menú interactivo en este turno
 	a.lastMenuText = ""
 	a.ultimoPedido = resultadoPedido{} // se llena SOLO si registrar_pedido corre en este turno
+	a.canceloEnEsteTurno = false       // se pone en true si cancelar_pedido corre en este turno
 
 	// Vigilancia pasiva: avisa al grupo si el mensaje parece un sondeo del negocio en vez de un
 	// pedido. Va en su propia goroutine y NO altera la respuesta: el modelo ya tiene prohibido
@@ -514,12 +518,22 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 	// nadie iba a llevar. El prompt ya lo prohíbe, pero esto es el candado que no depende del
 	// modelo: si afirma una confirmación sin respaldo, se reemplaza por un mensaje honesto.
 	if !a.menuSent && !a.ultimoPedido.ok && !a.ultimoPedido.enEspera && afirmaPedidoConfirmado(reply) {
-		log.Printf("[fantasma] %s: el modelo afirmó un pedido sin registrar_pedido; se corrige", from)
-		notify.Default.Fallo(from, a.nombreDe(from), "Pedido fantasma evitado",
-			"El modelo iba a decirle al cliente que su pedido estaba confirmado SIN llamar a "+
-				"registrar_pedido. Se bloqueó la respuesta. Texto original: "+recortarTexto(reply, 300))
-		reply = "Disculpa 🙏, tuve un problema al registrar tu pedido. ¿Me compartes de nuevo tu " +
-			"ubicación 📎 para procesarlo bien? Quiero asegurarme de que te llegue tu gas."
+		log.Printf("[fantasma] %s: el modelo afirmó un pedido sin registrar_pedido; se fuerza el registro", from)
+		if forzado, ok := a.forzarRegistroSiHaceFalta(from); ok {
+			reply = forzado
+		}
+	}
+
+	// Mismo candado para la CANCELACIÓN: si el modelo dijo "he cancelado tu pedido" sin haber
+	// llamado a cancelar_pedido, el pedido sigue vivo. El 03/09 pasó: el bot dijo cancelado y el
+	// pedido quedó activo hasta que el conductor lo canceló a mano. Si NO se canceló en este
+	// turno pero el modelo lo afirma, se cancela en código. a.canceloEnEsteTurno lo marca el
+	// dispatch de la tool.
+	if !a.canceloEnEsteTurno && afirmaCancelado(reply) {
+		log.Printf("[fantasma] %s: el modelo dijo cancelado sin llamar cancelar_pedido; se fuerza", from)
+		if forzado, ok := a.forzarCancelacionSiHaceFalta(from); ok {
+			reply = forzado
+		}
 	}
 
 	// Turno del modelo para el HISTORIAL. Si en este turno se envió un menú interactivo,
@@ -647,6 +661,7 @@ func (a *Agent) runToolInterno(from, name string, args map[string]any) string {
 		return result
 
 	case "cancelar_pedido":
+		a.canceloEnEsteTurno = true
 		return a.cancelarPedido(from)
 
 	case "esperar_conductor":
