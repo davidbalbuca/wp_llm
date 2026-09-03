@@ -21,7 +21,6 @@ import (
 	"wp-llm-gas/internal/catalog"
 	"wp-llm-gas/internal/config"
 	"wp-llm-gas/internal/conversation"
-	"wp-llm-gas/internal/escalation"
 	"wp-llm-gas/internal/georoutes"
 	"wp-llm-gas/internal/notify"
 	"wp-llm-gas/internal/whatsapp"
@@ -136,29 +135,16 @@ func writeJSON(w http.ResponseWriter, v any) {
 // Telegram no está configurado: los métodos sobre un *Notifier nil no hacen nada.
 var avisos *notify.Notifier
 
-// reportarFallo deja constancia de un error que el CLIENTE no puede ver y que nadie miraría en el
-// log: ticket en el panel, correo al equipo y aviso a Telegram. Es el camino que ya usaba el
-// fallo de la IA (el único instrumentado hasta ahora), extraído para poder usarlo en los demás.
-//
-// Todo lo de aquí es best-effort: si el SMTP no está configurado o Telegram falla, el ticket ya
-// quedó guardado y el chat del cliente sigue su curso. Nunca devuelve error a propósito — quien
-// llama está en un camino donde ya no hay nada que decidir.
-func reportarFallo(cfg config.Config, store conversation.Store, phone, motivo, detalle string) {
-	log.Printf("[fallo] %s (%s): %s", motivo, phone, detalle)
-	var tid int64
-	if phone != "" {
-		tid = store.CreateTicket(phone, motivo, detalle)
-		if tid > 0 {
-			// Queda en la conversación: al abrir el chat en el panel se ve DÓNDE se rompió.
-			store.LogMessage(phone, "system", fmt.Sprintf("🎫 Ticket #%d — %s", tid, motivo))
-		}
-	}
-	go escalation.SendSupportEmail(cfg, tid, phone, motivo, detalle)
-	avisos.Fallo(phone, nombreDe(store, phone), motivo, detalle)
+// reportarFallo reporta un error que el cliente no ve: ticket + marca en el chat + correo +
+// Telegram. Es un envoltorio del ÚNICO camino (notify.ReportarFallo); se conserva el nombre
+// corto porque lo llaman varios sitios de este archivo. Devuelve el id del ticket (0 si no se
+// pudo crear); los llamadores que no lo necesitan lo ignoran.
+func reportarFallo(cfg config.Config, store conversation.Store, phone, motivo, detalle string) int64 {
+	return notify.ReportarFallo(cfg, store, phone, motivo, detalle)
 }
 
-// nombreDe busca el nombre del cliente para que el aviso diga quién es y no solo un número.
-// Devuelve "" si todavía no lo conocemos (cliente nuevo), y el aviso se arregla sin él.
+// nombreDe busca el nombre del cliente para los avisos de inicio de conversación. Devuelve ""
+// si todavía no lo conocemos (cliente nuevo).
 func nombreDe(store conversation.Store, phone string) string {
 	if phone == "" {
 		return ""
@@ -480,16 +466,13 @@ func main() {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		id := store.CreateTicket(payload.Phone, payload.Motivo, payload.Resumen)
+		// Mismo camino único que los fallos internos: ticket + marca en el chat + correo + Telegram.
+		// Antes este endpoint (lo usa el BACKEND) creaba ticket y correo pero no avisaba al grupo.
+		id := reportarFallo(cfg, store, payload.Phone, payload.Motivo, payload.Resumen)
 		if id == 0 {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		if payload.Phone != "" {
-			store.LogMessage(payload.Phone, "system",
-				fmt.Sprintf("🎫 Ticket de soporte #%d creado — %s", id, payload.Motivo))
-		}
-		go escalation.SendSupportEmail(cfg, id, payload.Phone, payload.Motivo, payload.Resumen)
 		log.Printf("[ticket] #%d creado desde el backend: %s", id, payload.Motivo)
 		writeJSON(w, map[string]any{"ok": true, "id": id})
 	})
@@ -765,15 +748,11 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 
 	reply, err := ag.HandleMessage(context.Background(), inc.From, messageForAgent)
 	if err != nil {
-		log.Printf("[server] Error procesando mensaje: %v", err)
 		_ = replyClient(cfg, store, inc.From, "Disculpa, tuvimos un inconveniente técnico. Ya avisé a nuestro equipo para que te contacte.")
-		// Ticket de soporte + correo al equipo (antes era un WhatsApp al dueño que podía perderse).
-		resumenErr := "El cliente envió: \"" + messageForAgent + "\". La IA falló al responder."
-		tid := store.CreateTicket(inc.From, "Error técnico del agente", resumenErr)
-		if tid > 0 {
-			store.LogMessage(inc.From, "system", fmt.Sprintf("🎫 Ticket de soporte #%d creado — error técnico", tid))
-		}
-		go escalation.SendSupportEmail(cfg, tid, inc.From, "Error técnico del agente", resumenErr)
+		// El error REAL va en el detalle (timeout, 429 de la API, etc.): así en Telegram/panel se
+		// ve POR QUÉ falló y si se está repitiendo, no solo "la IA falló".
+		detalle := fmt.Sprintf("El cliente envió: %q. La IA falló al responder: %v", messageForAgent, err)
+		reportarFallo(cfg, store, inc.From, "Error técnico del agente", detalle)
 		return
 	}
 

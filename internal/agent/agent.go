@@ -25,7 +25,6 @@ import (
 	"wp-llm-gas/internal/catalog"
 	"wp-llm-gas/internal/config"
 	"wp-llm-gas/internal/conversation"
-	"wp-llm-gas/internal/escalation"
 	"wp-llm-gas/internal/georoutes"
 	"wp-llm-gas/internal/notify"
 	"wp-llm-gas/internal/whatsapp"
@@ -874,21 +873,11 @@ func (a *Agent) nombreDe(from string) string {
 	return ""
 }
 
-// crearTicketSoporte crea el TICKET de la escalación (durable, se gestiona desde el panel), deja
-// constancia en la auditoría del chat y notifica al equipo por CORREO (async, best-effort).
-// Devuelve el id del ticket (0 si no se pudo crear).
+// crearTicketSoporte reporta una escalación del agente por el ÚNICO camino de fallos
+// (notify.ReportarFallo): ticket + marca en el chat + correo + Telegram. Devuelve el id del
+// ticket (0 si no se pudo crear).
 func (a *Agent) crearTicketSoporte(from, motivo, resumen string) int64 {
-	id := a.store.CreateTicket(from, motivo, resumen)
-	if id > 0 {
-		a.store.LogMessage(from, "system", fmt.Sprintf("🎫 Ticket de soporte #%d creado — %s", id, motivo))
-	}
-	go escalation.SendSupportEmail(a.cfg, id, from, motivo, resumen)
-	var nombre string
-	if p, ok := a.store.GetProfile(from); ok {
-		nombre = p.Nombres
-	}
-	notify.Default.Fallo(from, nombre, motivo, resumen)
-	return id
+	return notify.ReportarFallo(a.cfg, a.store, from, motivo, resumen)
 }
 
 // avisarSinRepartidor manda al grupo de Telegram el pedido que quedó sin conductor. No es un
