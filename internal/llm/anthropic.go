@@ -17,10 +17,11 @@ import (
 const (
 	anthropicURL     = "https://api.anthropic.com/v1/messages"
 	anthropicVersion = "2023-06-01"
-	// Reintentos ante 429 (límite de tasa) y 5xx. La API puede devolver 529 (sobrecargada)
-	// en picos, y un cliente esperando su gas por WhatsApp no debe quedarse sin respuesta
-	// por eso.
-	anthropicIntentos = 3
+	// Reintentos ante 429 (límite de tasa) y 5xx/529 (sobrecargada). Un cliente esperando su
+	// gas por WhatsApp no debe quedarse sin respuesta por un pico de la API. Con backoff lineal
+	// (2s, 4s, 6s) los 4 intentos cubren ~12s de espera acumulada: el 03/09 hubo un bache de
+	// sobrecarga de ~90s con 6 clientes que fallaron con solo 3 intentos (~6s), demasiado corto.
+	anthropicIntentos = 4
 )
 
 // anthropicProvider habla directo con la API de Mensajes de Anthropic. No se usa un SDK

@@ -741,69 +741,6 @@ func (a *Agent) mostrarMenu(from string, args map[string]any) string {
 	return "MENÚ ENVIADO al cliente con esas opciones. NO repitas las opciones por texto; espera a que elija."
 }
 
-// verDireccionesGuardadas trae las direcciones guardadas del cliente para ofrecérselas. Si no
-// tiene cuenta o direcciones, indica que pida la ubicación de WhatsApp.
-func (a *Agent) verDireccionesGuardadas(from string) string {
-	account, ok := a.store.GetAccount(from)
-	if !ok || account.Username == "" {
-		return "El cliente aún no tiene cuenta ni direcciones guardadas. Pídele que comparta su ubicación de WhatsApp para este pedido."
-	}
-	tokens, err := a.gr.Login(account.Username, account.Password)
-	if err != nil {
-		return "No pude consultar las direcciones guardadas ahora. Pídele que comparta su ubicación de WhatsApp."
-	}
-	dirs, err := a.gr.GetDirections(tokens.Access)
-	if err != nil || len(dirs) == 0 {
-		return "El cliente no tiene direcciones guardadas todavía. Pídele que comparta su ubicación de WhatsApp."
-	}
-	// WhatsApp muestra como máximo 10 filas en una lista; dejamos una para "Otra dirección".
-	// Si el cliente tiene muchas, mostramos solo las más recientes (las últimas de la lista).
-	if len(dirs) > 8 {
-		dirs = dirs[len(dirs)-8:]
-	}
-	var b strings.Builder
-	b.WriteString("Direcciones guardadas del cliente (etiqueta → id). Ofréceselas SIEMPRE con la herramienta " +
-		"mostrar_menu (lista tappable), NUNCA como texto numerado 1️⃣ 2️⃣. Las opciones del menú son las " +
-		"ETIQUETAS de abajo TAL CUAL, MÁS una última opción \"Otra dirección\". NO agregues el id ni " +
-		"coordenadas al texto de las opciones:\n")
-	for i, d := range dirs {
-		etiqueta := friendlyDirName(d)
-		if etiqueta == "" {
-			// Dirección vieja sin nombre real: le damos una etiqueta secuencial legible.
-			etiqueta = fmt.Sprintf("Dirección %d", i+1)
-		}
-		fmt.Fprintf(&b, "- id %d: %s\n", d.ID, etiqueta)
-	}
-	b.WriteString("Cuando el cliente toque una etiqueta, mapéala a su id y registra el pedido con " +
-		"id_direccion_guardada = ese id (NO necesitas la ubicación). Si toca \"Otra dirección\", pídele que " +
-		"comparta su ubicación de WhatsApp.")
-	return b.String()
-}
-
-// friendlyDirName arma una etiqueta legible para una dirección guardada. Quita el prefijo
-// genérico "WhatsApp - " (para mostrar solo "Casa", "Trabajo", etc.) y, si la dirección no tiene
-// un nombre real (direcciones viejas guardadas simplemente como "WhatsApp"), cae a la referencia
-// o a un extracto de la dirección de texto. Devuelve "" si no hay nada legible.
-func friendlyDirName(d georoutes.SavedDirection) string {
-	alias := strings.TrimSpace(d.Alias)
-	for _, p := range []string{"WhatsApp -", "WhatsApp-", "Whatsapp -", "Whatsapp-"} {
-		if strings.HasPrefix(alias, p) {
-			alias = strings.TrimSpace(alias[len(p):])
-			break
-		}
-	}
-	if alias != "" && !strings.EqualFold(alias, "WhatsApp") {
-		return alias
-	}
-	if ref := strings.TrimSpace(d.Referencia); ref != "" {
-		return ref
-	}
-	if dir := strings.TrimSpace(d.Direccion); dir != "" && !strings.HasPrefix(dir, "Ubicación compartida por WhatsApp") {
-		return dir
-	}
-	return ""
-}
-
 // calificarConductor registra la calificación del cliente sobre el conductor de un pedido
 // entregado. Re-autentica al cliente (la calificación puede llegar horas después) y envía la
 // reseña por el flujo real (ratingOrder). Limpia el estado pendiente al terminar.
@@ -882,10 +819,7 @@ func (a *Agent) esperarConductor(from string) string {
 
 // nombreDe devuelve el nombre del cliente si lo conocemos, "" si no. Para los avisos.
 func (a *Agent) nombreDe(from string) string {
-	if p, ok := a.store.GetProfile(from); ok {
-		return strings.TrimSpace(p.Nombres)
-	}
-	return ""
+	return conversation.NombreDe(a.store, from)
 }
 
 // crearTicketSoporte reporta una escalación del agente por el ÚNICO camino de fallos
@@ -1441,33 +1375,6 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 		mensaje += " Repartidor asignado: " + resultado.ConductorAsignado + "."
 	}
 	return mensaje
-}
-
-// ensureAccount recupera del backend la cuenta del cliente por su identificación, o la
-// crea si no existe. Devuelve las credenciales generadas por el backend.
-func (a *Agent) ensureAccount(identificacion, nombres, telefono, correo, direccion, referencia, alias string, loc conversation.Location) (conversation.Account, error) {
-	if existente, err := a.gr.UserExists(identificacion); err == nil && existente.Username != "" {
-		return conversation.Account{Username: existente.Username, Password: existente.Password}, nil
-	}
-	if strings.TrimSpace(alias) == "" {
-		alias = "WhatsApp"
-	}
-
-	creada, err := a.gr.CreateUser(georoutes.NewClientInput{
-		Identificacion: identificacion,
-		Nombres:        nombres,
-		Telefono:       telefono,
-		Correo:         correo,
-		Direccion:      direccion,
-		Alias:          alias,
-		Referencia:     referencia,
-		Latitude:       loc.Latitude,
-		Longitude:      loc.Longitude,
-	})
-	if err != nil {
-		return conversation.Account{}, err
-	}
-	return conversation.Account{Username: creada.Username, Password: creada.Password}, nil
 }
 
 // findProductByColor busca en el catálogo el producto cuyo listado de colores/marcas

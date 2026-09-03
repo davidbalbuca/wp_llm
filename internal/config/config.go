@@ -29,7 +29,6 @@ type Config struct {
 	WhatsAppToken   string
 	PhoneNumberID   string
 	VerifyToken     string
-	OwnerPhone      string
 	Port            string
 	GraphAPIVersion string
 	// BackendURL es la URL base del backend GEOWARE (ubi-geoware). El bot consume
@@ -132,7 +131,6 @@ func Load() Config {
 		WhatsAppToken:        required("WHATSAPP_TOKEN"),
 		PhoneNumberID:        required("WHATSAPP_PHONE_NUMBER_ID"),
 		VerifyToken:          required("WEBHOOK_VERIFY_TOKEN"),
-		OwnerPhone:           required("OWNER_PHONE_NUMBER"),
 		Port:                 optional("PORT", "3000"),
 		GraphAPIVersion:      "v21.0",
 		BackendURL:           strings.TrimRight(optional("BACKEND_URL", "http://127.0.0.1:8000"), "/"),

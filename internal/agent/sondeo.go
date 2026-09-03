@@ -182,7 +182,7 @@ func (a *Agent) revisarSondeo(from, mensaje string) {
 	for cat, frase := range categorias {
 		detalle.WriteString("• " + cat + " — \"" + frase + "\"\n")
 	}
-	detalle.WriteString("\nÚltimo mensaje: \"" + recortarTexto(mensaje, 200) + "\"")
+	detalle.WriteString("\nÚltimo mensaje: \"" + conversation.Recortar(mensaje, 200) + "\"")
 
 	var nombre string
 	if p, ok := a.store.GetProfile(from); ok {
@@ -190,14 +190,6 @@ func (a *Agent) revisarSondeo(from, mensaje string) {
 	}
 	log.Printf("[sondeo] posible sondeo de %s (%d fuertes, %d categorías)", from, len(fuertes), len(categorias))
 	notify.Default.Sondeo(from, nombre, detalle.String())
-}
-
-func recortarTexto(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n]) + "…"
 }
 
 // afirmaPedidoConfirmado detecta si el texto le está diciendo al cliente que su pedido YA quedó

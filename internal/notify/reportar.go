@@ -3,7 +3,6 @@ package notify
 import (
 	"fmt"
 	"log"
-	"strings"
 
 	"wp-llm-gas/internal/config"
 	"wp-llm-gas/internal/conversation"
@@ -40,18 +39,6 @@ func ReportarFallo(cfg config.Config, store conversation.Store, phone, motivo, d
 	go escalation.SendSupportEmail(cfg, tid, phone, motivo, detalle)
 
 	// Telegram: Default es nil si no está configurado, y Fallo sobre nil no hace nada.
-	Default.Fallo(phone, nombreDe(store, phone), motivo, detalle)
+	Default.Fallo(phone, conversation.NombreDe(store, phone), motivo, detalle)
 	return tid
-}
-
-// nombreDe busca el nombre del cliente para que el aviso diga quién es y no solo un número.
-// Devuelve "" si todavía no lo conocemos (cliente nuevo); el aviso se arregla sin él.
-func nombreDe(store conversation.Store, phone string) string {
-	if phone == "" {
-		return ""
-	}
-	if p, ok := store.GetProfile(phone); ok {
-		return strings.TrimSpace(p.Nombres)
-	}
-	return ""
 }

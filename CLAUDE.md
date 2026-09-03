@@ -48,7 +48,6 @@ BOT_CIERRE_VENTANA_MAX_MIN  # techo: pasado esto ya no se despide (default: 60)
 WHATSAPP_TOKEN              # Graph API token
 WHATSAPP_PHONE_NUMBER_ID    # ID del número de WhatsApp
 WEBHOOK_VERIFY_TOKEN        # token de verificación del webhook
-OWNER_PHONE_NUMBER          # teléfono del dueño (escalación)
 PORT                        # puerto del servidor (default: 3000)
 BACKEND_URL                 # URL del backend (default: http://127.0.0.1:8000)
 DB_PATH                     # (opcional) ruta a SQLite; si no, memoria

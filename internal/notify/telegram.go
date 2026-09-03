@@ -119,7 +119,7 @@ func (n *Notifier) AvisarInicio(phone, nombre, primerMensaje string) {
 		texto := fmt.Sprintf("🟢 <b>%s</b> inició una conversación\n<code>+%s</code>",
 			html.EscapeString(quien), html.EscapeString(phone))
 		if m := strings.TrimSpace(primerMensaje); m != "" {
-			texto += "\n\n💬 " + html.EscapeString(recortar(m, 200))
+			texto += "\n\n💬 " + html.EscapeString(conversation.Recortar(m, 200))
 		}
 		n.enviar(n.hiloDe(phone, nombre), texto, true)
 	})
@@ -145,7 +145,7 @@ func (n *Notifier) Fallo(phone, nombre, motivo, detalle string) {
 			cuerpo += fmt.Sprintf("\n%s <code>+%s</code>", html.EscapeString(quien), html.EscapeString(phone))
 		}
 		if d := strings.TrimSpace(detalle); d != "" {
-			cuerpo += "\n\n<pre>" + html.EscapeString(recortar(d, 500)) + "</pre>"
+			cuerpo += "\n\n<pre>" + html.EscapeString(conversation.Recortar(d, 500)) + "</pre>"
 		}
 		// Al hilo de errores, con sonido: es lo que hay que atender.
 		n.enviar(n.hiloErroresID(), cuerpo, false)
@@ -266,7 +266,7 @@ func (n *Notifier) hiloDe(phone, nombre string) int64 {
 	if nombre != "" {
 		titulo += " — " + nombre
 	}
-	id, err := n.crearHilo(recortar(titulo, 128), 7322096) // azul
+	id, err := n.crearHilo(conversation.Recortar(titulo, 128), 7322096) // azul
 	if err != nil {
 		log.Printf("[telegram] no se pudo crear el hilo de %s: %v", phone, err)
 		return 0
@@ -383,13 +383,4 @@ func (n *Notifier) protegido(que string, fn func()) {
 		}
 	}()
 	fn()
-}
-
-// recortar deja el texto en n caracteres (contando runas, para no partir un emoji por la mitad).
-func recortar(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n]) + "…"
 }

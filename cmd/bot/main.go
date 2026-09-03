@@ -143,18 +143,6 @@ func reportarFallo(cfg config.Config, store conversation.Store, phone, motivo, d
 	return notify.ReportarFallo(cfg, store, phone, motivo, detalle)
 }
 
-// nombreDe busca el nombre del cliente para los avisos de inicio de conversación. Devuelve ""
-// si todavía no lo conocemos (cliente nuevo).
-func nombreDe(store conversation.Store, phone string) string {
-	if phone == "" {
-		return ""
-	}
-	if p, ok := store.GetProfile(phone); ok {
-		return strings.TrimSpace(p.Nombres)
-	}
-	return ""
-}
-
 func atoiDefault(s string, def int) int {
 	if n, err := strconv.Atoi(s); err == nil && n > 0 {
 		return n
@@ -654,7 +642,7 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	// Aviso al grupo de Telegram de que alguien empezó a escribir. Va DESPUÉS de registrar el
 	// mensaje y antes de responder, para que el equipo pueda seguir la conversación desde el
 	// principio durante el test. El propio notificador se encarga de mandar uno solo por sesión.
-	avisos.AvisarInicio(inc.From, nombreDe(store, inc.From), inboundAudit)
+	avisos.AvisarInicio(inc.From, conversation.NombreDe(store, inc.From), inboundAudit)
 
 	// En control HUMANO el bot NO responde: solo deja registrado el mensaje para que un humano
 	// conteste desde la web. (Las notificaciones de pedido llegó/entregado siguen igual.)

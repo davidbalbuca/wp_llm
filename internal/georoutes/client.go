@@ -131,8 +131,8 @@ type ClientInfo struct {
 }
 
 // ClientExists consulta (SOLO LECTURA, sin efectos secundarios) si ya existe un cliente
-// con esa cédula. A diferencia de UserExists, NO crea usuario ni envía código: sirve para
-// reconocer al cliente al inicio y saltarse el registro (nombre/correo).
+// con esa cédula. NO crea usuario ni envía código: sirve para reconocer al cliente al
+// inicio y saltarse el registro (nombre/correo).
 func (c *Client) ClientExists(identificacion string) (*ClientInfo, error) {
 	res, err := c.get("/clientExists/?identificacion=" + url.QueryEscape(identificacion))
 	if err != nil {
@@ -152,71 +152,15 @@ type Account struct {
 	Password string `json:"password"`
 }
 
-// UserExists devuelve las credenciales del cliente con esa identificación si ya
-// existe. Devuelve error (HTTP 404 del backend) si no existe.
-func (c *Client) UserExists(identificacion string) (*Account, error) {
-	res, err := c.post("/userExists/", map[string]any{
-		"identificacion": identificacion,
-		"dispositivo":    botDevice,
-	}, "")
-	if err != nil {
-		return nil, err
-	}
-	var acc Account
-	if err := json.Unmarshal(res, &acc); err != nil {
-		return nil, fmt.Errorf("credenciales no válidas del backend: %w", err)
-	}
-	return &acc, nil
-}
-
-// NewClientInput son los datos para crear la cuenta del cliente de WhatsApp.
-// El backend crea User + Cliente (+ dirección) y devuelve las credenciales.
-type NewClientInput struct {
-	Identificacion string
-	Nombres        string
-	Telefono       string
-	Correo         string
-	Direccion      string
-	Alias          string
-	Referencia     string
-	Latitude       float64
-	Longitude      float64
-}
-
 // WppGetOrCreateClient recupera (o crea) el cliente del BOT de WhatsApp y devuelve sus
 // credenciales. El backend lo deja YA VERIFICADO (sin OTP ni correo) y usa un correo
-// placeholder. Endpoint EXCLUSIVO del bot: POST /wppGetOrCreateClient/. Reemplaza el par
-// UserExists+CreateUser del flujo viejo (que reseteaba verificación y mandaba correo).
+// placeholder. Endpoint EXCLUSIVO del bot: POST /wppGetOrCreateClient/. Reemplazó al flujo
+// viejo de alta (que reseteaba la verificación y mandaba correo).
 func (c *Client) WppGetOrCreateClient(identificacion, nombres, telefono string) (*Account, error) {
 	res, err := c.post("/wppGetOrCreateClient/", map[string]any{
 		"identificacion": identificacion,
 		"nombres":        nombres,
 		"telefono":       telefono,
-	}, "")
-	if err != nil {
-		return nil, err
-	}
-	var acc Account
-	if err := json.Unmarshal(res, &acc); err != nil {
-		return nil, fmt.Errorf("credenciales no válidas del backend: %w", err)
-	}
-	return &acc, nil
-}
-
-// CreateUser da de alta al cliente y devuelve las credenciales generadas por el backend.
-func (c *Client) CreateUser(in NewClientInput) (*Account, error) {
-	res, err := c.post("/createUser/", map[string]any{
-		"identificacion": in.Identificacion,
-		"nombres":        in.Nombres,
-		"telefono":       in.Telefono,
-		"correo":         in.Correo,
-		"direccion":      in.Direccion,
-		"alias":          in.Alias,
-		"referencia":     in.Referencia,
-		"latitude":       in.Latitude,
-		"longitude":      in.Longitude,
-		"dispositivo":    botDevice,
-		"firebasetoken":  botFirebaseToken,
 	}, "")
 	if err != nil {
 		return nil, err
@@ -254,29 +198,6 @@ func (c *Client) Login(username, password string) (*Tokens, error) {
 	return &tokens, nil
 }
 
-// GetVerificationCode solicita que el backend envíe un código OTP al correo del
-// cliente autenticado. Requiere el JWT del cliente a verificar.
-func (c *Client) GetVerificationCode(jwt string) error {
-	req, err := http.NewRequest(http.MethodGet, c.baseURL+"/getCodeVerification/", nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+jwt)
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	var env envelope
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		return fmt.Errorf("respuesta no válida (HTTP %d)", resp.StatusCode)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("%s", strings.TrimSpace(env.Mensaje))
-	}
-	return nil
-}
-
 // ValidateVerificationCode envía el código OTP que el cliente recibió por correo y
 // lo valida. Devuelve error si el código es incorrecto.
 func (c *Client) ValidateVerificationCode(jwt, codigo string) error {
@@ -284,39 +205,3 @@ func (c *Client) ValidateVerificationCode(jwt, codigo string) error {
 	return err
 }
 
-// DirectionInput es la dirección a registrar desde la ubicación de WhatsApp.
-type DirectionInput struct {
-	Direccion  string
-	Alias      string
-	Referencia string
-	Latitude   float64
-	Longitude  float64
-}
-
-// Direction es la dirección creada; su ID se usa como "iddireccion" del pedido.
-type Direction struct {
-	ID        int    `json:"id"`
-	SectorID  int    `json:"sector_id"`
-	Direccion string `json:"direccion"`
-}
-
-// CreateDirection registra una dirección (principal) del cliente autenticado (JWT)
-// y devuelve su ID para usarlo en el pedido.
-func (c *Client) CreateDirection(jwt string, in DirectionInput) (*Direction, error) {
-	res, err := c.post("/createDirectionClient/", map[string]any{
-		"direccion":  in.Direccion,
-		"alias":      in.Alias,
-		"principal":  true,
-		"referencia": in.Referencia,
-		"latitude":   in.Latitude,
-		"longitude":  in.Longitude,
-	}, jwt)
-	if err != nil {
-		return nil, err
-	}
-	var dir Direction
-	if err := json.Unmarshal(res, &dir); err != nil {
-		return nil, fmt.Errorf("dirección no válida del backend: %w", err)
-	}
-	return &dir, nil
-}

@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"wp-llm-gas/internal/conversation"
 	"wp-llm-gas/internal/georoutes"
 	"wp-llm-gas/internal/notify"
 )
@@ -171,7 +172,7 @@ func (a *Agent) forzarCancelacionSiHaceFalta(from string) (string, bool) {
 	if _, sigue := a.store.GetActivePedido(from); sigue {
 		notify.Default.Fallo(from, a.nombreDe(from), "Cancelación fantasma — no se pudo cancelar",
 			"El modelo dijo al cliente que su pedido estaba cancelado, pero el backend NO lo "+
-				"canceló. El pedido SIGUE VIVO. Hay que cancelarlo a mano. Detalle: "+recortarTexto(salida, 200))
+				"canceló. El pedido SIGUE VIVO. Hay que cancelarlo a mano. Detalle: "+conversation.Recortar(salida, 200))
 		return "Disculpa 🙏, tuve un problema al cancelar tu pedido. Ya avisé al equipo para que lo " +
 			"cancele enseguida. Lamento la molestia.", true
 	}
