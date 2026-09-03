@@ -134,6 +134,9 @@ type Ticket struct {
 type Location struct {
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
+	// UpdatedAt: cuando la compartio. Sirve para saber si es de ESTA conversacion o de otro
+	// dia, que es lo que decide si hay que confirmarla antes de entregar.
+	UpdatedAt int64 `json:"updated_at"`
 }
 
 // Account son las credenciales y tokens georoutes de un cliente de WhatsApp. El backend genera
@@ -211,6 +214,20 @@ type Store interface {
 	SetLocation(phone string, lat, lng float64)
 	// GetLocation devuelve la última ubicación del cliente (ok=false si no hay).
 	GetLocation(phone string) (Location, bool)
+	// ClearLocation olvida la ubicacion guardada del cliente. Se usa cuando dice que la
+	// entrega va a otra direccion: si no se borra, el proximo intento volveria a proponerla.
+	ClearLocation(phone string)
+	// SetDireccionTexto guarda la direccion legible de la ultima ubicacion del cliente.
+	SetDireccionTexto(phone, direccion string)
+	// GetDireccionTexto devuelve esa direccion (ok=false si no se conoce).
+	GetDireccionTexto(phone string) (string, bool)
+	// SetPedidoEsperandoDireccion deja el pedido en pausa hasta que el cliente confirme a que
+	// direccion se le envia.
+	SetPedidoEsperandoDireccion(phone, color string, cantidad int)
+	// GetPedidoEsperandoDireccion devuelve el pedido en pausa (ok=false si no hay).
+	GetPedidoEsperandoDireccion(phone string) (string, int, bool)
+	// ClearPedidoEsperandoDireccion quita la pausa.
+	ClearPedidoEsperandoDireccion(phone string)
 	// SetAccount guarda las credenciales georoutes del cliente (durables).
 	SetAccount(phone string, account Account)
 	// GetAccount devuelve las credenciales georoutes del cliente (ok=false si no hay).

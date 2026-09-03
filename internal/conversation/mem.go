@@ -10,30 +10,32 @@ import (
 // memStore es la implementación en memoria de Store.
 // NOTA: se pierde al reiniciar y no sirve con múltiples instancias; para eso está redisStore.
 type memStore struct {
-	mu              sync.Mutex
-	chatLeido       map[string]int64
-	data            map[string][]*genai.Content
-	locations       map[string]Location
-	accounts        map[string]Account
-	profiles        map[string]Profile
-	lastOrders      map[string]LastOrder
-	lastActivity    map[string]time.Time
-	orderDrafts     map[string]OrderDraft
-	pendingVerif    map[string]Account         // pending OTP verification accounts
-	pendingRating   map[string]PendingRating   // pedidos entregados por calificar
-	pendingRatingAt map[string]time.Time       // cuándo se creó cada pendiente (para RatingTTL)
-	orderPhone      map[int]string             // pedido_id -> teléfono de WhatsApp con el que se hizo
-	activePedido    map[string]int             // teléfono -> id del pedido activo (para cancelar)
-	pendingWait     map[string]PendingWait     // teléfono -> pedido esperando conductor (reintento 5 min)
-	messageLog      map[string][]LoggedMessage // teléfono -> auditoría de la conversación
-	chatMode        map[string]string          // teléfono -> "bot" | "human"
-	tickets         []Ticket                   // tickets de soporte (escalaciones)
-	nextTicketID    int64
-	scheduled       []ScheduledOrder // entregas programadas (fuera de horario)
-	nextSchedID     int64
-	tgThreads       map[string]int64     // teléfono -> hilo de Telegram (grupo de alertas)
-	tgAvisado       map[string]time.Time // teléfono -> último aviso de inicio de conversación
-	tgSondeo        map[string]time.Time // teléfono -> último aviso de posible sondeo
+	mu                 sync.Mutex
+	chatLeido          map[string]int64
+	direccionTexto     map[string]string
+	esperandoDireccion map[string]OrderDraft
+	data               map[string][]*genai.Content
+	locations          map[string]Location
+	accounts           map[string]Account
+	profiles           map[string]Profile
+	lastOrders         map[string]LastOrder
+	lastActivity       map[string]time.Time
+	orderDrafts        map[string]OrderDraft
+	pendingVerif       map[string]Account         // pending OTP verification accounts
+	pendingRating      map[string]PendingRating   // pedidos entregados por calificar
+	pendingRatingAt    map[string]time.Time       // cuándo se creó cada pendiente (para RatingTTL)
+	orderPhone         map[int]string             // pedido_id -> teléfono de WhatsApp con el que se hizo
+	activePedido       map[string]int             // teléfono -> id del pedido activo (para cancelar)
+	pendingWait        map[string]PendingWait     // teléfono -> pedido esperando conductor (reintento 5 min)
+	messageLog         map[string][]LoggedMessage // teléfono -> auditoría de la conversación
+	chatMode           map[string]string          // teléfono -> "bot" | "human"
+	tickets            []Ticket                   // tickets de soporte (escalaciones)
+	nextTicketID       int64
+	scheduled          []ScheduledOrder // entregas programadas (fuera de horario)
+	nextSchedID        int64
+	tgThreads          map[string]int64     // teléfono -> hilo de Telegram (grupo de alertas)
+	tgAvisado          map[string]time.Time // teléfono -> último aviso de inicio de conversación
+	tgSondeo           map[string]time.Time // teléfono -> último aviso de posible sondeo
 }
 
 // NewMemStore crea un almacén en memoria vacío.
@@ -208,6 +210,62 @@ func (s *memStore) SetScheduledEstado(id int64, estado string) {
 	}
 }
 
+// ForzarFechaUbicacion envejece una ubicacion. Solo lo usan las pruebas, para poder simular
+// al cliente que pidio en la mañana y vuelve en la tarde sin esperar seis horas.
+func (s *memStore) ForzarFechaUbicacion(phone string, cuando time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if loc, ok := s.locations[phone]; ok {
+		loc.UpdatedAt = cuando.Unix()
+		s.locations[phone] = loc
+	}
+}
+
+func (s *memStore) ClearLocation(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.locations, phone)
+	delete(s.direccionTexto, phone)
+}
+
+func (s *memStore) SetDireccionTexto(phone, direccion string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.direccionTexto == nil {
+		s.direccionTexto = map[string]string{}
+	}
+	s.direccionTexto[phone] = direccion
+}
+
+func (s *memStore) GetDireccionTexto(phone string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, ok := s.direccionTexto[phone]
+	return d, ok && d != ""
+}
+
+func (s *memStore) SetPedidoEsperandoDireccion(phone, color string, cantidad int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.esperandoDireccion == nil {
+		s.esperandoDireccion = map[string]OrderDraft{}
+	}
+	s.esperandoDireccion[phone] = OrderDraft{Color: color, Cantidad: cantidad}
+}
+
+func (s *memStore) GetPedidoEsperandoDireccion(phone string) (string, int, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, ok := s.esperandoDireccion[phone]
+	return d.Color, d.Cantidad, ok
+}
+
+func (s *memStore) ClearPedidoEsperandoDireccion(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.esperandoDireccion, phone)
+}
+
 func (s *memStore) MarcarChatLeido(phone string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -367,7 +425,9 @@ func (s *memStore) AppendModel(phone, text string) {
 func (s *memStore) SetLocation(phone string, lat, lng float64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.locations[phone] = Location{Latitude: lat, Longitude: lng}
+	// La fecha es obligatoria: sin ella toda ubicacion parece vieja y el bot pediria
+	// confirmacion de direccion incluso al cliente que acaba de mandar su pin.
+	s.locations[phone] = Location{Latitude: lat, Longitude: lng, UpdatedAt: time.Now().Unix()}
 }
 
 func (s *memStore) GetLocation(phone string) (Location, bool) {

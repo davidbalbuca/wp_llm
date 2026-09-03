@@ -739,6 +739,17 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		}
 	}
 
+	// Confirmacion de DIRECCION: el cliente esta respondiendo a "¿te lo enviamos a X?". Se
+	// resuelve en codigo, no por el modelo: una direccion mal interpretada manda el gas a otra
+	// casa (ver internal/agent/direccion.go).
+	if inc.IsText {
+		if reply, manejado := ag.ConfirmarDireccion(inc.From, inc.Text); manejado {
+			log.Printf("[webhook] confirmacion de direccion resuelta para %s", inc.From)
+			_ = replyClient(cfg, store, inc.From, reply)
+			return
+		}
+	}
+
 	// Entrega AGENDADA esperando confirmacion: el "si" del cliente no puede depender de que el
 	// modelo decida llamar a la herramienta. Paso tres veces el 27/08 en produccion, con dos
 	// modelos distintos: el cliente confirmo y el bot le contesto "¿necesitas algo mas?" sin

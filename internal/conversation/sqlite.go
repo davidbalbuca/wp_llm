@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"google.golang.org/genai"
@@ -181,6 +182,24 @@ CREATE INDEX IF NOT EXISTS idx_msglog_created ON message_log(created_at);
 -- Hasta cuando se leyo cada chat desde el panel. Sirve para marcar en negrita los que
 -- tienen mensajes del cliente sin ver, como en WhatsApp. Es por CHAT, no por operador: el
 -- panel lo usa un equipo chico y lo que importa es que alguien ya lo haya visto.
+-- Direccion legible de la ultima ubicacion del cliente ("Mariscal Sucre 1203, San Blas").
+-- Va en tabla aparte y no como columna de locations porque el bot no tiene forma de agregar
+-- columnas a tablas que ya existen: solo crea las que faltan.
+CREATE TABLE IF NOT EXISTS location_labels (
+    phone      TEXT    PRIMARY KEY,
+    direccion  TEXT    NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+-- Pedido en pausa esperando que el cliente CONFIRME la direccion. Sin esto, un cliente que
+-- vuelve dias despues recibiria su gas donde estaba la vez pasada.
+CREATE TABLE IF NOT EXISTS pending_address (
+    phone      TEXT    PRIMARY KEY,
+    color      TEXT,
+    cantidad   INTEGER,
+    created_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS chat_read (
     phone   TEXT    PRIMARY KEY,
     read_at INTEGER NOT NULL
@@ -692,6 +711,62 @@ func (s *sqliteStore) ClearHistory(phone string) {
 func (s *sqliteStore) AppendUser(phone, text string)  { s.appendTurn(phone, "user", text) }
 func (s *sqliteStore) AppendModel(phone, text string) { s.appendTurn(phone, "model", text) }
 
+func (s *sqliteStore) ClearLocation(phone string) {
+	if _, err := s.db.Exec(`DELETE FROM locations WHERE phone = ?`, phone); err != nil {
+		log.Printf("[sqlite] ClearLocation %s: %v", phone, err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM location_labels WHERE phone = ?`, phone); err != nil {
+		log.Printf("[sqlite] ClearLocation etiqueta %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) SetDireccionTexto(phone, direccion string) {
+	if strings.TrimSpace(direccion) == "" {
+		return
+	}
+	if _, err := s.db.Exec(`
+        INSERT INTO location_labels(phone, direccion, updated_at) VALUES(?, ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET direccion=excluded.direccion, updated_at=excluded.updated_at`,
+		phone, direccion, time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] SetDireccionTexto %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) GetDireccionTexto(phone string) (string, bool) {
+	var d string
+	if err := s.db.QueryRow(`SELECT direccion FROM location_labels WHERE phone = ?`,
+		phone).Scan(&d); err != nil {
+		return "", false
+	}
+	return d, strings.TrimSpace(d) != ""
+}
+
+func (s *sqliteStore) SetPedidoEsperandoDireccion(phone, color string, cantidad int) {
+	if _, err := s.db.Exec(`
+        INSERT INTO pending_address(phone, color, cantidad, created_at) VALUES(?, ?, ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET color=excluded.color, cantidad=excluded.cantidad,
+            created_at=excluded.created_at`,
+		phone, color, cantidad, time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] SetPedidoEsperandoDireccion %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) GetPedidoEsperandoDireccion(phone string) (string, int, bool) {
+	var color string
+	var cantidad int
+	if err := s.db.QueryRow(`SELECT color, cantidad FROM pending_address WHERE phone = ?`,
+		phone).Scan(&color, &cantidad); err != nil {
+		return "", 0, false
+	}
+	return color, cantidad, true
+}
+
+func (s *sqliteStore) ClearPedidoEsperandoDireccion(phone string) {
+	if _, err := s.db.Exec(`DELETE FROM pending_address WHERE phone = ?`, phone); err != nil {
+		log.Printf("[sqlite] ClearPedidoEsperandoDireccion %s: %v", phone, err)
+	}
+}
+
 func (s *sqliteStore) SetLocation(phone string, lat, lng float64) {
 	if _, err := s.db.Exec(`
         INSERT INTO locations(phone, latitude, longitude, updated_at) VALUES(?, ?, ?, ?)
@@ -706,8 +781,8 @@ func (s *sqliteStore) GetLocation(phone string) (Location, bool) {
 	minTime := time.Now().Add(-convTTL).Unix()
 	var loc Location
 	err := s.db.QueryRow(
-		`SELECT latitude, longitude FROM locations WHERE phone = ? AND updated_at >= ?`,
-		phone, minTime).Scan(&loc.Latitude, &loc.Longitude)
+		`SELECT latitude, longitude, updated_at FROM locations WHERE phone = ? AND updated_at >= ?`,
+		phone, minTime).Scan(&loc.Latitude, &loc.Longitude, &loc.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return Location{}, false
 	}

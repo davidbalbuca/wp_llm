@@ -1265,6 +1265,20 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 		return "No hay una forma de pago configurada en el sistema. Deriva al dueño."
 	}
 
+	// GUARDIA DE DIRECCION. Si la ubicacion guardada NO es de esta conversacion, no se registra
+	// nada hasta que el cliente confirme a donde va. Evita el peor error posible: que alguien
+	// pida en la mañana y en la tarde, desde otro lado, y el gas salga a la direccion vieja.
+	// El menu lo manda el codigo y la respuesta se resuelve en codigo (ver direccion.go).
+	if args["direccion_confirmada"] != true && !a.ubicacionEsDeAhora(from) {
+		if aviso, enPausa := a.pedirConfirmacionDireccion(from, colorNombre, cantidad); enPausa {
+			return aviso
+		}
+		// Sin direccion legible que mostrar, lo correcto es pedirle el pin otra vez.
+		a.store.ClearLocation(from)
+		return "La ubicación que teníamos es de otra conversación y no sirve para entregar. " +
+			"Pídele que comparta su ubicación ACTUAL por WhatsApp (botón de adjuntar → Ubicación)."
+	}
+
 	// Cuenta del bot (YA verificada, sin OTP): de la caché local, o del backend (get-or-create).
 	account, ok := a.store.GetAccount(from)
 	if !ok {
@@ -1366,6 +1380,18 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 		Producto:  producto.Nombre,
 		Color:     color.Nombre,
 		Cantidad:  cantidad,
+	}
+
+	// Se guarda la direccion legible que el backend acaba de resolver, para poder preguntarle
+	// "¿te lo enviamos a X?" la proxima vez sin tener que mostrarle coordenadas.
+	if dirs, err := a.gr.GetDirections(tokens.Access); err == nil {
+		for _, d := range dirs {
+			if strings.EqualFold(d.Alias, "WhatsApp") && strings.TrimSpace(d.Direccion) != "" &&
+				!strings.HasPrefix(d.Direccion, "Ubicación compartida") {
+				a.store.SetDireccionTexto(from, d.Direccion)
+				break
+			}
+		}
 	}
 
 	mensaje := fmt.Sprintf("Pedido registrado correctamente: %d x %s (%s).", cantidad, producto.Nombre, color.Nombre)
