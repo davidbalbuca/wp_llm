@@ -377,6 +377,18 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 			"no calificar o lo ignora, no insistas ni lo vuelvas a mencionar.", rating.Conductor)
 	}
 
+	// UBICACION: si el cliente ya la compartio, hay que DECIRSELO al modelo. El bot la guarda
+	// bien, pero el modelo no tiene forma de saberlo y la seguia pidiendo una y otra vez. Paso
+	// el 03/09 con 593963943000: mando su ubicacion dos veces y el bot se la pidio tres, hasta
+	// que el cliente empezo a contestar con la direccion escrita ("Tarqui y Sucre frente hotel
+	// casa Laura") creyendo que era eso lo que faltaba.
+	if _, hayUbicacion := a.store.GetLocation(from); hayUbicacion {
+		systemPrompt += "\n\nUBICACION: el cliente YA compartio su ubicacion y la tenemos " +
+			"guardada. NO se la vuelvas a pedir por ningun motivo. Si te escribe una direccion " +
+			"en texto, agradecele y usala como referencia, pero NO le pidas que mande el pin de " +
+			"nuevo: ya lo hizo. Sigue con lo que falte del pedido."
+	}
+
 	// Hora actual + horario laboral: fuera de horario NO se registran pedidos (regla dura,
 	// también validada en código); se ofrece PROGRAMAR la entrega.
 	ahora := time.Now().In(zonaEcuador)
