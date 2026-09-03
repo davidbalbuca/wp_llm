@@ -389,6 +389,19 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 			"nuevo: ya lo hizo. Sigue con lo que falte del pedido."
 	}
 
+	// Pedido EN PAUSA esperando que confirme la direccion. Si el cliente no toco ninguno de los
+	// dos botones -pasa seguido: escribe en vez de tocar- el modelo tiene que saber que hay algo
+	// pendiente. Sin esto intentaria registrar el pedido, chocaria otra vez con el guardia y le
+	// volveria a mandar el mismo menu, en bucle.
+	if _, _, esperandoDir := a.store.GetPedidoEsperandoDireccion(from); esperandoDir {
+		systemPrompt += "\n\nDIRECCION SIN CONFIRMAR: hay un pedido EN PAUSA porque no sabemos " +
+			"a que direccion enviarlo. Se le mostraron dos botones y respondio otra cosa. NO " +
+			"registres el pedido y NO des por buena ninguna direccion: pidele que comparta su " +
+			"ubicacion ACTUAL por WhatsApp (boton de adjuntar, Ubicacion). Si menciona un lugar " +
+			"distinto ('en la oficina', 'donde mi mama'), con mas razon: necesitas el pin de ese " +
+			"lugar, no el de antes."
+	}
+
 	// Hora actual + horario laboral: fuera de horario NO se registran pedidos (regla dura,
 	// también validada en código); se ofrece PROGRAMAR la entrega.
 	ahora := time.Now().In(zonaEcuador)
