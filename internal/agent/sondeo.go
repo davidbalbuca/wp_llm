@@ -199,3 +199,31 @@ func recortarTexto(s string, n int) string {
 	}
 	return string(r[:n]) + "…"
 }
+
+// afirmaPedidoConfirmado detecta si el texto le está diciendo al cliente que su pedido YA quedó
+// hecho: confirmado, registrado, en camino, repartidor asignado. Se usa como candado — si el
+// modelo afirma esto sin haber llamado a registrar_pedido, es un pedido fantasma.
+//
+// Busca la COMBINACIÓN de una palabra de pedido + una de estado-hecho, para no saltar con frases
+// legítimas como "¿confirmas tu color?" o "el repartidor te avisará". Conservador a propósito:
+// mejor dejar pasar un caso raro que bloquear una respuesta buena.
+func afirmaPedidoConfirmado(texto string) bool {
+	t := normalizar(texto)
+	if t == "" {
+		return false
+	}
+	// Señales de que el pedido estaría HECHO/EN MARCHA (no una pregunta ni una promesa futura).
+	hechos := []string{
+		"esta confirmado", "quedo confirmado", "pedido confirmado", "esta registrado",
+		"quedo registrado", "pedido registrado", "en camino", "esta asignado",
+		"repartidor ya fue asignado", "repartidor fue asignado", "repartidor asignado",
+		"conductor asignado", "conductor ya fue asignado", "ya fue asignado", "te llegara en breve",
+		"esta en proceso de entrega", "asignado y en camino",
+	}
+	for _, h := range hechos {
+		if strings.Contains(t, h) {
+			return true
+		}
+	}
+	return false
+}

@@ -326,6 +326,7 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, error) {
 	a.menuSent = false // se pone en true si la IA envía un menú interactivo en este turno
 	a.lastMenuText = ""
+	a.ultimoPedido = resultadoPedido{} // se llena SOLO si registrar_pedido corre en este turno
 
 	// Vigilancia pasiva: avisa al grupo si el mensaje parece un sondeo del negocio en vez de un
 	// pedido. Va en su propia goroutine y NO altera la respuesta: el modelo ya tiene prohibido
@@ -504,6 +505,22 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 			// Enviara o no el menú, no dejamos el JSON crudo en el texto que se guarda/manda.
 			reply = mensaje
 		}
+	}
+
+	// Red de seguridad CRÍTICA contra el pedido fantasma: el modelo NO puede decirle al cliente
+	// que su pedido está "confirmado / en camino / con repartidor asignado" si en este turno NO
+	// llamó a registrar_pedido con éxito. El 03/09 pasó en producción: el cliente compartió su
+	// ubicación y el bot respondió "tu pedido está confirmado y el repartidor en camino" sin
+	// haber llamado a la herramienta — un pedido que nunca existió, un cliente esperando gas que
+	// nadie iba a llevar. El prompt ya lo prohíbe, pero esto es el candado que no depende del
+	// modelo: si afirma una confirmación sin respaldo, se reemplaza por un mensaje honesto.
+	if !a.menuSent && !a.ultimoPedido.ok && !a.ultimoPedido.enEspera && afirmaPedidoConfirmado(reply) {
+		log.Printf("[fantasma] %s: el modelo afirmó un pedido sin registrar_pedido; se corrige", from)
+		notify.Default.Fallo(from, a.nombreDe(from), "Pedido fantasma evitado",
+			"El modelo iba a decirle al cliente que su pedido estaba confirmado SIN llamar a "+
+				"registrar_pedido. Se bloqueó la respuesta. Texto original: "+recortarTexto(reply, 300))
+		reply = "Disculpa 🙏, tuve un problema al registrar tu pedido. ¿Me compartes de nuevo tu " +
+			"ubicación 📎 para procesarlo bien? Quiero asegurarme de que te llegue tu gas."
 	}
 
 	// Turno del modelo para el HISTORIAL. Si en este turno se envió un menú interactivo,
@@ -847,6 +864,14 @@ func (a *Agent) esperarConductor(from string) string {
 	a.startWaitForDriver(from, w)
 	return "El cliente aceptó esperar. Confírmale con calidez que estás buscando un repartidor y que le " +
 		"avisas apenas se asigne (o si en unos minutos no hay disponible). Pídele que esté atento por aquí."
+}
+
+// nombreDe devuelve el nombre del cliente si lo conocemos, "" si no. Para los avisos.
+func (a *Agent) nombreDe(from string) string {
+	if p, ok := a.store.GetProfile(from); ok {
+		return strings.TrimSpace(p.Nombres)
+	}
+	return ""
 }
 
 // crearTicketSoporte crea el TICKET de la escalación (durable, se gestiona desde el panel), deja
