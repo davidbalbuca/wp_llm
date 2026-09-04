@@ -168,7 +168,8 @@ func (a *Agent) forzarCancelacionSiHaceFalta(from string) (string, bool) {
 	log.Printf("[forzar] %s: el modelo dijo cancelado sin llamar cancelar_pedido; se cancela en código", from)
 	salida := a.cancelarPedido(from) // texto pensado para el modelo, pero sirve de guía
 
-	// cancelarPedido limpia el active_pedido SOLO si el backend confirmó. Si sigue ahí, falló.
+	// cancelarPedido limpia el active_pedido cuando el pedido queda cancelado (por este intento o
+	// porque YA estaba cancelado). Si sigue ahí, la cancelación falló de verdad.
 	if _, sigue := a.store.GetActivePedido(from); sigue {
 		notify.Default.Fallo(from, a.nombreDe(from), "Cancelación fantasma — no se pudo cancelar",
 			"El modelo dijo al cliente que su pedido estaba cancelado, pero el backend NO lo "+
@@ -177,8 +178,13 @@ func (a *Agent) forzarCancelacionSiHaceFalta(from string) (string, bool) {
 			"cancele enseguida. Lamento la molestia.", true
 	}
 
-	notify.Default.Fallo(from, a.nombreDe(from), "Cancelación rescatada por código",
-		"El modelo iba a decir cancelado sin cancelar; el código canceló el pedido de verdad.")
+	// El pedido quedó cancelado. Si ya estaba cancelado (el conductor lo canceló antes), NO se
+	// avisa al grupo: no es un rescate ni un fallo, solo el cliente pidiendo cancelar algo que ya
+	// no estaba vivo. Antes esto disparaba una alerta roja de falso positivo.
+	if !yaEstabaCancelado(salida) {
+		notify.Default.Fallo(from, a.nombreDe(from), "Cancelación rescatada por código",
+			"El modelo iba a decir cancelado sin cancelar; el código canceló el pedido de verdad.")
+	}
 	return "Listo, cancelé tu pedido 🙏. Cuando necesites tu gas, aquí estoy para ayudarte 😊", true
 }
 

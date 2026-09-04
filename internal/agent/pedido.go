@@ -45,6 +45,15 @@ func (a *Agent) cancelarPedido(from string) string {
 		return "No se pudo cancelar el pedido en este momento (motivo: " + err.Error() + "). Discúlpate y pídele que intente de nuevo en un momento."
 	}
 	if err := a.gr.CancelOrder(tokens.Access, pedidoID); err != nil {
+		// "El pedido ya fue cancelado" NO es un fallo: el objetivo del cliente ya se cumplió (lo
+		// canceló el conductor desde su app, cosa que pasa seguido). Se trata como éxito —limpiar
+		// el estado y confirmar— para no gritar "sigue vivo" por Telegram cuando en realidad está
+		// muerto. El backend solo deja cancelar un pedido EN CAMINO; cualquier otro estado da esto.
+		if yaEstabaCancelado(err.Error()) {
+			a.store.ClearActivePedido(from)
+			return "El pedido del cliente YA estaba cancelado (lo canceló el conductor). No es un error: " +
+				"confírmale con amabilidad que su pedido está cancelado y ofrécele hacer uno nuevo cuando quiera."
+		}
 		return "No se pudo cancelar el pedido (motivo: " + err.Error() + "). Discúlpate y dile que en un momento lo revisa el equipo."
 	}
 	a.store.ClearActivePedido(from)

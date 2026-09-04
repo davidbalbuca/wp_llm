@@ -176,3 +176,15 @@ func renderServiceInfo(contexto *catalog.Context, disponible bool) string {
 		"NUNCA pidas correo electrónico (no se necesita).\n")
 	return texto.String()
 }
+
+// yaEstabaCancelado reconoce el error del backend que significa "el pedido no está EN CAMINO, así
+// que no se puede cancelar" — casi siempre porque el conductor ya lo canceló desde su app. NO es
+// un fallo: el pedido ya está cancelado, que es justo lo que el cliente quería. El backend
+// (cancelar_pedido_producto) solo permite cancelar pedidos EN_CAMINO; el resto da estos mensajes.
+func yaEstabaCancelado(mensaje string) bool {
+	m := strings.ToLower(mensaje)
+	return strings.Contains(m, "ya fue cancelado") ||
+		strings.Contains(m, "ya estaba cancelado") ||
+		strings.Contains(m, "fue entregado") ||
+		strings.Contains(m, "no existe")
+}

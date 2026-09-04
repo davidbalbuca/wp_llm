@@ -1105,7 +1105,11 @@ func (s *sqliteStore) GetTelegramThread(phone string) (int64, bool) {
 		log.Printf("[sqlite] GetTelegramThread %s: %v", phone, err)
 		return 0, false
 	}
-	return id, true
+	// La fila puede existir con thread_id=0: MarcarAvisoInicio la crea así (INSERT con 0) para
+	// registrar el aviso ANTES de que el hilo exista. Un 0 significa "todavía no hay hilo real",
+	// no "el hilo es el 0" — devolver true aquí hacía que hiloDe creyera que ya estaba creado y
+	// mandara todo al General. Por eso el ok es id>0, no la mera existencia de la fila.
+	return id, id > 0
 }
 
 func (s *sqliteStore) SetTelegramThread(phone string, threadID int64) {
