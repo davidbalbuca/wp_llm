@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"log"
 	"strconv"
 	"strings"
@@ -59,7 +60,14 @@ func (a *Agent) forzarRegistroSiHaceFalta(from string) (string, bool) {
 				strconv.Itoa(a.ultimoPedido.IDPedido))
 		msg := "¡Listo! 🎉 Tu pedido de " + strconv.Itoa(cantidad) + " " + color + " quedó registrado."
 		if a.ultimoPedido.Conductor != "" {
-			msg += " Tu repartidor es " + a.ultimoPedido.Conductor + " 🚚."
+			msg += " Tu repartidor es " + a.ultimoPedido.Conductor + " 🚚"
+			if a.ultimoPedido.Placa != "" {
+				msg += " (placa " + a.ultimoPedido.Placa + ")"
+			}
+			msg += "."
+		}
+		if a.ultimoPedido.TotalPagar > 0 {
+			msg += fmt.Sprintf(" 💵 Valor a pagar: $%.2f.", a.ultimoPedido.TotalPagar)
 		}
 		if a.ultimoPedido.Seguimiento != "" {
 			// Este mensaje lo escribe el código (el modelo se saltó la herramienta), así que el

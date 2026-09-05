@@ -20,6 +20,8 @@ type OrderResult struct {
 	IDPedido          int     `json:"idpedido"`
 	ConductorAsignado string  `json:"conductorasignado"`
 	TelefonoConductor string  `json:"telefonoconductor"`
+	Placa             string  `json:"placa"`
+	FormaPago         string  `json:"formapago"`
 	Total             float64 `json:"total"`
 	// SeguimientoToken es el token firmado del enlace público de seguimiento en vivo. Lo genera
 	// el backend SOLO para pedidos del bot (wpp_order). Vacío si el backend aún no lo envía

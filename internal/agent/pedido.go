@@ -20,10 +20,12 @@ type resultadoPedido struct {
 	enEspera    bool // se creo pero no habia repartidor: quedo en cola (PendingWait)
 	IDPedido    int
 	Conductor   string
+	Placa       string
 	Producto    string
 	Color       string
 	Cantidad    int
-	Seguimiento string // URL pública de seguimiento en vivo (vacía si el backend no la envió)
+	TotalPagar  float64 // valor a pagar (incluye envio/instalacion/servicio)
+	Seguimiento string  // URL pública de seguimiento en vivo (vacía si el backend no la envió)
 }
 
 // cancelarPedido cancela el pedido ACTIVO del cliente cuando lo pide por WhatsApp. Re-autentica
@@ -406,9 +408,11 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 		ok:          true,
 		IDPedido:    resultado.IDPedido,
 		Conductor:   resultado.ConductorAsignado,
+		Placa:       resultado.Placa,
 		Producto:    producto.Nombre,
 		Color:       color.Nombre,
 		Cantidad:    cantidad,
+		TotalPagar:  producto.PrecioTotal() * float64(cantidad),
 		Seguimiento: seguimiento,
 	}
 
@@ -424,13 +428,28 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 		}
 	}
 
-	mensaje := fmt.Sprintf("Pedido registrado correctamente: %d x %s (%s).", cantidad, producto.Nombre, color.Nombre)
+	// El VALOR A PAGAR se calcula con el precio del catálogo (unitario + envío + instalación +
+	// servicio, ver Product.PrecioTotal), NO con resultado.Total: el backend en wppOrder devuelve
+	// solo total_productos (el cilindro suelto, sin los rubros), así que ese número está incompleto.
+	totalPagar := producto.PrecioTotal() * float64(cantidad)
+
+	// Confirmación COMPLETA para el modelo (conductor + placa + valor a pagar + seguimiento). Se le
+	// pasan los datos con etiquetas claras para que arme un mensaje amable; los valores van tal cual.
+	mensaje := fmt.Sprintf("Pedido registrado correctamente: %d x %s (%s). DATOS PARA CONFIRMARLE AL "+
+		"CLIENTE (dáselos todos, de forma amable y clara):", cantidad, producto.Nombre, color.Nombre)
 	if resultado.ConductorAsignado != "" {
-		mensaje += " Repartidor asignado: " + resultado.ConductorAsignado + "."
+		mensaje += " Repartidor: " + resultado.ConductorAsignado + "."
 	}
+	if resultado.Placa != "" {
+		mensaje += " Placa del vehículo: " + resultado.Placa + "."
+	}
+	mensaje += fmt.Sprintf(" Valor a pagar: $%.2f", totalPagar)
+	if resultado.FormaPago != "" {
+		mensaje += " (" + resultado.FormaPago + ")"
+	}
+	mensaje += "."
 	if seguimiento != "" {
-		// Se le pasa al modelo para que lo incluya en su confirmación. La instrucción es explícita
-		// para que no lo omita ni lo reescriba: es un enlace, tiene que ir tal cual.
+		// El enlace debe ir TAL CUAL, en su propia línea; el modelo no debe reescribirlo ni omitirlo.
 		mensaje += " ENLACE DE SEGUIMIENTO EN VIVO (dáselo al cliente TAL CUAL, en su propia línea, " +
 			"invitándolo a seguir a su repartidor en el mapa): " + seguimiento
 	}
