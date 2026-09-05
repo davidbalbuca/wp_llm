@@ -104,7 +104,16 @@ func (c *Client) RatingOrder(jwt string, idpedido, calificacion int, observacion
 // CancelOrder cancela el pedido del cliente (POST /cancelOrder/) con su JWT. El backend lo marca
 // CANCELADO_CLIENTE, devuelve el stock al conductor y le avisa. Igual que el "Cancelar" de la app.
 func (c *Client) CancelOrder(jwt string, idpedido int) error {
-	_, err := c.post("/cancelOrder/", map[string]any{"idpedido": idpedido}, jwt)
+	// observacion SIEMPRE se envía aunque el serializer del backend la marque required=False:
+	// cancelar_pedido_producto la lee con datos['observacion'] (acceso directo), así que si no va
+	// lanza KeyError -> el backend responde "motivo: 'observacion'" y el bot cree que falló. Pasó
+	// el 05/09 con David: no podía cancelar y quedó en un loop de reasignaciones. De paso, el
+	// texto queda como motivo_cancelacion en la auditoría del pedido. (El fix de raíz sería usar
+	// datos.get('observacion','') en el backend; queda como deuda técnica de David.)
+	_, err := c.post("/cancelOrder/", map[string]any{
+		"idpedido":    idpedido,
+		"observacion": "Cancelado por el cliente vía WhatsApp",
+	}, jwt)
 	return err
 }
 
