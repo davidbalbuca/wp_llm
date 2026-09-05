@@ -87,6 +87,9 @@ type Agent struct {
 	// canceloEnEsteTurno se pone en true si en este turno se ejecutó cancelar_pedido. Sirve para
 	// el candado que fuerza la cancelación cuando el modelo la AFIRMA sin llamar a la herramienta.
 	canceloEnEsteTurno bool
+	// programoEnEsteTurno se pone en true si en este turno se ejecutó programar_entrega. Sirve
+	// para el candado que fuerza la programación cuando el modelo la afirma sin llamar la tool.
+	programoEnEsteTurno bool
 	// ultimoPedido guarda QUE paso en el ultimo registrar_pedido de este turno. El texto que
 	// esa funcion devuelve esta escrito para el modelo ("Ofrecele al cliente ESPERAR usando la
 	// herramienta..."), no para el cliente, asi que el flujo determinista de confirmacion
@@ -283,6 +286,7 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 	a.lastMenuText = ""
 	a.ultimoPedido = resultadoPedido{} // se llena SOLO si registrar_pedido corre en este turno
 	a.canceloEnEsteTurno = false       // se pone en true si cancelar_pedido corre en este turno
+	a.programoEnEsteTurno = false      // se pone en true si programar_entrega corre en este turno
 
 	// Vigilancia pasiva: avisa al grupo si el mensaje parece un sondeo del negocio en vez de un
 	// pedido. Va en su propia goroutine y NO altera la respuesta: el modelo ya tiene prohibido
@@ -376,9 +380,21 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 	// nadie iba a llevar. El prompt ya lo prohíbe, pero esto es el candado que no depende del
 	// modelo: si afirma una confirmación sin respaldo, se reemplaza por un mensaje honesto.
 	if !a.menuSent && !a.ultimoPedido.ok && !a.ultimoPedido.enEspera && afirmaPedidoConfirmado(reply) {
-		log.Printf("[fantasma] %s: el modelo afirmó un pedido sin registrar_pedido; se fuerza el registro", from)
-		if forzado, ok := a.forzarRegistroSiHaceFalta(from); ok {
-			reply = forzado
+		// Si el cliente pidió PROGRAMAR (dijo una hora) y el modelo afirmó sin llamar la tool, lo
+		// que hay que forzar es la PROGRAMACIÓN, no un registro inmediato. Pasó con María Elena el
+		// 05/09: pidió agendar para las 18:30, el modelo lo confirmó sin llamar programar_entrega,
+		// y el candado del fantasma le forzó una ESPERA de conductor. La programación nunca se
+		// creó y a las 18:30 no iba a pasar nada, aunque un humano ya le había confirmado la hora.
+		if !a.programoEnEsteTurno && a.clienteQuiereProgramar(from) {
+			log.Printf("[fantasma] %s: el modelo afirmó una programación sin llamar programar_entrega; se fuerza", from)
+			if forzado, ok := a.forzarProgramacionSiHaceFalta(from); ok {
+				reply = forzado
+			}
+		} else {
+			log.Printf("[fantasma] %s: el modelo afirmó un pedido sin registrar_pedido; se fuerza el registro", from)
+			if forzado, ok := a.forzarRegistroSiHaceFalta(from); ok {
+				reply = forzado
+			}
 		}
 	}
 
@@ -526,6 +542,7 @@ func (a *Agent) runToolInterno(from, name string, args map[string]any) string {
 		return a.esperarConductor(from)
 
 	case "programar_entrega":
+		a.programoEnEsteTurno = true
 		return a.programarEntrega(from, args)
 
 	case "cancelar_programacion":

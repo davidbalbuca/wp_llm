@@ -210,3 +210,44 @@ func colorEnTexto(products []georoutes.Product, texto string) string {
 	}
 	return ""
 }
+
+// clienteQuiereProgramar dice si la conversación es una PROGRAMACIÓN: el cliente pidió una hora
+// futura (dentro del horario) para su entrega. Sirve para que el candado del fantasma NO fuerce
+// un registro inmediato cuando lo que el cliente pidió fue agendar.
+func (a *Agent) clienteQuiereProgramar(from string) bool {
+	return a.horaPedidaPorCliente(from) != ""
+}
+
+// forzarProgramacionSiHaceFalta se llama cuando el modelo afirmó que agendó una entrega SIN haber
+// llamado a programar_entrega. Reconstruye color, cantidad y la hora que el cliente pidió, y llama
+// a programar_entrega de verdad. Mismo espíritu que el rescate de registro: una programación que
+// el cliente pidió no puede depender de que el modelo invoque la herramienta.
+func (a *Agent) forzarProgramacionSiHaceFalta(from string) (string, bool) {
+	color, cantidad, okP := a.inferirPedido(from)
+	hora := a.horaPedidaPorCliente(from)
+	if !okP || hora == "" {
+		notify.Default.Fallo(from, a.nombreDe(from), "Programación fantasma — no se pudo autoagendar",
+			"El modelo dijo que agendó una entrega sin llamar programar_entrega y el código no pudo "+
+				"reconstruir color/cantidad/hora. El cliente NO tiene entrega agendada; hay que atenderlo.")
+		return "Disculpa 🙏, tuve un problema al agendar tu entrega. ¿Me confirmas qué cilindro " +
+			"necesitas, cuántos y a qué hora la quieres? Quiero dejarla bien programada.", true
+	}
+
+	log.Printf("[forzar] %s: el modelo afirmó agendar sin programar_entrega; se agenda en código (%d x %s @ %s)",
+		from, cantidad, color, hora)
+	salida := a.programarEntrega(from, map[string]any{"color": color, "cantidad": cantidad, "hora": hora})
+
+	// programarEntrega devuelve un texto para el MODELO. Si de verdad quedó agendada, se lo
+	// confirmamos al cliente con la hora; si no, se avisa al grupo y se es honesto.
+	if _, hay := a.store.GetConfirmingSchedule(from); hay || strings.Contains(strings.ToLower(salida), "programada con éxito") {
+		notify.Default.Fallo(from, a.nombreDe(from), "Programación rescatada por código",
+			"El modelo iba a decir agendado sin agendar; el código programó la entrega de verdad para las "+hora+".")
+		return "¡Listo! 📅 Te dejé agendada tu entrega de " + strconv.Itoa(cantidad) + " " + color +
+			" para las " + hora + ". Te escribiré a esa hora para confirmar y enviarlo. ¡Estate atento por aquí! 😊", true
+	}
+
+	notify.Default.Fallo(from, a.nombreDe(from), "Programación fantasma — no se pudo autoagendar",
+		"El modelo dijo agendado, el código intentó programar y NO quedó. Detalle: "+conversation.Recortar(salida, 200))
+	return "Disculpa 🙏, tuve un problema al agendar tu entrega. Ya avisé al equipo para que te " +
+		"contacte y la deje lista. Lamento la molestia.", true
+}

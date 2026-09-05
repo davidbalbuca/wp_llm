@@ -6,6 +6,7 @@ package agent
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 	"wp-llm-gas/internal/conversation"
@@ -249,4 +250,75 @@ func (a *Agent) clienteMencionoHora(from, hora string) bool {
 		}
 	}
 	return false
+}
+
+// horaPedidaPorCliente busca en lo que el cliente escribió una hora del horario laboral y la
+// devuelve como "HH:MM" (o "" si no hay). Es lo que permite forzar la programación cuando el
+// modelo se saltó la herramienta: la hora la puso el cliente, no la inventamos.
+//
+// Reconoce las formas de la gente: "18:30", "6:30 pm", "a las 7", "6h30", "18h". Solo acepta
+// horas DENTRO del horario laboral configurado, para no confundir "1 cilindro" o una cédula con
+// una hora.
+func (a *Agent) horaPedidaPorCliente(from string) string {
+	ini := parseHoraHHMM(a.cfg.BotHorarioInicio)
+	fin := parseHoraHHMM(a.cfg.BotHorarioFin)
+	if ini < 0 || fin < 0 {
+		return ""
+	}
+
+	// Del más reciente al más viejo: vale la ÚLTIMA hora que el cliente dijo.
+	msgs := a.store.GetConversation(from, 40)
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != "user" {
+			continue
+		}
+		if hhmm := extraerHora(msgs[i].Content); hhmm != "" {
+			if m := parseHoraHHMM(hhmm); m >= ini && m < fin {
+				return hhmm
+			}
+		}
+	}
+	return ""
+}
+
+// extraerHora saca una hora "HH:MM" de un texto de chat, o "". Cubre "18:30", "6:30 pm",
+// "a las 7", "6h30", "18h". Los minutos por defecto son 00 cuando no se dicen.
+func extraerHora(texto string) string {
+	t := strings.ToLower(texto)
+	// pm/am para el ajuste de 12h
+	pm := strings.Contains(t, "pm") || strings.Contains(t, "p.m")
+	am := strings.Contains(t, "am") || strings.Contains(t, "a.m")
+
+	// Recorre el texto buscando el primer número que parezca hora (0..23), con minutos opcionales
+	// tras ':' o 'h'.
+	campos := strings.FieldsFunc(t, func(r rune) bool {
+		return !(r >= '0' && r <= '9') && r != ':' && r != 'h'
+	})
+	for _, c := range campos {
+		sep := strings.IndexAny(c, ":h")
+		var hs, ms string
+		if sep >= 0 {
+			hs, ms = c[:sep], c[sep+1:]
+		} else {
+			hs = c
+		}
+		h, err := strconv.Atoi(hs)
+		if err != nil || h < 0 || h > 23 {
+			continue
+		}
+		m := 0
+		if ms != "" {
+			if mm, err := strconv.Atoi(ms); err == nil && mm >= 0 && mm < 60 {
+				m = mm
+			}
+		}
+		// Ajuste 12h -> 24h si el cliente dijo pm/am.
+		if pm && h < 12 {
+			h += 12
+		} else if am && h == 12 {
+			h = 0
+		}
+		return fmt.Sprintf("%02d:%02d", h, m)
+	}
+	return ""
 }
