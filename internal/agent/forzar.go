@@ -61,7 +61,12 @@ func (a *Agent) forzarRegistroSiHaceFalta(from string) (string, bool) {
 		if a.ultimoPedido.Conductor != "" {
 			msg += " Tu repartidor es " + a.ultimoPedido.Conductor + " 🚚."
 		}
-		return msg + " Cualquier cosa, aquí estoy 😊", true
+		if a.ultimoPedido.Seguimiento != "" {
+			// Este mensaje lo escribe el código (el modelo se saltó la herramienta), así que el
+			// enlace lo ponemos nosotros directamente.
+			msg += "\n\n📍 Sigue a tu repartidor en vivo aquí:\n" + a.ultimoPedido.Seguimiento
+		}
+		return msg + "\n\nCualquier cosa, aquí estoy 😊", true
 	case a.ultimoPedido.enEspera:
 		// Sin repartidor: registrarPedido ya dejó el PendingWait. Ofrecemos esperar.
 		return "¡Anotado tu pedido de " + strconv.Itoa(cantidad) + " " + color + "! 🙌 En este momento " +

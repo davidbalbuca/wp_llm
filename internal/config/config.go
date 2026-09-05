@@ -34,6 +34,10 @@ type Config struct {
 	// BackendURL es la URL base del backend GEOWARE (ubi-geoware). El bot consume
 	// la API de georoutes (mismo flujo que la app móvil) bajo {BackendURL}/georoutes/.
 	BackendURL string
+	// SeguimientoBaseURL es el dominio PÚBLICO (el que ve el cliente en su teléfono) donde vive
+	// la página de seguimiento en vivo: {SeguimientoBaseURL}/seguimiento/<token>/. Suele diferir
+	// de BackendURL (interno). Si está vacía, el bot NO ofrece el enlace de seguimiento.
+	SeguimientoBaseURL string
 	// ChannelSecret autentica al bot como canal de confianza ante el backend
 	// (verificación tipo Camino B). Opcional hasta que David lo habilite.
 	ChannelSecret string
@@ -134,6 +138,7 @@ func Load() Config {
 		Port:                 optional("PORT", "3000"),
 		GraphAPIVersion:      "v21.0",
 		BackendURL:           strings.TrimRight(optional("BACKEND_URL", "http://127.0.0.1:8000"), "/"),
+		SeguimientoBaseURL:   strings.TrimRight(os.Getenv("SEGUIMIENTO_BASE_URL"), "/"),
 		ChannelSecret:        os.Getenv("BACKEND_CHANNEL_SECRET"),
 		CatalogUser:          os.Getenv("CATALOG_USER"),
 		CatalogPassword:      os.Getenv("CATALOG_PASSWORD"),

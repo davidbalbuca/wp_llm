@@ -16,13 +16,14 @@ import (
 
 // resultadoPedido es el desenlace de un registrar_pedido, para quien lo llame desde codigo.
 type resultadoPedido struct {
-	ok        bool // el pedido se creo en el backend
-	enEspera  bool // se creo pero no habia repartidor: quedo en cola (PendingWait)
-	IDPedido  int
-	Conductor string
-	Producto  string
-	Color     string
-	Cantidad  int
+	ok          bool // el pedido se creo en el backend
+	enEspera    bool // se creo pero no habia repartidor: quedo en cola (PendingWait)
+	IDPedido    int
+	Conductor   string
+	Producto    string
+	Color       string
+	Cantidad    int
+	Seguimiento string // URL pública de seguimiento en vivo (vacía si el backend no la envió)
 }
 
 // cancelarPedido cancela el pedido ACTIVO del cliente cuando lo pide por WhatsApp. Re-autentica
@@ -400,13 +401,15 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 		a.store.SetScheduledEstado(sch.ID, conversation.ScheduleConfirmado)
 	}
 
+	seguimiento := a.urlSeguimiento(resultado.SeguimientoToken)
 	a.ultimoPedido = resultadoPedido{
-		ok:        true,
-		IDPedido:  resultado.IDPedido,
-		Conductor: resultado.ConductorAsignado,
-		Producto:  producto.Nombre,
-		Color:     color.Nombre,
-		Cantidad:  cantidad,
+		ok:          true,
+		IDPedido:    resultado.IDPedido,
+		Conductor:   resultado.ConductorAsignado,
+		Producto:    producto.Nombre,
+		Color:       color.Nombre,
+		Cantidad:    cantidad,
+		Seguimiento: seguimiento,
 	}
 
 	// Se guarda la direccion legible que el backend acaba de resolver, para poder preguntarle
@@ -425,5 +428,22 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 	if resultado.ConductorAsignado != "" {
 		mensaje += " Repartidor asignado: " + resultado.ConductorAsignado + "."
 	}
+	if seguimiento != "" {
+		// Se le pasa al modelo para que lo incluya en su confirmación. La instrucción es explícita
+		// para que no lo omita ni lo reescriba: es un enlace, tiene que ir tal cual.
+		mensaje += " ENLACE DE SEGUIMIENTO EN VIVO (dáselo al cliente TAL CUAL, en su propia línea, " +
+			"invitándolo a seguir a su repartidor en el mapa): " + seguimiento
+	}
 	return mensaje
+}
+
+// urlSeguimiento arma la URL pública del seguimiento a partir del token firmado que devuelve el
+// backend. Devuelve "" si no hay token (el backend viejo no lo envía) o si no está configurada la
+// base pública: en ese caso el bot simplemente no ofrece el enlace, sin romper nada.
+func (a *Agent) urlSeguimiento(token string) string {
+	base := strings.TrimRight(a.cfg.SeguimientoBaseURL, "/")
+	if token == "" || base == "" {
+		return ""
+	}
+	return base + "/seguimiento/" + token + "/"
 }

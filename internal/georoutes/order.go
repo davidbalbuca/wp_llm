@@ -21,6 +21,10 @@ type OrderResult struct {
 	ConductorAsignado string  `json:"conductorasignado"`
 	TelefonoConductor string  `json:"telefonoconductor"`
 	Total             float64 `json:"total"`
+	// SeguimientoToken es el token firmado del enlace público de seguimiento en vivo. Lo genera
+	// el backend SOLO para pedidos del bot (wpp_order). Vacío si el backend aún no lo envía
+	// (compat hacia atrás): en ese caso el bot simplemente no muestra el enlace.
+	SeguimientoToken string `json:"seguimiento_token"`
 }
 
 // WppOrder crea el pedido del BOT con la ubicación compartida por WhatsApp, SIN iddireccion:
@@ -135,4 +139,3 @@ func (c *Client) GetDirections(jwt string) ([]SavedDirection, error) {
 	}
 	return dirs, nil
 }
-
