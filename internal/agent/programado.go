@@ -75,19 +75,30 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	// Al día siguiente le llegó la confirmación de una entrega fantasma y terminó escribiendo
 	// "deberías arreglar esto porque generas confusión en las personas".
 	//
-	// Programar es un COMPROMISO: si el cliente no escribió la hora, no hay compromiso que honrar.
-	if !a.clienteMencionoHora(from, str(args["hora"])) {
-		return fmt.Sprintf("El cliente NO ha escrito a qué hora quiere su entrega, y sin eso no se "+
-			"programa nada (no inventes una hora tú). Pregúntale primero si desea PROGRAMAR la entrega; "+
-			"si acepta, dile que atendemos de %s a %s y deja que él escriba la hora (formato HH:MM).",
-			a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
-	}
-
-	mins := parseHoraHHMM(str(args["hora"]))
+	// La hora se toma con tolerancia, en tres pasos, para NO hacerle repetir al cliente lo que ya
+	// dijo (pasó con María Elena el 05/09: dijo "6h30" y "18:30 pm" y el bot le pidió confirmar la
+	// hora tres veces porque el formato estricto no la entendía):
+	//   1) lo que el modelo pasó en args, tal cual (HH:MM).
+	//   2) si no es HH:MM estricto, se interpreta ("6h30", "7 pm", "a las 18") con extraerHora.
+	//   3) si el modelo no pasó nada usable, se busca la hora que el CLIENTE ya escribió.
+	// Programar es un COMPROMISO, así que la hora tiene que venir del cliente: por eso el paso 3
+	// mira el message_log (lo que de verdad se recibió), no algo inventado por el modelo.
+	horaTxt := strings.TrimSpace(str(args["hora"]))
+	mins := parseHoraHHMM(horaTxt)
 	if mins < 0 {
-		return fmt.Sprintf("Aún no tengo una hora válida. Dile que atendemos de %s a %s y pídele que escriba "+
-			"a qué hora quiere recibirlo (formato HH:MM). NO le ofrezcas horas como opciones.",
-			a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
+		if h := extraerHora(horaTxt); h != "" {
+			horaTxt, mins = h, parseHoraHHMM(h)
+		}
+	}
+	if mins < 0 {
+		if h := a.horaPedidaPorCliente(from); h != "" {
+			horaTxt, mins = h, parseHoraHHMM(h)
+		}
+	}
+	if mins < 0 {
+		return fmt.Sprintf("El cliente aún no ha dicho a qué hora quiere su entrega (no inventes una tú). "+
+			"Pregúntale si desea PROGRAMAR y dile que atendemos de %s a %s; apenas te diga una hora, "+
+			"agéndala sin volver a preguntar.", a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
 	}
 	ini := parseHoraHHMM(a.cfg.BotHorarioInicio)
 	fin := parseHoraHHMM(a.cfg.BotHorarioFin)
@@ -204,52 +215,6 @@ func (a *Agent) dentroDeHorario(t time.Time) bool {
 	}
 	mins := t.Hour()*60 + t.Minute()
 	return mins >= ini && mins < fin
-}
-
-// clienteMencionoHora comprueba que la hora que el modelo quiere agendar la haya dicho EL
-// CLIENTE, buscándola en lo que escribió en las últimas horas (el message_log, que es lo que
-// de verdad se recibió por WhatsApp, no lo que el modelo recuerda).
-//
-// Acepta las formas en que la gente escribe una hora en un chat: "14:30", "2:30 pm", "a las 3",
-// "15h". Basta con que coincida la HORA; los minutos exactos son cosa del modelo.
-func (a *Agent) clienteMencionoHora(from, hora string) bool {
-	mins := parseHoraHHMM(hora)
-	if mins < 0 {
-		return false // sin hora válida no hay nada que verificar
-	}
-	h := mins / 60
-
-	// Solo mensajes DEL CLIENTE, y de la sesión en curso.
-	var dichos []string
-	for _, m := range a.store.GetConversation(from, 40) {
-		if m.Role == "user" {
-			dichos = append(dichos, strings.ToLower(m.Content))
-		}
-	}
-	if len(dichos) == 0 {
-		return false
-	}
-	texto := strings.Join(dichos, " ")
-
-	// Formas equivalentes de la misma hora: 15:00, 15h, 3 pm, 3:00...
-	formas := []string{
-		fmt.Sprintf("%d:", h), fmt.Sprintf("%02d:", h), // 15:  /  09:
-		fmt.Sprintf("%dh", h), fmt.Sprintf("%02dh", h), // 15h
-		fmt.Sprintf("las %d", h), fmt.Sprintf("las %02d", h), // a las 15
-	}
-	if h > 12 { // 15:00 -> "3 pm", "3pm", "las 3"
-		d := h - 12
-		formas = append(formas, fmt.Sprintf("%d pm", d), fmt.Sprintf("%dpm", d),
-			fmt.Sprintf("las %d", d), fmt.Sprintf("%d:", d))
-	} else if h > 0 { // 09:00 -> "9 am"
-		formas = append(formas, fmt.Sprintf("%d am", h), fmt.Sprintf("%dam", h))
-	}
-	for _, f := range formas {
-		if strings.Contains(texto, f) {
-			return true
-		}
-	}
-	return false
 }
 
 // horaPedidaPorCliente busca en lo que el cliente escribió una hora del horario laboral y la
