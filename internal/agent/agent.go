@@ -441,6 +441,13 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 		}
 	}
 
+	// Candado del AVISO AL EQUIPO: si el modelo le prometió al cliente que alguien lo va a
+	// contactar pero no derivó, esa promesa no la cumple nadie. Se deriva en código para que
+	// el ticket exista. El texto del modelo se respeta: ahora además es verdad.
+	if !t.escalado && afirmaAvisoAlEquipo(reply) {
+		a.forzarAvisoAlEquipoSiHaceFalta(t, from)
+	}
+
 	// Turno del modelo para el HISTORIAL. Si en este turno se envió un menú interactivo,
 	// guardamos la PREGUNTA del menú (cuerpo + opciones), NO un texto vacío ni el fallback:
 	// así el modelo recuerda qué preguntó y no repite el menú. El historial solo guarda texto,

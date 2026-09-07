@@ -142,6 +142,48 @@ func afirmaCancelado(texto string) bool {
 	return false
 }
 
+// afirmaAvisoAlEquipo detecta que el texto le promete al cliente que una persona lo va a
+// contactar. Es el mismo pecado que el pedido fantasma, pero más silencioso: el cliente se
+// queda esperando una llamada que nadie va a hacer, porque nunca se creó el ticket. No había
+// candado para esto (lo detectó la auditoría del 07/09).
+func afirmaAvisoAlEquipo(texto string) bool {
+	t := normalizar(texto)
+	if t == "" {
+		return false
+	}
+	// Una PREGUNTA no es una promesa: "¿quieres que avise al equipo?" ofrece, no afirma.
+	if strings.Contains(t, "quieres que") || strings.Contains(t, "deseas que") ||
+		strings.Contains(t, "te contacto con") || strings.Contains(t, "quieres hablar") {
+		return false
+	}
+	hechos := []string{
+		"ya avise al equipo", "avise al equipo", "ya notifique al equipo", "notifique al equipo",
+		"ya avise al dueno", "avise al dueno", "ya le avise", "ya informe al equipo",
+		"el equipo se pondra en contacto", "se pondran en contacto", "te van a contactar",
+		"te contactara", "te contactaran", "alguien te escribira", "alguien te contactara",
+		"un asesor se comunicara", "nos pondremos en contacto",
+	}
+	for _, h := range hechos {
+		if strings.Contains(t, h) {
+			return true
+		}
+	}
+	return false
+}
+
+// forzarAvisoAlEquipoSiHaceFalta se llama cuando el modelo prometió que el equipo contactaría
+// al cliente sin haber derivado. Deriva de verdad (creando el ticket) para que la promesa se
+// cumpla. Devuelve el texto para el cliente si tuvo que intervenir.
+func (a *Agent) forzarAvisoAlEquipoSiHaceFalta(t *turno, from string) (string, bool) {
+	log.Printf("[forzar] %s: el modelo prometió aviso al equipo sin derivar; se deriva en código", from)
+	// Por runTool: es quien crea el TICKET (el envoltorio, no la función interna).
+	a.runTool(t, from, "escalar_al_dueno", map[string]any{
+		"motivo":  "El bot prometió al cliente que el equipo lo contactaría",
+		"resumen": "El modelo le dijo al cliente que ya se avisó al equipo sin llamar a escalar_al_dueno. El código derivó para que la promesa se cumpla; hay que contactar al cliente.",
+	})
+	return "", false // el texto del modelo ya era correcto: ahora además es verdad
+}
+
 // forzarCancelacionSiHaceFalta se llama cuando el modelo afirmó que canceló SIN haber llamado a
 // cancelar_pedido. Si hay un pedido activo, lo cancela de verdad. Devuelve el texto para el
 // cliente y ok=true si se resolvió aquí.

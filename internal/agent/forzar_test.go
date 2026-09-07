@@ -124,3 +124,34 @@ func TestFichaSeLimpiaAlRegistrar(t *testing.T) {
 		t.Error("la ficha sobrevivió al registro: un mensaje posterior podría re-registrar el pedido")
 	}
 }
+
+// afirmaAvisoAlEquipo detecta la promesa de que una persona va a contactar al cliente. Sin
+// candado, esa promesa no la cumple nadie: el cliente espera una llamada que no existe.
+func TestAfirmaAvisoAlEquipo(t *testing.T) {
+	promete := []string{
+		"Ya avisé al equipo para que te contacte 🙏",
+		"Listo, notifiqué al equipo.",
+		"El equipo se pondrá en contacto contigo en breve.",
+		"Te van a contactar enseguida.",
+		"Alguien te escribirá para ayudarte.",
+	}
+	for _, txt := range promete {
+		if !afirmaAvisoAlEquipo(txt) {
+			t.Errorf("no detectó una promesa de contacto: %q", txt)
+		}
+	}
+
+	// Lo que NO es una promesa cumplida por un humano: ofrecer, preguntar, o hablar del repartidor.
+	noPromete := []string{
+		"¿Quieres que avise al equipo?",
+		"Tu repartidor te llamará cuando esté llegando.",
+		"¿Te contacto con una persona del equipo?",
+		"Cualquier cosa, aquí estoy 😊",
+		"",
+	}
+	for _, txt := range noPromete {
+		if afirmaAvisoAlEquipo(txt) {
+			t.Errorf("falso positivo, esto no promete contacto de una persona: %q", txt)
+		}
+	}
+}
