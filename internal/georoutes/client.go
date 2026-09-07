@@ -204,4 +204,3 @@ func (c *Client) ValidateVerificationCode(jwt, codigo string) error {
 	_, err := c.post("/validateCodeVerification/", map[string]any{"codigo": codigo}, jwt)
 	return err
 }
-
