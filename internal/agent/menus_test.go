@@ -1,0 +1,143 @@
+package agent
+
+import (
+	"strings"
+	"testing"
+
+	"wp-llm-gas/internal/config"
+	"wp-llm-gas/internal/conversation"
+)
+
+// agentConEspera arma un Agent con un pedido EN ESPERA de repartidor, que es la precondición
+// del menú "¿Deseas esperar?". El backend apunta a una URL muerta a propósito: estos tests
+// miden QUÉ decide el interceptor, no qué responde el backend.
+func agentConEspera(store conversation.Store, from string) *Agent {
+	store.SetPendingWait(from, conversation.PendingWait{
+		IDCategoria: 1, IDProducto: 7, IDColor: 3, Cantidad: 2, IDTipoPago: 1,
+		ProductoNombre: "GAS 15KG", ColorNombre: "Blanco",
+		Identificacion: "0104816269", Nombres: "María Elena",
+	})
+	ag := agentDePrueba(nil, store)
+	ag.cfg = config.Config{BotHorarioInicio: "07:00", BotHorarioFin: "19:00"}
+	return ag
+}
+
+// "Esperar" arranca la búsqueda de repartidor SIN pasar por el modelo. Si esto dependiera del
+// modelo y no llamara a la herramienta, el cliente se quedaría esperando un gas que nadie busca.
+func TestMenuEsperaAceptar(t *testing.T) {
+	const from = "593999000010"
+	store := conversation.NewMemStore()
+	ag := agentConEspera(store, from)
+
+	for _, texto := range []string{"Esperar", "esperar", "sí", "dale", "ok"} {
+		store.SetPendingWait(from, conversation.PendingWait{
+			IDCategoria: 1, IDProducto: 7, IDColor: 3, Cantidad: 2, IDTipoPago: 1,
+			ProductoNombre: "GAS 15KG", ColorNombre: "Blanco",
+		})
+		antes := ag.esperasArrancadas.Load()
+		reply, manejado := ag.ResponderMenuEspera(from, texto)
+		if !manejado {
+			t.Fatalf("%q no se resolvió en código: el cliente quedaría a merced de que el modelo "+
+				"llame a esperar_conductor", texto)
+		}
+		// Lo que importa no es el texto: es que la BÚSQUEDA de repartidor haya arrancado de
+		// verdad. Un bot que contesta "ya estoy buscando" sin buscar es el bug que esto previene.
+		if ag.esperasArrancadas.Load() == antes {
+			t.Fatalf("%q: se le dijo al cliente que se busca repartidor pero startWaitForDriver "+
+				"NO arrancó: se quedaría esperando un gas que nadie busca", texto)
+		}
+		if !strings.Contains(reply, "buscando un repartidor") {
+			t.Errorf("%q: la respuesta no le dice al cliente que se está buscando: %q", texto, reply)
+		}
+	}
+}
+
+// "Cancelar" cierra la espera en código y ofrece programar (el pedido queda como no asignado).
+func TestMenuEsperaCancelar(t *testing.T) {
+	const from = "593999000011"
+	store := conversation.NewMemStore()
+	ag := agentConEspera(store, from)
+
+	reply, manejado := ag.ResponderMenuEspera(from, "Cancelar")
+	if !manejado {
+		t.Fatal("\"Cancelar\" no se resolvió en código")
+	}
+	if _, sigue := store.GetPendingWait(from); sigue {
+		t.Error("la espera sigue viva tras cancelar: el bot seguiría buscando un repartidor que el cliente ya no quiere")
+	}
+	if !strings.Contains(reply, "07:00") || !strings.Contains(reply, "19:00") {
+		t.Errorf("no se le ofreció el horario para programar: %q", reply)
+	}
+}
+
+// Lo que NO es una opción del menú va al modelo: una pregunta, un cambio de tema, un matiz.
+func TestMenuEsperaDejaPasarLoQueNoEsOpcion(t *testing.T) {
+	const from = "593999000012"
+	store := conversation.NewMemStore()
+	ag := agentConEspera(store, from)
+
+	for _, texto := range []string{
+		"¿cuánto cuesta?",
+		"esperar pero hasta las 6",
+		"Programar",
+		"mejor mándame dos",
+		"",
+	} {
+		if _, manejado := ag.ResponderMenuEspera(from, texto); manejado {
+			t.Errorf("%q se resolvió en código; debía ir al modelo (no es una opción del menú)", texto)
+		}
+	}
+}
+
+// Sin pedido en espera, el interceptor no se mete: un "sí" cualquiera de la conversación no
+// puede disparar una búsqueda de repartidor.
+func TestMenuEsperaNoActuaSinEsperaPendiente(t *testing.T) {
+	store := conversation.NewMemStore()
+	ag := agentDePrueba(nil, store)
+	if _, manejado := ag.ResponderMenuEspera("593999000013", "Esperar"); manejado {
+		t.Error("se resolvió un menú de espera que nunca se mostró")
+	}
+}
+
+// Un número del 1 al 5 con un pedido por calificar se registra en código.
+func TestCalificacionNumeroSuelto(t *testing.T) {
+	const from = "593999000014"
+	store := conversation.NewMemStore()
+	ag := agentDePrueba(nil, store)
+
+	for _, texto := range []string{"5", "1", " 4 "} {
+		store.SetPendingRating(from, conversation.PendingRating{PedidoID: 512, Conductor: "Nelson"})
+		_, manejado := ag.ResponderCalificacion(from, texto)
+		if !manejado {
+			t.Errorf("%q no se resolvió en código: la calificación dependería de que el modelo llame la tool", texto)
+		}
+		if _, sigue := store.GetPendingRating(from); sigue {
+			t.Errorf("%q: el pendiente de calificación quedó vivo; se le volvería a pedir en cada conversación", texto)
+		}
+	}
+}
+
+// Con comentario, o fuera de rango, decide el modelo: ahí hay algo que vale la pena guardar
+// o aclarar, y el interceptor no debe tragárselo.
+func TestCalificacionConComentarioVaAlModelo(t *testing.T) {
+	const from = "593999000015"
+	store := conversation.NewMemStore()
+	ag := agentDePrueba(nil, store)
+
+	for _, texto := range []string{"5 muy amable", "le pongo 4 pero llegó tarde", "0", "6", "excelente", ""} {
+		store.SetPendingRating(from, conversation.PendingRating{PedidoID: 512, Conductor: "Nelson"})
+		if _, manejado := ag.ResponderCalificacion(from, texto); manejado {
+			t.Errorf("%q se resolvió en código; debía ir al modelo", texto)
+		}
+	}
+}
+
+// Sin calificación pendiente, un número suelto es cualquier cosa (una cantidad, por ejemplo)
+// y NO puede interpretarse como una nota al repartidor.
+func TestCalificacionNoActuaSinPendiente(t *testing.T) {
+	store := conversation.NewMemStore()
+	ag := agentDePrueba(nil, store)
+	if _, manejado := ag.ResponderCalificacion("593999000016", "2"); manejado {
+		t.Error("un \"2\" sin calificación pendiente se tomó como nota; podría ser la cantidad de un pedido")
+	}
+}

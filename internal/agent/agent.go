@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/genai"
@@ -80,6 +81,10 @@ type Agent struct {
 	catalog *catalog.Client
 	gr      *georoutes.Client
 	tools   []*genai.Tool
+	// esperasArrancadas cuenta cuántas veces se lanzó la búsqueda de repartidor. Es una señal
+	// observable (atómica: se lee desde otra goroutine) para verificar en tests que aceptar
+	// "Esperar" REALMENTE arranca la búsqueda y no solo se lo dice al cliente.
+	esperasArrancadas atomic.Int64
 }
 
 // turno agrupa el estado de UN mensaje de UN cliente: si se envió menú, qué pasó con el

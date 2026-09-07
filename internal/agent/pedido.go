@@ -142,6 +142,10 @@ func (a *Agent) registrarNoAsignado(from string) {
 // WhatsApp NO sirve el push (token placeholder), por eso el bot reintenta activamente. Al asignarse
 // o al expirar, envía el mensaje directo por WhatsApp. Best-effort: nunca tumba el proceso.
 func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
+	// Contador de arranques: la búsqueda es asíncrona y no deja marca inmediata en el store,
+	// así que sin esto un test no puede distinguir "se arrancó la búsqueda" de "solo se le dijo
+	// al cliente que se arrancó" —que es justo el bug que los interceptores previenen—.
+	a.esperasArrancadas.Add(1)
 	cfg := a.cfg
 	gr := a.gr
 	store := a.store

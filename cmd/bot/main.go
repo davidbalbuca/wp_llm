@@ -763,6 +763,22 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		}
 	}
 
+	// Menús CERRADOS resueltos en código (ver internal/agent/menus.go). La respuesta a un botón
+	// es un conjunto cerrado: no puede depender de que el modelo llame a la herramienta. Si el
+	// cliente contesta algo fuera de las opciones, estos devuelven false y sigue al modelo.
+	if inc.IsText {
+		if reply, manejado := ag.ResponderMenuEspera(inc.From, inc.Text); manejado {
+			log.Printf("[webhook] respuesta al menu de espera resuelta para %s", inc.From)
+			_ = replyClient(cfg, store, inc.From, reply)
+			return
+		}
+		if reply, manejado := ag.ResponderCalificacion(inc.From, inc.Text); manejado {
+			log.Printf("[webhook] calificacion resuelta para %s", inc.From)
+			_ = replyClient(cfg, store, inc.From, reply)
+			return
+		}
+	}
+
 	// Timeout del turno: si el proveedor del modelo se cuelga, el turno se aborta, el cliente
 	// recibe una disculpa y —sobre todo— se libera la cola de este teléfono (ver lockCliente).
 	ctxTurno, cancelTurno := context.WithTimeout(context.Background(), timeoutTurno)
