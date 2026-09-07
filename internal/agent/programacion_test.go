@@ -100,3 +100,43 @@ func TestHoraPedidaPorCliente(t *testing.T) {
 		}
 	})
 }
+
+// Un mensaje normal NO es una hora. Encontrado en la revisión del 07/09 antes de llegar a
+// producción: buscar la letra "h" hacía que "Hola, quiero 8 blanco" se leyera como las 08:00,
+// convertía el pedido inmediato en programación y el candado del fantasma habría agendado para
+// mañana un gas que el cliente quería ahora. El punto de "2 por favor." hacía perder la cantidad.
+func TestUnMensajeNormalNoEsUnaHora(t *testing.T) {
+	a := &Agent{cfg: config.Config{BotHorarioInicio: "07:00", BotHorarioFin: "19:00"}}
+
+	noSonHoras := []string{
+		"Hola, quiero 8 blanco", // la "h" de hola
+		"hola necesito 12 blanco",
+		"somos 8 en la casa",
+		"2 por favor. gracias", // el punto final
+		"2 para la casa",
+		"mi casa es la 10",
+		"ahora 9 blanco",
+		"2",
+		"quiero 3 porfa",
+	}
+	for _, m := range noSonHoras {
+		if parece, hora := a.horaEnMensaje(m); parece || hora != "" {
+			t.Errorf("%q se leyó como hora (parece=%v hora=%q): el pedido se volvería programación "+
+				"y la cantidad se perdería", m, parece, hora)
+		}
+	}
+
+	// Y las horas de verdad se siguen entendiendo, escritas como las escribe la gente.
+	sonHoras := map[string]string{
+		"18:30":            "18:30",
+		"a las 7 pm":       "19:00",
+		"si, hoy 18:30 pm": "18:30",
+		"a las 9":          "09:00",
+		"tipo 10":          "10:00",
+	}
+	for m, quiero := range sonHoras {
+		if parece, hora := a.horaEnMensaje(m); !parece || hora != quiero {
+			t.Errorf("%q: parece=%v hora=%q, esperaba una hora %q", m, parece, hora, quiero)
+		}
+	}
+}

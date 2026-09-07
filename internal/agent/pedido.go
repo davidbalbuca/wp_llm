@@ -107,6 +107,7 @@ func (a *Agent) cancelarEspera(from string) string {
 	}
 	a.registrarNoAsignado(from)
 	a.store.ClearPendingWait(from)
+	a.store.ClearPedidoEnCurso(from) // el pedido ya quedó en gestión manual: la ficha no aplica
 	// El historial NO se borra: la memoria del chat dura la ventana de 24h.
 	return "El cliente no quiso esperar; el pedido quedó registrado para gestión manual. ANTES de despedirte, " +
 		"ofrécele PROGRAMAR la entrega para más tarde hoy o para mañana: si acepta, dile el horario de atención " +
@@ -140,10 +141,23 @@ func (a *Agent) registrarNoAsignado(from string) {
 	}
 }
 
+// ventanaPedidoActivo es lo máximo que un pedido puede seguir "en curso" antes de considerarlo
+// huérfano. Una entrega real se resuelve en minutos; 6 horas es holgado para cualquier demora
+// legítima y evita que un aviso perdido del backend bloquee al cliente para siempre.
+const ventanaPedidoActivo = 6 * time.Hour
+
 // startWaitForDriver corre en segundo plano: reintenta la asignación cada 30s durante 5 min. En
 // WhatsApp NO sirve el push (token placeholder), por eso el bot reintenta activamente. Al asignarse
 // o al expirar, envía el mensaje directo por WhatsApp. Best-effort: nunca tumba el proceso.
 func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
+	// IDEMPOTENTE: una sola búsqueda por cliente. El cliente ansioso que escribe "ok", "dale",
+	// "👍" mientras espera disparaba una goroutine por mensaje, y cada una llama a WppOrder por
+	// su cuenta: si dos aciertan, el cliente termina con dos pedidos y dos conductores. El guard
+	// de registrarPedido no protege aquí, porque esta goroutine va directo al backend.
+	if _, yaBuscando := a.buscandoRepartidor.LoadOrStore(from, true); yaBuscando {
+		log.Printf("[espera] %s ya tiene una búsqueda de repartidor en curso; no se abre otra", from)
+		return
+	}
 	// Contador de arranques: la búsqueda es asíncrona y no deja marca inmediata en el store,
 	// así que sin esto un test no puede distinguir "se arrancó la búsqueda" de "solo se le dijo
 	// al cliente que se arrancó" —que es justo el bug que los interceptores previenen—.
@@ -152,6 +166,7 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 	gr := a.gr
 	store := a.store
 	go func() {
+		defer a.buscandoRepartidor.Delete(from) // libera el candado pase lo que pase
 		defer func() {
 			if r := recover(); r != nil {
 				// El cliente aceptó esperar: si esta goroutine muere, nadie busca su repartidor
@@ -256,10 +271,24 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 	// pedido activo se limpia al entregarse o cancelarse, así que un pedido legítimo posterior
 	// no se bloquea.
 	if idPrevio, hay := a.store.GetActivePedido(from); hay && idPrevio > 0 {
-		log.Printf("[pedido] %s ya tiene el pedido #%d activo; no se crea otro", from, idPrevio)
-		return fmt.Sprintf("El cliente YA tiene el pedido #%d en curso: NO se creó otro. "+
-			"Confírmale que su pedido sigue en camino. Si quiere cambiarlo o pedir más, primero "+
-			"hay que cancelar el actual con cancelar_pedido.", idPrevio)
+		// El pedido activo lo limpia el backend al entregarse/cancelarse. Si ese aviso nunca
+		// llega (conductor que no finaliza en su app, notificación perdida), el pedido queda
+		// HUÉRFANO y este guard dejaría al cliente sin poder pedir nunca más. Pasadas unas
+		// horas se asume perdido: ninguna entrega real dura tanto. Se avisa al equipo porque
+		// un huérfano significa que un pedido quedó sin cerrar en el backend.
+		if a.store.ActivePedidoDesde(from) > ventanaPedidoActivo {
+			log.Printf("[pedido] %s: el pedido #%d lleva demasiado activo; se asume huérfano", from, idPrevio)
+			notify.ReportarFallo(a.cfg, a.store, from, "Pedido activo huérfano",
+				fmt.Sprintf("El pedido #%d sigue marcado como activo tras %s y el cliente quiere pedir "+
+					"otra vez. Puede que nunca se cerrara en el backend; conviene revisarlo.",
+					idPrevio, a.store.ActivePedidoDesde(from).Round(time.Minute)))
+			a.store.ClearActivePedido(from)
+		} else {
+			log.Printf("[pedido] %s ya tiene el pedido #%d activo; no se crea otro", from, idPrevio)
+			return fmt.Sprintf("El cliente YA tiene el pedido #%d en curso: NO se creó otro. "+
+				"Confírmale que su pedido sigue en camino. Si quiere cambiarlo o pedir más, primero "+
+				"hay que cancelar el actual con cancelar_pedido.", idPrevio)
+		}
 	}
 
 	// El bot SIEMPRE trabaja con la ubicación compartida por WhatsApp (ya no hay direcciones

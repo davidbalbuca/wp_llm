@@ -1,9 +1,11 @@
 package agent
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"wp-llm-gas/internal/catalog"
 	"wp-llm-gas/internal/config"
@@ -28,11 +30,14 @@ func agentConEspera(store conversation.Store, from string) *Agent {
 // "Esperar" arranca la búsqueda de repartidor SIN pasar por el modelo. Si esto dependiera del
 // modelo y no llamara a la herramienta, el cliente se quedaría esperando un gas que nadie busca.
 func TestMenuEsperaAceptar(t *testing.T) {
-	const from = "593999000010"
 	store := conversation.NewMemStore()
-	ag := agentConEspera(store, from)
+	ag := agentConEspera(store, "593999000010")
 
-	for _, texto := range []string{"Esperar", "esperar", "sí", "dale", "ok"} {
+	// Cada forma de decir que sí arranca la búsqueda. Se usa un teléfono distinto por caso:
+	// para un MISMO cliente la búsqueda es idempotente a propósito (ver
+	// TestEsperarNoArrancaVariasBusquedas), así que reusar el número mediría otra cosa.
+	for i, texto := range []string{"Esperar", "esperar", "sí", "dale", "ok"} {
+		from := fmt.Sprintf("59399900005%d", i)
 		store.SetPendingWait(from, conversation.PendingWait{
 			IDCategoria: 1, IDProducto: 7, IDColor: 3, Cantidad: 2, IDTipoPago: 1,
 			ProductoNombre: "GAS 15KG", ColorNombre: "Blanco",
@@ -226,10 +231,35 @@ func TestNoSeRegistraDosVecesConPedidoActivo(t *testing.T) {
 	}
 }
 
-// Contrato que hace seguro el guard anterior: el pedido activo se limpia en los TRES finales
-// (entregado, cancelado, no-show). Si un final no lo limpia, ese cliente no puede volver a
-// pedir nunca — y el peor caso sería el cliente que SÍ recibió su gas.
+// Contrato que hace seguro el guard de idempotencia: el pedido activo se limpia en los TRES
+// finales (entregado, cancelado, no-show). Si un final no lo limpia, ese cliente no puede
+// volver a pedir hasta que expire la ventana — y el peor caso sería el cliente que SÍ recibió
+// su gas. Se comprueba el COMPORTAMIENTO del store, no que la cadena aparezca en el fuente:
+// la versión anterior de este test buscaba "ClearActivePedido" como texto y habría pasado
+// aunque la llamada estuviera tras un return temprano.
 func TestElPedidoActivoSeLimpiaEnTodosLosFinales(t *testing.T) {
+	finales := map[string]func(conversation.Store, string){
+		"entregado": func(s conversation.Store, phone string) {
+			s.ClearActivePedido(phone) // lo que hace notifyOrderFinished
+			s.SetPendingRating(phone, conversation.PendingRating{PedidoID: 512, Conductor: "Nelson"})
+		},
+		"cancelado": func(s conversation.Store, phone string) { s.ClearActivePedido(phone) },
+		"no-show":   func(s conversation.Store, phone string) { s.ClearActivePedido(phone) },
+	}
+	for nombre, final := range finales {
+		t.Run(nombre, func(t *testing.T) {
+			store := conversation.NewMemStore()
+			const phone = "593999000044"
+			store.SetActivePedido(phone, 512)
+			final(store, phone)
+			if _, sigue := store.GetActivePedido(phone); sigue {
+				t.Errorf("tras %q el pedido sigue activo: el cliente no podría hacer otro", nombre)
+			}
+		})
+	}
+
+	// Y el guard ESTRUCTURAL: que cmd/bot de verdad llame a ClearActivePedido en los tres
+	// avisos del backend. Sin esto lo anterior solo prueba que el store funciona.
 	src, err := os.ReadFile("../../cmd/bot/main.go")
 	if err != nil {
 		t.Fatalf("no se pudo leer main.go: %v", err)
@@ -246,7 +276,32 @@ func TestElPedidoActivoSeLimpiaEnTodosLosFinales(t *testing.T) {
 			trozo = trozo[:fin+10]
 		}
 		if !strings.Contains(trozo, "ClearActivePedido") {
-			t.Errorf("%s no limpia el pedido activo: ese cliente no podría hacer otro pedido nunca", fn)
+			t.Errorf("%s no limpia el pedido activo: ese cliente quedaría bloqueado", fn)
 		}
+	}
+}
+
+// Un pedido activo HUÉRFANO no puede bloquear al cliente para siempre. El backend limpia el
+// pedido al entregarse o cancelarse; si ese aviso se pierde (conductor que no finaliza en su
+// app, notificación fallida), el guard de idempotencia dejaría a ese cliente sin poder pedir
+// nunca más. Encontrado en la revisión del 07/09: el guard creaba un riesgo peor del que cerraba.
+func TestPedidoActivoHuerfanoNoBloqueaAlCliente(t *testing.T) {
+	const from = "593999000043"
+	store := conversation.NewMemStore()
+	store.SetLocation(from, -2.9, -79.0)
+	store.SetActivePedido(from, 512)
+	ag := agentDePrueba(nil, store)
+	ag.cfg = config.Config{BotHorarioInicio: "00:00", BotHorarioFin: "23:59"}
+
+	// Recién creado: el guard protege (no se crean dos pedidos).
+	salida := ag.registrarPedido(&turno{}, from, map[string]any{"color": "BLANCO", "cantidad": 1})
+	if !strings.Contains(salida, "512") {
+		t.Fatalf("un pedido activo reciente debía bloquear el duplicado: %q", salida)
+	}
+
+	// Pasada la ventana, se asume huérfano: el cliente puede volver a pedir.
+	if ventanaPedidoActivo > 12*time.Hour {
+		t.Errorf("ventanaPedidoActivo = %s: demasiado. Un cliente con un pedido sin cerrar "+
+			"quedaría bloqueado casi un día", ventanaPedidoActivo)
 	}
 }

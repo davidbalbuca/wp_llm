@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -55,13 +56,6 @@ const mensajeOfrecerEspera = "IMPORTANTE: En este momento no hay un repartidor d
 	"Si elige cancelar, llama a cancelar_espera. NO derives al dueño ni le pidas de nuevo los datos ni la " +
 	"ubicación."
 
-// mensajePedirNombreDireccion se devuelve cuando el cliente va a usar una ubicación NUEVA pero
-// aún no le puso nombre. Nombrar es obligatorio para que la dirección no quede genérica en la BD.
-const mensajePedirNombreDireccion = "Es una ubicación NUEVA del cliente y hay que guardarla con un " +
-	"nombre (no puede quedar genérica). Pregúntale cómo quiere llamar este lugar (por ejemplo: Casa, " +
-	"Trabajo, Depa, Local) y recién entonces registra el pedido con ese nombre en guardar_direccion_como. " +
-	"NO registres el pedido sin el nombre."
-
 // behaviorPrompt son las instrucciones de comportamiento del agente. Viven en un archivo
 // de plantilla (contenido, no lógica) embebido en el binario, para editarlas sin tocar código.
 //
@@ -81,6 +75,10 @@ type Agent struct {
 	catalog *catalog.Client
 	gr      *georoutes.Client
 	tools   []*genai.Tool
+	// buscandoRepartidor marca qué clientes tienen YA una búsqueda de repartidor en curso
+	// (teléfono -> true). Sin esto, cada "ok" o "dale" del cliente mientras espera abría otra
+	// goroutine, y cada una podía crear su propio pedido en el backend.
+	buscandoRepartidor sync.Map
 	// esperasArrancadas cuenta cuántas veces se lanzó la búsqueda de repartidor. Es una señal
 	// observable (atómica: se lee desde otra goroutine) para verificar en tests que aceptar
 	// "Esperar" REALMENTE arranca la búsqueda y no solo se lo dice al cliente.
@@ -410,7 +408,8 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// haber llamado a la herramienta — un pedido que nunca existió, un cliente esperando gas que
 	// nadie iba a llevar. El prompt ya lo prohíbe, pero esto es el candado que no depende del
 	// modelo: si afirma una confirmación sin respaldo, se reemplaza por un mensaje honesto.
-	if !t.menuSent && !t.ultimoPedido.ok && !t.ultimoPedido.enEspera && afirmaPedidoConfirmado(reply) {
+	if !t.menuSent && !t.ultimoPedido.ok && !t.ultimoPedido.enEspera &&
+		(afirmaPedidoConfirmado(reply) || (!t.programo && afirmaProgramado(reply))) {
 		// Si el cliente pidió PROGRAMAR (dijo una hora) y el modelo afirmó sin llamar la tool, lo
 		// que hay que forzar es la PROGRAMACIÓN, no un registro inmediato. Pasó con María Elena el
 		// 05/09: pidió agendar para las 18:30, el modelo lo confirmó sin llamar programar_entrega,

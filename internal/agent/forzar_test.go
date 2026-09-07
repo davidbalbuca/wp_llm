@@ -155,3 +155,36 @@ func TestAfirmaAvisoAlEquipo(t *testing.T) {
 		}
 	}
 }
+
+// afirmaProgramado detecta la programación fantasma: el modelo diciendo "te dejé agendada tu
+// entrega" sin haber llamado a programar_entrega. Sin este detector el rescate de programación
+// era inalcanzable, porque afirmaPedidoConfirmado no reconoce ninguna forma de agendado.
+func TestAfirmaProgramado(t *testing.T) {
+	agenda := []string{
+		"¡Listo! Te dejé agendada tu entrega para las 18:30 📅",
+		"Tu entrega quedó programada para las 18:30",
+		"Ya agendé tu pedido para mañana a las 9",
+		"Tu entrega quedó agendada, te escribo a esa hora",
+	}
+	for _, txt := range agenda {
+		if !afirmaProgramado(txt) {
+			t.Errorf("no detectó una programación afirmada: %q", txt)
+		}
+		// Y el candado del fantasma tiene que poder verlas (antes ninguna llegaba).
+		if afirmaPedidoConfirmado(txt) {
+			t.Logf("nota: %q además cae en afirmaPedidoConfirmado", txt)
+		}
+	}
+
+	noAgenda := []string{
+		"¿A qué hora te gustaría recibirlo?",
+		"Atendemos de 07:00 a 19:00, dime qué hora prefieres",
+		"¿Quieres que te la agende para mañana?",
+		"",
+	}
+	for _, txt := range noAgenda {
+		if afirmaProgramado(txt) {
+			t.Errorf("falso positivo, esto no afirma una programación: %q", txt)
+		}
+	}
+}

@@ -320,6 +320,10 @@ type Store interface {
 	SetActivePedido(phone string, pedidoID int)
 	// GetActivePedido devuelve el id del pedido activo del cliente (ok=false si no hay).
 	GetActivePedido(phone string) (int, bool)
+	// ActivePedidoDesde dice cuánto tiempo lleva marcado como activo el pedido del cliente
+	// (0 si no hay). Sirve para detectar pedidos huérfanos: el backend avisa cuando se entrega
+	// o se cancela, pero si ese aviso se pierde el pedido quedaría activo para siempre.
+	ActivePedidoDesde(phone string) time.Duration
 	// ClearActivePedido elimina el pedido activo (tras cancelarlo o entregarlo).
 	ClearActivePedido(phone string)
 	// SetPendingWait guarda un pedido que no encontró conductor y quedó esperando (el cliente

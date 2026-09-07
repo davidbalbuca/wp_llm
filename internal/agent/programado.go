@@ -202,6 +202,9 @@ func (a *Agent) cancelarProgramacion(from string) string {
 		return "El cliente no tiene ninguna entrega programada pendiente. Aclaraselo con amabilidad " +
 			"y preguntale si quiere hacer un pedido ahora."
 	}
+	// La ficha muere con la programación: si no, la hora vieja se arrastra 24h y el próximo
+	// pedido inmediato del cliente volvería a convertirse en una programación.
+	a.store.ClearPedidoEnCurso(from)
 	a.store.LogMessage(from, "system", "🗑️ Entrega programada cancelada por el cliente")
 	return "Entrega programada CANCELADA. Confirmaselo al cliente y ofrecele hacer un pedido cuando lo necesite."
 }

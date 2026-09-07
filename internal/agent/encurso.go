@@ -11,10 +11,20 @@ package agent
 
 import (
 	"log"
+	"regexp"
 	"strings"
 
 	"wp-llm-gas/internal/conversation"
 )
+
+// marcaHoraria reconoce que el cliente está hablando de una HORA, no de una cantidad:
+// "18:30", "6h30", "7 pm", "a las 3", "seis y media", "y cuarto". Anclado a tokens a
+// propósito: cualquier heurística de substring convierte "hola" o un punto final en una hora.
+var marcaHoraria = regexp.MustCompile(`\d{1,2}\s*[:.]\s*\d{2}` + // 18:30, 18.30
+	`|\d{1,2}\s*h\s*\d{0,2}` + // 6h30, 6h
+	`|\d{1,2}\s*(am|pm|a\.m|p\.m)` + // 7pm, 7 am
+	`|\b(a las|para las|a la|tipo)\s+\d{1,2}` + // a las 3, para las 18
+	`|\by (media|cuarto)\b`) // seis y media
 
 // anotarDelMensaje mira EL MENSAJE ACTUAL del cliente (nunca el historial) y guarda en la ficha
 // lo que reconozca. Reutiliza los parsers que ya existían para adivinar sobre el chat; la
@@ -47,10 +57,12 @@ func (a *Agent) anotarDelMensaje(from, texto string) {
 		p.Flujo = conversation.FlujoProgramacion
 	}
 
-	// 3. Cantidad: solo si el mensaje NO hablaba de una hora y ya hay un color elegido. Sin la
-	//    condición del color, el "2" de "somos 2 en la casa" o el número de una calle se
-	//    tomaría como cantidad.
-	if !pareceHora && p.Color != "" {
+	// 3. Cantidad: solo si el mensaje NO hablaba de una hora, ya hay un color elegido, y el
+	//    mensaje es CORTO (la respuesta a "¿cuántos?": "2", "2 porfa", "quiero 3"). Una frase
+	//    larga con un número dentro no es una cantidad: "van 4 días con este problema" en un
+	//    reclamo dejaba una ficha de 4 cilindros lista para registrar, y el prompt le decía al
+	//    modelo "FALTA: nada, llama ya a la herramienta" (encontrado en la revisión del 07/09).
+	if !pareceHora && p.Color != "" && len(strings.Fields(texto)) <= 4 {
 		if n := primerNumero(texto); n >= 1 && n <= 20 {
 			p.Cantidad = n
 		}
@@ -73,6 +85,12 @@ func (a *Agent) anotarDelMensaje(from, texto string) {
 // siguiente intento no arranca de cero.
 func (a *Agent) anotarDeTool(from string, args map[string]any, flujo string) {
 	p, _ := a.store.GetPedidoEnCurso(from)
+	// Volver a inmediato BORRA la hora: si no, una hora dicha antes (o de una programación
+	// cancelada) se queda pegada y el candado del fantasma agendaría un pedido que el cliente
+	// quiere AHORA. El flujo tiene que poder ir en las dos direcciones.
+	if flujo == conversation.FlujoInmediato {
+		p.Hora = ""
+	}
 	if c := strings.TrimSpace(str(args["color"])); c != "" {
 		p.Color = c
 	}
@@ -94,16 +112,13 @@ func (a *Agent) anotarDeTool(from string, args map[string]any, flujo string) {
 //     cliente escriba "a las 3" no lo convierte en programación si a las 3 no se entrega; de
 //     explicárselo se encarga programarEntrega, que da el motivo exacto.
 func (a *Agent) horaEnMensaje(texto string) (pareceHora bool, hora string) {
-	// Un NÚMERO SUELTO no es una hora: "2" es la respuesta a "¿cuántos cilindros?", no las
-	// 02:00. Para que cuente como hora, el mensaje tiene que traer alguna marca horaria
-	// (":", "h", "pm/am", "las"...) o minutos explícitos. Sin esto, la cantidad del pedido se
-	// leía como hora y el pedido inmediato se convertía en programación.
-	t := strings.ToLower(strings.TrimSpace(texto))
-	tieneMarca := strings.ContainsAny(t, ":.") ||
-		strings.Contains(t, "h") || strings.Contains(t, "am") || strings.Contains(t, "pm") ||
-		strings.Contains(t, "las ") || strings.Contains(t, "la ") ||
-		strings.Contains(t, "media") || strings.Contains(t, "y cuarto")
-	if !tieneMarca {
+	// Un NÚMERO SUELTO no es una hora: "2" responde a "¿cuántos cilindros?", no son las 02:00.
+	// Para contar como hora el mensaje tiene que traer una marca horaria REAL, y por eso se
+	// exige un patrón anclado y no un substring: buscar la letra "h" hacía que "Hola, quiero 8
+	// blanco" se leyera como las 08:00 y convertía un pedido inmediato en una programación
+	// (encontrado en la revisión del 07/09, antes de que llegara a producción). Lo mismo el
+	// punto de "2 por favor. gracias", que hacía perder la cantidad.
+	if !marcaHoraria.MatchString(strings.ToLower(texto)) {
 		return false, ""
 	}
 

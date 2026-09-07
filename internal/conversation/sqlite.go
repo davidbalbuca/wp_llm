@@ -1109,6 +1109,14 @@ func (s *sqliteStore) GetActivePedido(phone string) (int, bool) {
 	return id, true
 }
 
+func (s *sqliteStore) ActivePedidoDesde(phone string) time.Duration {
+	var creado int64
+	if err := s.db.QueryRow(`SELECT created_at FROM active_pedido WHERE phone = ?`, phone).Scan(&creado); err != nil {
+		return 0
+	}
+	return time.Since(time.Unix(creado, 0))
+}
+
 func (s *sqliteStore) ClearActivePedido(phone string) {
 	if _, err := s.db.Exec(`DELETE FROM active_pedido WHERE phone = ?`, phone); err != nil {
 		log.Printf("[sqlite] ClearActivePedido %s: %v", phone, err)

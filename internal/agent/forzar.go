@@ -142,6 +142,43 @@ func afirmaCancelado(texto string) bool {
 	return false
 }
 
+// esOfrecimiento dice si el texto OFRECE hacer algo en vez de afirmar que ya se hizo.
+// "¿Quieres que te la agende?" no es una programación hecha; "¿quieres que avise al equipo?"
+// no es un aviso enviado. Sin esta distinción los candados saltaban con una simple pregunta.
+func esOfrecimiento(normalizado string) bool {
+	for _, marca := range []string{"quieres que", "deseas que", "te contacto con", "quieres hablar",
+		"quieres que te", "prefieres que", "te la agendo", "te lo agendo"} {
+		if strings.Contains(normalizado, marca) {
+			return true
+		}
+	}
+	return false
+}
+
+// afirmaProgramado detecta que el texto le dice al cliente que su entrega YA quedó agendada.
+// Sin esto la programación fantasma no tenía candado real: afirmaPedidoConfirmado (sondeo.go)
+// no reconoce ninguna forma de "agendado", así que el rescate de programación era inalcanzable
+// salvo que el modelo usara además una palabra de pedido confirmado. Lo delató la revisión del
+// 07/09: specs/mapa-reglas-prompt.md daba la regla por cubierta y no lo estaba.
+func afirmaProgramado(texto string) bool {
+	t := normalizar(texto)
+	if t == "" || esOfrecimiento(t) {
+		return false
+	}
+	hechos := []string{
+		"quedo agendada", "quedo agendado", "te deje agendada", "te deje agendado",
+		"quedo programada", "quedo programado", "ya agende", "ya programe",
+		"entrega programada para", "agendada para las", "programada para las",
+		"te la agende", "quedo lista para las",
+	}
+	for _, h := range hechos {
+		if strings.Contains(t, h) {
+			return true
+		}
+	}
+	return false
+}
+
 // afirmaAvisoAlEquipo detecta que el texto le promete al cliente que una persona lo va a
 // contactar. Es el mismo pecado que el pedido fantasma, pero más silencioso: el cliente se
 // queda esperando una llamada que nadie va a hacer, porque nunca se creó el ticket. No había
@@ -151,9 +188,7 @@ func afirmaAvisoAlEquipo(texto string) bool {
 	if t == "" {
 		return false
 	}
-	// Una PREGUNTA no es una promesa: "¿quieres que avise al equipo?" ofrece, no afirma.
-	if strings.Contains(t, "quieres que") || strings.Contains(t, "deseas que") ||
-		strings.Contains(t, "te contacto con") || strings.Contains(t, "quieres hablar") {
+	if esOfrecimiento(t) {
 		return false
 	}
 	hechos := []string{

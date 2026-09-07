@@ -21,12 +21,13 @@ type memStore struct {
 	lastOrders         map[string]LastOrder
 	lastActivity       map[string]time.Time
 	orderDrafts        map[string]OrderDraft
-	pendingVerif       map[string]Account         // pending OTP verification accounts
-	pedidoEnCurso      map[string]PedidoEnCurso   // ficha del pedido que se está armando
-	pendingRating      map[string]PendingRating   // pedidos entregados por calificar
-	pendingRatingAt    map[string]time.Time       // cuándo se creó cada pendiente (para RatingTTL)
-	orderPhone         map[int]string             // pedido_id -> teléfono de WhatsApp con el que se hizo
-	activePedido       map[string]int             // teléfono -> id del pedido activo (para cancelar)
+	pendingVerif       map[string]Account       // pending OTP verification accounts
+	pedidoEnCurso      map[string]PedidoEnCurso // ficha del pedido que se está armando
+	pendingRating      map[string]PendingRating // pedidos entregados por calificar
+	pendingRatingAt    map[string]time.Time     // cuándo se creó cada pendiente (para RatingTTL)
+	orderPhone         map[int]string           // pedido_id -> teléfono de WhatsApp con el que se hizo
+	activePedido       map[string]int
+	activePedidoAt     map[string]time.Time       // cuándo se marcó activo (para detectar huérfanos)             // teléfono -> id del pedido activo (para cancelar)
 	pendingWait        map[string]PendingWait     // teléfono -> pedido esperando conductor (reintento 5 min)
 	messageLog         map[string][]LoggedMessage // teléfono -> auditoría de la conversación
 	chatMode           map[string]string          // teléfono -> "bot" | "human"
@@ -55,6 +56,7 @@ func NewMemStore() Store {
 		pendingRatingAt: make(map[string]time.Time),
 		orderPhone:      make(map[int]string),
 		activePedido:    make(map[string]int),
+		activePedidoAt:  make(map[string]time.Time),
 		pendingWait:     make(map[string]PendingWait),
 		messageLog:      make(map[string][]LoggedMessage),
 		chatMode:        make(map[string]string),
@@ -619,6 +621,7 @@ func (s *memStore) SetActivePedido(phone string, pedidoID int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.activePedido[phone] = pedidoID
+	s.activePedidoAt[phone] = time.Now()
 }
 
 func (s *memStore) GetActivePedido(phone string) (int, bool) {
@@ -628,10 +631,21 @@ func (s *memStore) GetActivePedido(phone string) (int, bool) {
 	return id, ok
 }
 
+func (s *memStore) ActivePedidoDesde(phone string) time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	desde, ok := s.activePedidoAt[phone]
+	if !ok {
+		return 0
+	}
+	return time.Since(desde)
+}
+
 func (s *memStore) ClearActivePedido(phone string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.activePedido, phone)
+	delete(s.activePedidoAt, phone)
 }
 
 func (s *memStore) SetPendingWait(phone string, w PendingWait) {

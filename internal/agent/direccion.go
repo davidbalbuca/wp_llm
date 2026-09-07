@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"wp-llm-gas/internal/notify"
 	"wp-llm-gas/internal/whatsapp"
 )
 
@@ -124,7 +125,20 @@ func (a *Agent) mensajeDelPedido(t *turno, from string) string {
 			"un poco lejos, así que estoy buscando uno para ti 🚚. En menos de 5 minutos te " +
 			"confirmo. No tienes que hacer nada."
 	default:
-		return "Recibí tu confirmación ✅, pero tuve un inconveniente técnico al registrar el " +
-			"pedido. Ya avisé a nuestro equipo para que te contacte enseguida."
+		// FUERA DE HORARIO no es un fallo: es una condición normal del negocio. Decirle
+		// "inconveniente técnico, ya avisé al equipo" lo asusta y además MIENTE (nadie fue
+		// avisado, no hay ticket). Se le dice la verdad y se le ofrece agendar.
+		if !a.dentroDeHorario(time.Now().In(zonaEcuador)) {
+			return fmt.Sprintf("A esta hora ya no tenemos repartidores en ruta 🙏. Atendemos de %s "+
+				"a %s: dime a qué hora te viene bien mañana y te la dejo agendada 😊",
+				a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
+		}
+		// Cualquier otro motivo sí es un problema nuestro: se DERIVA de verdad (crea el ticket)
+		// antes de prometerle al cliente que el equipo lo va a contactar.
+		notify.ReportarFallo(a.cfg, a.store, from, "No se pudo registrar el pedido",
+			"El registro falló en un flujo resuelto por código (confirmación de dirección o "+
+				"repetir pedido). El cliente quedó esperando; hay que contactarlo.")
+		return "Recibí tu confirmación ✅, pero tuve un inconveniente al registrar el pedido. " +
+			"Ya avisé a nuestro equipo para que te contacte enseguida."
 	}
 }

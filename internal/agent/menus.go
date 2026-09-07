@@ -71,6 +71,12 @@ func (a *Agent) ResponderCalificacion(from, texto string) (string, bool) {
 	if err != nil || n < 1 || n > 5 {
 		return "", false
 	}
+	// Si el cliente ya eligió color y le acabamos de preguntar CUÁNTOS, ese "2" es la cantidad
+	// de su pedido nuevo, no una nota al repartidor de hace horas (la calificación pendiente
+	// vive 24h). Interceptarlo le respondía "¡gracias por calificar!" a quien pedía gas.
+	if p, hay := a.store.GetPedidoEnCurso(from); hay && p.Color != "" && p.Cantidad < 1 {
+		return "", false
+	}
 
 	log.Printf("[menu-calificacion] %s calificó con %d; se registra en código", from, n)
 	// calificarConductor limpia el pendiente en todos los caminos y su texto está escrito para
@@ -116,12 +122,25 @@ func (a *Agent) ResponderRepetirPedido(from, texto string) (string, bool) {
 	// esperando un pedido que nadie creó: es el error que este refactor viene a eliminar.
 	// Se entra por runTool, igual que ConfirmarDireccion: es quien crea el ticket si falla.
 	t := &turno{}
-	a.runTool(t, from, "registrar_pedido", map[string]any{
+	salida := a.runTool(t, from, "registrar_pedido", map[string]any{
 		"color": last.Color, "cantidad": last.Cantidad,
 	})
+	// El turno queda en el HISTORIAL (igual que ConfirmarProgramado): sin esto el modelo no se
+	// entera de que el cliente pidió repetir ni de qué pasó, y en el siguiente mensaje contesta
+	// como si no hubiera pasado nada.
+	a.store.AppendUser(from, texto)
 	if t.menuSent {
 		// registrarPedido mandó un menú (p. ej. confirmar la dirección): ese menú ya salió.
 		return "", true
 	}
-	return a.mensajeDelPedido(t, from), true
+	respuesta := a.mensajeDelPedido(t, from)
+	// Si NO se pudo registrar, el texto que devuelve la herramienta explica el motivo real
+	// (fuera de horario, falta la cédula, catálogo caído). Se le da al modelo en el historial
+	// para que la próxima respuesta sea coherente, en vez de un "inconveniente técnico" genérico.
+	if !t.ultimoPedido.ok && !t.ultimoPedido.enEspera {
+		a.store.AppendModel(from, respuesta+" [motivo interno: "+conversation.Recortar(salida, 200)+"]")
+	} else {
+		a.store.AppendModel(from, respuesta)
+	}
+	return respuesta, true
 }
