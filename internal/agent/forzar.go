@@ -87,48 +87,21 @@ func (a *Agent) forzarRegistroSiHaceFalta(t *turno, from string) (string, bool) 
 	}
 }
 
-// inferirPedido reconstruye el color y la cantidad que el cliente eligió, mirando lo que se dijo
-// en la conversación reciente. El color se toma del catálogo (para no aceptar cualquier palabra);
-// la cantidad, del primer número 1..20 que el cliente haya escrito después de elegir el color.
+// inferirPedido dice qué color y cantidad pidió el cliente. Lee la FICHA del pedido en curso
+// (ver encurso.go), que se escribe en el momento en que el cliente elige cada dato.
 //
-// Es conservador: si no hay un color válido del catálogo o una cantidad clara, devuelve ok=false
-// y el llamador pregunta en vez de adivinar.
+// Antes esto barría 30 mensajes del historial buscando un color del catálogo y "el primer
+// número de 1 o 2 dígitos después del color". Adivinaba: si el cliente decía "somos 4 en casa"
+// tras elegir color, esa era la cantidad; si el historial se truncaba, no encontraba nada.
+//
+// Sigue siendo conservador: sin color o sin cantidad devuelve ok=false y el llamador PREGUNTA
+// en vez de inventar. Registrar un pedido con el color equivocado es peor que preguntar de más.
 func (a *Agent) inferirPedido(from string) (color string, cantidad int, ok bool) {
-	contexto, disponible := a.catalog.Get()
-	if !disponible || contexto == nil {
+	p, hay := a.store.GetPedidoEnCurso(from)
+	if !hay || p.Color == "" || p.Cantidad < 1 {
 		return "", 0, false
 	}
-
-	msgs := a.store.GetConversation(from, 30)
-	// Recorremos del más reciente al más viejo: nos quedamos con la ÚLTIMA elección de color, que
-	// es la que vale si el cliente cambió de opinión ("mejor amarillo"). Buscamos el color como
-	// PALABRA dentro del mensaje, no por igualdad exacta: el cliente escribe "mejor Amarillo" o
-	// "el azul porfa", no siempre el color a secas.
-	colorIdx := -1
-	for i := len(msgs) - 1; i >= 0 && colorIdx < 0; i-- {
-		if msgs[i].Role != "user" {
-			continue
-		}
-		if c := colorEnTexto(contexto.Products, msgs[i].Content); c != "" {
-			color = c
-			colorIdx = i
-		}
-	}
-	if colorIdx < 0 {
-		return "", 0, false
-	}
-
-	// La cantidad: primer número plausible que el cliente escribió DESPUÉS de elegir el color
-	// (o en el mismo mensaje). Un cilindro por defecto NO se asume: si no lo dijo, preguntamos.
-	for i := colorIdx; i < len(msgs); i++ {
-		if msgs[i].Role != "user" {
-			continue
-		}
-		if n := primerNumero(msgs[i].Content); n >= 1 && n <= 20 {
-			return color, n, true
-		}
-	}
-	return "", 0, false
+	return p.Color, p.Cantidad, true
 }
 
 // primerNumero devuelve el primer entero que aparece en el texto, o -1. Sirve para leer la

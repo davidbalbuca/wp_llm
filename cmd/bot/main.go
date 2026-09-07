@@ -645,6 +645,7 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		store.ClearHistory(inc.From)
 		store.ClearOrderDraft(inc.From)
 		store.ClearPendingVerification(inc.From)
+		store.ClearPedidoEnCurso(inc.From)
 	}
 
 	// --- Control humano (takeover) ---

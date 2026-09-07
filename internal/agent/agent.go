@@ -303,6 +303,11 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado, error) {
 	t := &turno{}
 
+	// Ficha del pedido: se anota lo que el cliente acaba de decir (color, cantidad, hora) ANTES
+	// de llamar al modelo, para que el prompt ya lo refleje y los candados no tengan que
+	// adivinarlo del historial (ver internal/agent/encurso.go).
+	a.anotarDelMensaje(from, text)
+
 	// Vigilancia pasiva: avisa al grupo si el mensaje parece un sondeo del negocio en vez de un
 	// pedido. Va en su propia goroutine y NO altera la respuesta: el modelo ya tiene prohibido
 	// hablar de otra cosa, así que esto solo hace que un humano se entere.
@@ -554,6 +559,7 @@ func (a *Agent) runToolInterno(t *turno, from, name string, args map[string]any)
 		return a.calificarConductor(from, args)
 
 	case "registrar_pedido":
+		a.anotarDeTool(from, args, conversation.FlujoInmediato)
 		antesEscalado := t.escalado
 		result := a.registrarPedido(t, from, args)
 		// La escalación se marca EXPLÍCITAMENTE dentro de registrarPedido (t.escalado) solo en
@@ -574,6 +580,7 @@ func (a *Agent) runToolInterno(t *turno, from, name string, args map[string]any)
 
 	case "programar_entrega":
 		t.programo = true
+		a.anotarDeTool(from, args, conversation.FlujoProgramacion)
 		return a.programarEntrega(from, args)
 
 	case "cancelar_programacion":

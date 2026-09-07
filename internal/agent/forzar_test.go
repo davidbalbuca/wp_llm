@@ -68,42 +68,31 @@ func TestInferirPedido(t *testing.T) {
 		},
 	})
 
+	// Se ejercita el flujo REAL: los mensajes del cliente se anotan en la ficha (anotarDelMensaje,
+	// lo que hace HandleMessage en cada turno) y el candado la lee. Antes el candado releía el
+	// historial y adivinaba; ahora lee lo que se guardó cuando el cliente lo dijo.
 	casos := []struct {
 		nombre    string
-		conv      [][2]string // {role, content}
+		mensajes  []string // lo que el cliente fue escribiendo, en orden
 		wantColor string
 		wantCant  int
 		wantOk    bool
 	}{
-		{"Angel: Azul + 3", [][2]string{
-			{"user", "Azul"}, {"model", "¿cuántos?"}, {"user", "3"},
-			{"user", "📍 ubicación: -2.9, -79.0"},
-		}, "AZUL", 3, true},
-
-		{"David: Amarillo + 1", [][2]string{
-			{"user", "Cambiar pedido"}, {"user", "Amarillo"}, {"user", "1"},
-		}, "AMARILLO", 1, true},
-
-		{"cambió de opinión: gana el último color", [][2]string{
-			{"user", "Blanco"}, {"user", "mejor Amarillo"}, {"user", "2"},
-		}, "AMARILLO", 2, true},
-
-		{"color pero sin cantidad: no inventa", [][2]string{
-			{"user", "Azul"}, {"model", "¿cuántos?"},
-		}, "", 0, false},
-
-		{"sin color válido: no infiere", [][2]string{
-			{"user", "quiero gas"}, {"user", "2"},
-		}, "", 0, false},
+		{"Angel: Azul + 3", []string{"Azul", "3"}, "AZUL", 3, true},
+		{"David: Amarillo + 1", []string{"Cambiar pedido", "Amarillo", "1"}, "AMARILLO", 1, true},
+		{"cambió de opinión: gana el último color", []string{"Blanco", "2", "mejor Amarillo"}, "AMARILLO", 2, true},
+		{"color pero sin cantidad: no inventa", []string{"Azul"}, "", 0, false},
+		{"sin color válido: no infiere", []string{"quiero gas", "2"}, "", 0, false},
+		{"un número antes del color no es la cantidad", []string{"somos 4 en la casa", "Blanco"}, "", 0, false},
 	}
 
 	for _, c := range casos {
 		t.Run(c.nombre, func(t *testing.T) {
 			store := conversation.NewMemStore()
-			for _, m := range c.conv {
-				store.LogMessage("593999", m[0], m[1])
-			}
 			a := &Agent{store: store, catalog: cat}
+			for _, m := range c.mensajes {
+				a.anotarDelMensaje("593999", m)
+			}
 			color, cant, ok := a.inferirPedido("593999")
 			if ok != c.wantOk {
 				t.Fatalf("ok=%v, want %v (color=%q cant=%d)", ok, c.wantOk, color, cant)
@@ -112,5 +101,26 @@ func TestInferirPedido(t *testing.T) {
 				t.Errorf("got (%q, %d), want (%q, %d)", color, cant, c.wantColor, c.wantCant)
 			}
 		})
+	}
+}
+
+// Un pedido ya registrado limpia la ficha: el "gracias" siguiente no puede arrastrar el color
+// y la cantidad de un pedido que ya va en camino (o el candado lo registraría otra vez).
+func TestFichaSeLimpiaAlRegistrar(t *testing.T) {
+	store := conversation.NewMemStore()
+	cat := catalog.NewStaticForTest(&catalog.Context{
+		Products: []georoutes.Product{{IDProducto: 1, Nombre: "GAS 15KG", Colores: []georoutes.Color{{ID: 10, Nombre: "BLANCO"}}}},
+	})
+	a := &Agent{store: store, catalog: cat}
+	a.anotarDelMensaje("593999", "Blanco")
+	a.anotarDelMensaje("593999", "2")
+	if _, _, ok := a.inferirPedido("593999"); !ok {
+		t.Fatal("la ficha debía tener color y cantidad")
+	}
+
+	store.ClearPedidoEnCurso("593999") // lo que hace registrarPedido tras el éxito
+
+	if _, _, ok := a.inferirPedido("593999"); ok {
+		t.Error("la ficha sobrevivió al registro: un mensaje posterior podría re-registrar el pedido")
 	}
 }

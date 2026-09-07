@@ -22,6 +22,7 @@ type memStore struct {
 	lastActivity       map[string]time.Time
 	orderDrafts        map[string]OrderDraft
 	pendingVerif       map[string]Account         // pending OTP verification accounts
+	pedidoEnCurso      map[string]PedidoEnCurso   // ficha del pedido que se está armando
 	pendingRating      map[string]PendingRating   // pedidos entregados por calificar
 	pendingRatingAt    map[string]time.Time       // cuándo se creó cada pendiente (para RatingTTL)
 	orderPhone         map[int]string             // pedido_id -> teléfono de WhatsApp con el que se hizo
@@ -49,6 +50,7 @@ func NewMemStore() Store {
 		lastActivity:    make(map[string]time.Time),
 		orderDrafts:     make(map[string]OrderDraft),
 		pendingVerif:    make(map[string]Account),
+		pedidoEnCurso:   make(map[string]PedidoEnCurso),
 		pendingRating:   make(map[string]PendingRating),
 		pendingRatingAt: make(map[string]time.Time),
 		orderPhone:      make(map[int]string),
@@ -531,6 +533,34 @@ func (s *memStore) ClearPendingVerification(phone string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.pendingVerif, phone)
+}
+
+// --- Pedido en curso (ficha de lo que el cliente va eligiendo) ---
+
+func (s *memStore) SetPedidoEnCurso(phone string, p PedidoEnCurso) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p.UpdatedAt = time.Now()
+	s.pedidoEnCurso[phone] = p
+}
+
+func (s *memStore) GetPedidoEnCurso(phone string) (PedidoEnCurso, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.pedidoEnCurso[phone]
+	// Vive lo que la sesión (SessionGap): si el cliente vuelve horas después, el bot todavía
+	// recuerda qué estaba pidiendo; pasado ese tiempo es una conversación nueva.
+	if ok && time.Since(p.UpdatedAt) > SessionGap {
+		delete(s.pedidoEnCurso, phone)
+		return PedidoEnCurso{}, false
+	}
+	return p, ok
+}
+
+func (s *memStore) ClearPedidoEnCurso(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.pedidoEnCurso, phone)
 }
 
 func (s *memStore) SetPendingRating(phone string, rating PendingRating) {

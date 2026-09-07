@@ -6,6 +6,7 @@ package agent
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -76,6 +77,22 @@ func (a *Agent) construirSistema(from string) (fijo, volatil string) {
 			"lugar, no el de antes.")
 	}
 
+	// FICHA del pedido en curso: lo que el cliente YA eligió y lo que falta. Sin esto el modelo
+	// tenía que deducir del historial en qué punto iba el pedido, y volvía a preguntar cosas ya
+	// dichas (el caso del 05/09: la clienta dijo la hora tres veces). Ahora lo lee.
+	if p, hay := a.store.GetPedidoEnCurso(from); hay && !p.Vacio() {
+		fmt.Fprintf(&b, "\n\nPEDIDO EN CURSO: color=%s, cantidad=%s, hora=%s, flujo=%s.",
+			valorOFalta(p.Color), valorOFalta(cantidadTexto(p.Cantidad)), valorOGuion(p.Hora), p.Flujo)
+		if falta := a.loQueFalta(from, p); falta != "" {
+			fmt.Fprintf(&b, "\nFALTA: %s.\nPregunta ÚNICAMENTE lo que está en FALTA, un dato por "+
+				"mensaje. NO vuelvas a preguntar lo que ya aparece con valor arriba: el cliente ya te lo dijo.", falta)
+		} else {
+			b.WriteString("\nFALTA: nada. Tienes todo lo necesario: llama YA a la herramienta que " +
+				"corresponda (registrar_pedido si es inmediato, programar_entrega si hay hora). " +
+				"NO le pidas al cliente que confirme de nuevo lo que ya eligió.")
+		}
+	}
+
 	// Hora actual + horario laboral: fuera de horario NO se registran pedidos (regla dura,
 	// también validada en código); se ofrece PROGRAMAR la entrega.
 	ahora := time.Now().In(zonaEcuador)
@@ -113,4 +130,47 @@ func (a *Agent) construirSistema(from string) (fijo, volatil string) {
 	}
 
 	return fijo, b.String()
+}
+
+// loQueFalta lista, separado por comas, los datos que aún impiden registrar o programar el
+// pedido. Devuelve "" cuando ya no falta nada. La ubicación no vive en la ficha (tiene su
+// propio slot), pero para el modelo es un dato más de la misma lista.
+func (a *Agent) loQueFalta(from string, p conversation.PedidoEnCurso) string {
+	var falta []string
+	if p.Color == "" {
+		falta = append(falta, "color/marca del cilindro")
+	}
+	if p.Cantidad < 1 {
+		falta = append(falta, "cantidad")
+	}
+	if _, hayUbicacion := a.store.GetLocation(from); !hayUbicacion {
+		falta = append(falta, "ubicación")
+	}
+	if p.Flujo == conversation.FlujoProgramacion && p.Hora == "" {
+		falta = append(falta, "hora de la entrega")
+	}
+	return strings.Join(falta, ", ")
+}
+
+// valorOFalta y valorOGuion formatean la ficha para el modelo: un dato ausente se marca de
+// forma explícita, para que no lo confunda con un valor vacío que puede inventar.
+func valorOFalta(v string) string {
+	if strings.TrimSpace(v) == "" {
+		return "FALTA"
+	}
+	return v
+}
+
+func valorOGuion(v string) string {
+	if strings.TrimSpace(v) == "" {
+		return "—"
+	}
+	return v
+}
+
+func cantidadTexto(n int) string {
+	if n < 1 {
+		return ""
+	}
+	return strconv.Itoa(n)
 }

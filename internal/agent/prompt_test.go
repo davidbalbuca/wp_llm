@@ -77,3 +77,67 @@ func TestConstruirSistemaBloques(t *testing.T) {
 		}
 	})
 }
+
+// El bloque PEDIDO EN CURSO le dice al modelo qué tiene y qué le falta. Sin esto, el modelo
+// tenía que deducir del historial en qué punto iba el pedido y volvía a preguntar datos ya
+// dados (el caso del 05/09: la clienta dijo la hora tres veces).
+func TestPromptMuestraPedidoEnCursoYLoQueFalta(t *testing.T) {
+	const phone = "593999000077"
+	casos := []struct {
+		nombre     string
+		ficha      conversation.PedidoEnCurso
+		conUbicac  bool
+		contiene   []string
+		noContiene []string
+	}{
+		{
+			nombre:     "solo color: falta cantidad y ubicación",
+			ficha:      conversation.PedidoEnCurso{Color: "BLANCO", Flujo: conversation.FlujoInmediato},
+			contiene:   []string{"PEDIDO EN CURSO", "color=BLANCO", "cantidad=FALTA", "FALTA:", "cantidad", "ubicación"},
+			noContiene: []string{"FALTA: nada"},
+		},
+		{
+			nombre:    "color + cantidad + ubicación: no falta nada",
+			ficha:     conversation.PedidoEnCurso{Color: "AMARILLO", Cantidad: 2, Flujo: conversation.FlujoInmediato},
+			conUbicac: true,
+			contiene:  []string{"color=AMARILLO", "cantidad=2", "FALTA: nada"},
+		},
+		{
+			nombre:    "programación sin hora: la hora está en FALTA",
+			ficha:     conversation.PedidoEnCurso{Color: "BLANCO", Cantidad: 1, Flujo: conversation.FlujoProgramacion},
+			conUbicac: true,
+			contiene:  []string{"flujo=programacion", "hora de la entrega"},
+		},
+	}
+
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			store := conversation.NewMemStore()
+			store.SetPedidoEnCurso(phone, c.ficha)
+			if c.conUbicac {
+				store.SetLocation(phone, -2.9, -79.0)
+			}
+			a := agentDePrueba(nil, store)
+			_, vol := a.construirSistema(phone)
+
+			for _, quiero := range c.contiene {
+				if !strings.Contains(vol, quiero) {
+					t.Errorf("el prompt no menciona %q:\n%s", quiero, vol)
+				}
+			}
+			for _, noQuiero := range c.noContiene {
+				if strings.Contains(vol, noQuiero) {
+					t.Errorf("el prompt no debía contener %q:\n%s", noQuiero, vol)
+				}
+			}
+		})
+	}
+}
+
+// Sin ficha no se inyecta el bloque: un cliente que solo saluda no tiene "pedido en curso".
+func TestPromptSinFichaNoMuestraBloque(t *testing.T) {
+	a := agentDePrueba(nil, conversation.NewMemStore())
+	if _, vol := a.construirSistema("593999000078"); strings.Contains(vol, "PEDIDO EN CURSO") {
+		t.Errorf("se inyectó PEDIDO EN CURSO sin ficha:\n%s", vol)
+	}
+}

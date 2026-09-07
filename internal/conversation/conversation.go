@@ -200,6 +200,33 @@ type PendingWait struct {
 	Nombres        string `json:"nombres"`
 }
 
+// PedidoEnCurso es la ficha del pedido que se va armando EN LA CONVERSACIÓN, antes de
+// registrarse. Antes esto no existía: color y cantidad solo vivían en la transcripción del
+// chat, y cuando el código necesitaba saberlos (para rescatar un pedido que el modelo confirmó
+// sin registrar) tenía que releer 30 mensajes y ADIVINARLOS con heurísticas de texto.
+//
+// Con esta ficha el bot sabe en todo momento qué tiene y qué le falta: los candados dejan de
+// adivinar y el prompt puede decirle al modelo "ya tienes color y cantidad, FALTA la ubicación"
+// en vez de esperar que lo deduzca del historial.
+type PedidoEnCurso struct {
+	Color     string    `json:"color"`    // vacío = aún no elegido
+	Cantidad  int       `json:"cantidad"` // 0 = aún no dicha
+	Hora      string    `json:"hora"`     // "HH:MM" 24h; vacío = entrega inmediata
+	Flujo     string    `json:"flujo"`    // FlujoInmediato | FlujoProgramacion
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// Flujos posibles de un PedidoEnCurso.
+const (
+	FlujoInmediato    = "inmediato"
+	FlujoProgramacion = "programacion"
+)
+
+// Vacio dice si la ficha no tiene ningún dato útil (no vale la pena guardarla ni mostrarla).
+func (p PedidoEnCurso) Vacio() bool {
+	return p.Color == "" && p.Cantidad == 0 && p.Hora == ""
+}
+
 // Store es el almacén de estado conversacional por número de teléfono.
 // Las operaciones no devuelven error a propósito: un fallo del backend de estado
 // se registra y degrada de forma segura (p. ej. historial vacío), sin tumbar el chat.
@@ -270,6 +297,13 @@ type Store interface {
 	GetPendingRating(phone string) (PendingRating, bool)
 	// ClearPendingRating elimina el estado de calificación pendiente.
 	ClearPendingRating(phone string)
+	// SetPedidoEnCurso guarda la ficha del pedido que se está armando en la conversación.
+	SetPedidoEnCurso(phone string, p PedidoEnCurso)
+	// GetPedidoEnCurso devuelve esa ficha (ok=false si no hay o si ya expiró la sesión).
+	GetPedidoEnCurso(phone string) (PedidoEnCurso, bool)
+	// ClearPedidoEnCurso olvida la ficha: al registrar el pedido, al cancelarlo, o al empezar
+	// una conversación nueva.
+	ClearPedidoEnCurso(phone string)
 	// SetOrderPhone recuerda con qué teléfono de WhatsApp se hizo un pedido. Se usa para
 	// contactar al cliente por el número CORRECTO cuando el backend avisa que se entregó,
 	// aunque el Cliente.telefono del backend sea distinto (p. ej. clientes que se registraron

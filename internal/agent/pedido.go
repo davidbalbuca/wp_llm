@@ -54,12 +54,14 @@ func (a *Agent) cancelarPedido(from string) string {
 		// muerto. El backend solo deja cancelar un pedido EN CAMINO; cualquier otro estado da esto.
 		if yaEstabaCancelado(err.Error()) {
 			a.store.ClearActivePedido(from)
+			a.store.ClearPedidoEnCurso(from)
 			return "El pedido del cliente YA estaba cancelado (lo canceló el conductor). No es un error: " +
 				"confírmale con amabilidad que su pedido está cancelado y ofrécele hacer uno nuevo cuando quiera."
 		}
 		return "No se pudo cancelar el pedido (motivo: " + err.Error() + "). Discúlpate y dile que en un momento lo revisa el equipo."
 	}
 	a.store.ClearActivePedido(from)
+	a.store.ClearPedidoEnCurso(from)
 	// El historial NO se borra: la memoria del chat dura la ventana de 24h.
 	return "Pedido cancelado con éxito. Confírmale al cliente con amabilidad que su pedido fue cancelado y que " +
 		"puede hacer uno nuevo cuando lo desee."
@@ -402,6 +404,9 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 		Cantidad: cantidad,
 		Fecha:    time.Now().Format("02/01/2006"),
 	})
+	// La ficha ya cumplió: el pedido existe. Si no se limpiara, el próximo mensaje del cliente
+	// ("gracias") seguiría arrastrando color y cantidad de un pedido que ya está en camino.
+	a.store.ClearPedidoEnCurso(from)
 	// Marca como CONFIRMADO cualquier pedido programado en confirmación de este cliente.
 	if sch, ok := a.store.GetConfirmingSchedule(from); ok {
 		a.store.SetScheduledEstado(sch.ID, conversation.ScheduleConfirmado)

@@ -225,25 +225,15 @@ func (a *Agent) dentroDeHorario(t time.Time) bool {
 // horas DENTRO del horario laboral configurado, para no confundir "1 cilindro" o una cédula con
 // una hora.
 func (a *Agent) horaPedidaPorCliente(from string) string {
-	ini := parseHoraHHMM(a.cfg.BotHorarioInicio)
-	fin := parseHoraHHMM(a.cfg.BotHorarioFin)
-	if ini < 0 || fin < 0 {
+	// Lee la FICHA del pedido en curso, donde la hora se guardó en el momento en que el cliente
+	// la dijo (ver encurso.go). Antes se barrían 40 mensajes del historial y se tomaba la última
+	// hora encontrada, lo que confundía la hora de una entrega con cualquier número que sonara
+	// a hora en la conversación.
+	p, hay := a.store.GetPedidoEnCurso(from)
+	if !hay || p.Flujo != conversation.FlujoProgramacion {
 		return ""
 	}
-
-	// Del más reciente al más viejo: vale la ÚLTIMA hora que el cliente dijo.
-	msgs := a.store.GetConversation(from, 40)
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role != "user" {
-			continue
-		}
-		if hhmm := extraerHora(msgs[i].Content); hhmm != "" {
-			if m := parseHoraHHMM(hhmm); m >= ini && m < fin {
-				return hhmm
-			}
-		}
-	}
-	return ""
+	return p.Hora
 }
 
 // extraerHora saca una hora "HH:MM" de un texto de chat, o "". Cubre "18:30", "6:30 pm",

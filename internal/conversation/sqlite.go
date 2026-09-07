@@ -257,6 +257,17 @@ CREATE TABLE IF NOT EXISTS telegram_threads (
     avisado_at INTEGER NOT NULL DEFAULT 0,
     sondeo_at  INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL
+);
+
+-- Ficha del pedido que el cliente va armando en la conversación (color, cantidad, hora), para
+-- que el código no tenga que adivinarla releyendo el chat. Vive lo que la sesión (SessionGap).
+CREATE TABLE IF NOT EXISTS pedido_en_curso (
+    phone      TEXT    PRIMARY KEY,
+    color      TEXT    NOT NULL DEFAULT '',
+    cantidad   INTEGER NOT NULL DEFAULT 0,
+    hora       TEXT    NOT NULL DEFAULT '',
+    flujo      TEXT    NOT NULL DEFAULT 'inmediato',
+    updated_at INTEGER NOT NULL
 );`
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
@@ -959,6 +970,45 @@ func (s *sqliteStore) GetPendingVerification(phone string) (Account, bool) {
 		return Account{}, false
 	}
 	return account, true
+}
+
+// --- Pedido en curso (ficha de lo que el cliente va eligiendo) ---
+
+func (s *sqliteStore) SetPedidoEnCurso(phone string, p PedidoEnCurso) {
+	if _, err := s.db.Exec(`
+        INSERT INTO pedido_en_curso(phone, color, cantidad, hora, flujo, updated_at) VALUES(?, ?, ?, ?, ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET
+            color=excluded.color, cantidad=excluded.cantidad, hora=excluded.hora,
+            flujo=excluded.flujo, updated_at=excluded.updated_at`,
+		phone, p.Color, p.Cantidad, p.Hora, p.Flujo, time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] SetPedidoEnCurso %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) GetPedidoEnCurso(phone string) (PedidoEnCurso, bool) {
+	// Purga perezosa: una ficha más vieja que la sesión ya no representa nada.
+	minTime := time.Now().Add(-SessionGap).Unix()
+	if _, err := s.db.Exec(`DELETE FROM pedido_en_curso WHERE updated_at < ?`, minTime); err != nil {
+		log.Printf("[sqlite] purga pedido_en_curso: %v", err)
+	}
+	var p PedidoEnCurso
+	var updated int64
+	err := s.db.QueryRow(`SELECT color, cantidad, hora, flujo, updated_at FROM pedido_en_curso WHERE phone = ?`, phone).
+		Scan(&p.Color, &p.Cantidad, &p.Hora, &p.Flujo, &updated)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("[sqlite] GetPedidoEnCurso %s: %v", phone, err)
+		}
+		return PedidoEnCurso{}, false
+	}
+	p.UpdatedAt = time.Unix(updated, 0)
+	return p, true
+}
+
+func (s *sqliteStore) ClearPedidoEnCurso(phone string) {
+	if _, err := s.db.Exec(`DELETE FROM pedido_en_curso WHERE phone = ?`, phone); err != nil {
+		log.Printf("[sqlite] ClearPedidoEnCurso %s: %v", phone, err)
+	}
 }
 
 func (s *sqliteStore) SetPendingRating(phone string, rating PendingRating) {

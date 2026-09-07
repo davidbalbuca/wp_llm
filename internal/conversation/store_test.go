@@ -1,0 +1,65 @@
+package conversation
+
+import (
+	"path/filepath"
+	"testing"
+)
+
+// --- Ficha del pedido en curso ---
+
+// La ficha guarda lo que el cliente fue eligiendo y se puede limpiar. Se prueba contra los DOS
+// backends: si sqlite y memoria divergen, el bot se comporta distinto en dev y en producción.
+func TestPedidoEnCurso(t *testing.T) {
+	backends := map[string]func() Store{
+		"mem": func() Store { return NewMemStore() },
+		"sqlite": func() Store {
+			s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "bot.db"), 15)
+			if err != nil {
+				t.Fatalf("abrir sqlite: %v", err)
+			}
+			return s
+		},
+	}
+
+	for nombre, nuevo := range backends {
+		t.Run(nombre, func(t *testing.T) {
+			s := nuevo()
+			const phone = "593999123456"
+
+			if _, ok := s.GetPedidoEnCurso(phone); ok {
+				t.Fatal("un cliente nuevo no puede tener ficha")
+			}
+
+			s.SetPedidoEnCurso(phone, PedidoEnCurso{Color: "BLANCO", Cantidad: 2, Flujo: FlujoInmediato})
+			p, ok := s.GetPedidoEnCurso(phone)
+			if !ok || p.Color != "BLANCO" || p.Cantidad != 2 || p.Flujo != FlujoInmediato {
+				t.Fatalf("la ficha no se guardó: %+v (ok=%v)", p, ok)
+			}
+
+			// Se sobreescribe entera: el cliente cambió de opinión y pasó a programar.
+			s.SetPedidoEnCurso(phone, PedidoEnCurso{Color: "AMARILLO", Cantidad: 1, Hora: "18:30", Flujo: FlujoProgramacion})
+			p, _ = s.GetPedidoEnCurso(phone)
+			if p.Color != "AMARILLO" || p.Cantidad != 1 || p.Hora != "18:30" || p.Flujo != FlujoProgramacion {
+				t.Fatalf("no se actualizó la ficha: %+v", p)
+			}
+
+			s.ClearPedidoEnCurso(phone)
+			if _, ok := s.GetPedidoEnCurso(phone); ok {
+				t.Error("la ficha sobrevivió al Clear: un mensaje posterior podría re-registrar el pedido")
+			}
+		})
+	}
+}
+
+// Una ficha sin datos no aporta nada al prompt ni a los candados.
+func TestPedidoEnCursoVacio(t *testing.T) {
+	if !(PedidoEnCurso{}).Vacio() {
+		t.Error("una ficha sin datos debe ser Vacio()")
+	}
+	if (PedidoEnCurso{Color: "BLANCO"}).Vacio() {
+		t.Error("una ficha con color NO está vacía")
+	}
+	if (PedidoEnCurso{Hora: "18:30"}).Vacio() {
+		t.Error("una ficha con hora NO está vacía")
+	}
+}
