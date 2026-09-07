@@ -4,8 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	"wp-llm-gas/internal/catalog"
 	"wp-llm-gas/internal/config"
 	"wp-llm-gas/internal/conversation"
+	"wp-llm-gas/internal/georoutes"
 )
 
 // agentConEspera arma un Agent con un pedido EN ESPERA de repartidor, que es la precondición
@@ -139,5 +141,70 @@ func TestCalificacionNoActuaSinPendiente(t *testing.T) {
 	ag := agentDePrueba(nil, store)
 	if _, manejado := ag.ResponderCalificacion("593999000016", "2"); manejado {
 		t.Error("un \"2\" sin calificación pendiente se tomó como nota; podría ser la cantidad de un pedido")
+	}
+}
+
+// "Repetir lo mismo" sin ubicación: carga la ficha con el pedido anterior y pide la ubicación.
+// El dato NO puede depender de que el modelo recuerde qué pidió el cliente la última vez.
+func TestRepetirPedidoCargaLaFicha(t *testing.T) {
+	const from = "593999000020"
+	store := conversation.NewMemStore()
+	store.SetLastOrder(from, conversation.LastOrder{Producto: "GAS 15KG", Color: "BLANCO", Cantidad: 2, Fecha: "01/09/2026"})
+	ag := agentDePrueba(nil, store)
+
+	reply, manejado := ag.ResponderRepetirPedido(from, "Repetir lo mismo")
+	if !manejado {
+		t.Fatal("\"Repetir lo mismo\" no se resolvió en código")
+	}
+	p, hay := store.GetPedidoEnCurso(from)
+	if !hay || p.Color != "BLANCO" || p.Cantidad != 2 {
+		t.Fatalf("el pedido anterior no quedó en la ficha: %+v (hay=%v)", p, hay)
+	}
+	if !strings.Contains(reply, "ubicación") {
+		t.Errorf("sin ubicación guardada hay que pedirla: %q", reply)
+	}
+}
+
+// Sin último pedido no hay nada que repetir: va al modelo, no se inventa un pedido.
+func TestRepetirPedidoSinPedidoAnteriorVaAlModelo(t *testing.T) {
+	store := conversation.NewMemStore()
+	ag := agentDePrueba(nil, store)
+	if _, manejado := ag.ResponderRepetirPedido("593999000021", "Repetir lo mismo"); manejado {
+		t.Error("se resolvió un \"repetir\" sin pedido anterior: el bot inventaría un pedido")
+	}
+}
+
+// "Cambiar el pedido" y cualquier otro texto siguen al modelo: ahí empieza una conversación.
+func TestRepetirPedidoDejaPasarLoQueNoEsLaOpcion(t *testing.T) {
+	const from = "593999000022"
+	store := conversation.NewMemStore()
+	store.SetLastOrder(from, conversation.LastOrder{Producto: "GAS 15KG", Color: "BLANCO", Cantidad: 2})
+	ag := agentDePrueba(nil, store)
+
+	for _, texto := range []string{"Cambiar el pedido", "repetir pero 3", "hola", ""} {
+		if _, manejado := ag.ResponderRepetirPedido(from, texto); manejado {
+			t.Errorf("%q se resolvió en código; debía ir al modelo", texto)
+		}
+	}
+}
+
+// El color que el cliente elige en el menú queda en la ficha sin pasar por el modelo (T0.5.4:
+// lo resuelve anotarDelMensaje, que corre en cada turno antes de llamar al modelo).
+func TestColorDelMenuQuedaEnLaFicha(t *testing.T) {
+	const from = "593999000023"
+	store := conversation.NewMemStore()
+	cat := catalog.NewStaticForTest(&catalog.Context{
+		Products: []georoutes.Product{{IDProducto: 1, Nombre: "GAS 15KG", Colores: []georoutes.Color{
+			{ID: 10, Nombre: "BLANCO"}, {ID: 11, Nombre: "AMARILLO"},
+		}}},
+	})
+	ag := agentDePrueba(nil, store)
+	ag.catalog = cat
+
+	ag.anotarDelMensaje(from, "Amarillo") // el cliente tocó el botón del menú de colores
+
+	p, hay := store.GetPedidoEnCurso(from)
+	if !hay || p.Color != "AMARILLO" {
+		t.Fatalf("el color del menú no quedó guardado: %+v (hay=%v)", p, hay)
 	}
 }

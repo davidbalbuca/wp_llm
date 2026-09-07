@@ -16,6 +16,15 @@ import (
 	"log"
 	"strconv"
 	"strings"
+
+	"wp-llm-gas/internal/conversation"
+)
+
+// Botones del menú de repetir pedido. Viven aquí (y no en el prompt) para que el interceptor
+// y el modelo usen exactamente el mismo texto: si cambia, cambia en un solo sitio.
+const (
+	BotonRepetirPedido = "Repetir lo mismo"
+	BotonCambiarPedido = "Cambiar el pedido"
 )
 
 // ResponderMenuEspera resuelve la respuesta del cliente al menú "¿Deseas esperar?" que se le
@@ -74,4 +83,45 @@ func (a *Agent) ResponderCalificacion(from, texto string) (string, bool) {
 	// No se pudo registrar (backend caído, cuenta sin credenciales): se agradece igual. El
 	// cliente no tiene por qué enterarse de un problema nuestro que no le afecta.
 	return "¡Gracias por tu calificación! 🙌 Cuando necesites tu gas, aquí estoy 😊", true
+}
+
+// ResponderRepetirPedido resuelve el menú "¿Deseas lo mismo de la última vez?". Si el cliente
+// acepta, el pedido anterior se carga en la ficha EN CÓDIGO y solo se le pide la ubicación: no
+// depende de que el modelo recuerde qué pidió la última vez ni de que lo transcriba bien.
+//
+// "Cambiar el pedido" NO se resuelve aquí: a partir de ahí es una conversación normal (qué
+// color, cuántos) y le toca al modelo.
+func (a *Agent) ResponderRepetirPedido(from, texto string) (string, bool) {
+	if normalizarRespuesta(texto) != normalizarRespuesta(BotonRepetirPedido) {
+		return "", false
+	}
+	last, hay := a.store.GetLastOrder(from)
+	if !hay || last.Cantidad < 1 || last.Color == "" {
+		// No hay nada que repetir: que el modelo lo lleve por el flujo normal.
+		return "", false
+	}
+
+	log.Printf("[menu-repetir] %s repite su último pedido en código: %d x %s", from, last.Cantidad, last.Color)
+	a.store.SetPedidoEnCurso(from, conversation.PedidoEnCurso{
+		Color: last.Color, Cantidad: last.Cantidad, Flujo: conversation.FlujoInmediato,
+	})
+
+	if _, hayUbicacion := a.store.GetLocation(from); !hayUbicacion {
+		return fmt.Sprintf("¡Listo! %d %s como la última vez 🙌 Compárteme tu ubicación por WhatsApp 📎 "+
+			"y te lo envío enseguida.", last.Cantidad, last.Color), true
+	}
+
+	// Con ubicación y ficha completa ya no falta nada: se registra AQUÍ MISMO. Decirle "ya te
+	// lo gestiono" y confiar en que el modelo lo registre en otro turno dejaría al cliente
+	// esperando un pedido que nadie creó: es el error que este refactor viene a eliminar.
+	// Se entra por runTool, igual que ConfirmarDireccion: es quien crea el ticket si falla.
+	t := &turno{}
+	a.runTool(t, from, "registrar_pedido", map[string]any{
+		"color": last.Color, "cantidad": last.Cantidad,
+	})
+	if t.menuSent {
+		// registrarPedido mandó un menú (p. ej. confirmar la dirección): ese menú ya salió.
+		return "", true
+	}
+	return a.mensajeDelPedido(t, from), true
 }

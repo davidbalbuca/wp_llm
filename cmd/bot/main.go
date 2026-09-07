@@ -778,6 +778,13 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 			_ = replyClient(cfg, store, inc.From, reply)
 			return
 		}
+		if reply, manejado := ag.ResponderRepetirPedido(inc.From, inc.Text); manejado {
+			log.Printf("[webhook] repetir pedido resuelto para %s", inc.From)
+			if reply != "" {
+				_ = replyClient(cfg, store, inc.From, reply)
+			}
+			return
+		}
 	}
 
 	// Timeout del turno: si el proveedor del modelo se cuelga, el turno se aborta, el cliente
