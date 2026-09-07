@@ -26,6 +26,24 @@ import (
 	"wp-llm-gas/internal/whatsapp"
 )
 
+// --- Cola por cliente ---
+// Un mutex por teléfono: los mensajes del MISMO cliente se procesan EN ORDEN, uno tras otro;
+// los de clientes distintos siguen en paralelo. Sin esto, dos mensajes seguidos (el cliente
+// que escribe "necesito un tanque" y "para los condominios Bemani" con segundos de diferencia)
+// arrancaban dos turnos simultáneos que no se veían entre sí y respondían cosas contradictorias.
+// El mapa crece con los teléfonos vistos (decenas): no necesita limpieza.
+var turnosPorCliente sync.Map // string -> *sync.Mutex
+
+func lockCliente(phone string) *sync.Mutex {
+	v, _ := turnosPorCliente.LoadOrStore(phone, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
+// timeoutTurno acota lo que puede tardar UN turno. Si el proveedor del modelo se cuelga, el
+// turno muere, el cliente recibe una disculpa y la cola de su teléfono queda libre: un turno
+// zombi no puede dejar al cliente sin respuesta para siempre.
+const timeoutTurno = 30 * time.Second
+
 // --- Anti-duplicados de mensajes ---
 // Ignora un mensaje de texto IDÉNTICO del mismo teléfono dentro de una ventana corta (el cliente
 // que manda "Hola" dos veces, o un reintento del webhook de Meta), para no responder dos veces.
@@ -600,11 +618,21 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	recoverPhone = inc.From
 
 	// Anti-duplicados: si el cliente manda el MISMO texto dos veces seguidas (doble-tap) o Meta
-	// reintenta el webhook, respondemos una sola vez.
+	// reintenta el webhook, respondemos una sola vez. Va ANTES de la cola a propósito: si el
+	// segundo mensaje esperara su turno, la ventana de dedupWindow (6s) ya habría expirado
+	// cuando por fin lo evalúa, y un doble-tap en "Sí, la misma" registraría el pedido DOS
+	// VECES. msgDedup tiene su propio mutex: es seguro fuera del lock del cliente.
 	if inc.IsText && dedup.isDuplicate(inc.From, strings.TrimSpace(inc.Text)) {
 		log.Printf("[webhook] mensaje duplicado de %s ignorado: %q", inc.From, inc.Text)
 		return
 	}
+
+	// A partir de aquí, un solo turno a la vez POR CLIENTE (ver lockCliente). Se toma antes de
+	// leer o escribir el store: si no, dos mensajes del mismo cliente leerían el mismo estado
+	// viejo y el segundo pisaría lo que hizo el primero.
+	mu := lockCliente(inc.From)
+	mu.Lock()
+	defer mu.Unlock()
 
 	// --- Delimitación de la conversación por SESIÓN (no por número de turnos) ---
 	// Si pasó más de SessionGap desde el último mensaje del cliente, esto es una
@@ -688,17 +716,18 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 			// Código válido y hay un pedido en pausa: lo retomamos automáticamente
 			// (la IA concreta el pedido y redacta la confirmación).
 			log.Printf("[webhook] OTP validado para %s; retomando pedido en pausa", inc.From)
-			resumeReply, err := ag.ResumeOrder(context.Background(), inc.From)
+			ctxResume, cancelResume := context.WithTimeout(context.Background(), timeoutTurno)
+			resumeRes, err := ag.ResumeOrder(ctxResume, inc.From)
+			cancelResume()
 			if err != nil {
 				log.Printf("[server] Error retomando pedido de %s: %v", inc.From, err)
-				resumeReply = "¡Tu cuenta ya está verificada ✅! Cuéntame, ¿qué cilindro necesitas y cuántos?"
+				resumeRes = agent.Resultado{Texto: "¡Tu cuenta ya está verificada ✅! Cuéntame, ¿qué cilindro necesitas y cuántos?"}
 			}
-			_ = replyClient(cfg, store, inc.From, resumeReply)
-			if ag.DidEscalate() {
+			_ = replyClient(cfg, store, inc.From, resumeRes.Texto)
+			if resumeRes.Escalo {
 				// Ya NO se borra el historial al escalar: el ticket queda registrado y la
 				// conversación sigue con contexto (un "gracias/no" recibe una despedida normal).
 				store.ClearPendingVerification(inc.From)
-				ag.ClearEscalated()
 			}
 			return
 		}
@@ -734,7 +763,11 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		}
 	}
 
-	reply, err := ag.HandleMessage(context.Background(), inc.From, messageForAgent)
+	// Timeout del turno: si el proveedor del modelo se cuelga, el turno se aborta, el cliente
+	// recibe una disculpa y —sobre todo— se libera la cola de este teléfono (ver lockCliente).
+	ctxTurno, cancelTurno := context.WithTimeout(context.Background(), timeoutTurno)
+	defer cancelTurno()
+	res, err := ag.HandleMessage(ctxTurno, inc.From, messageForAgent)
 	if err != nil {
 		_ = replyClient(cfg, store, inc.From, "Disculpa, tuvimos un inconveniente técnico. Ya avisé a nuestro equipo para que te contacte.")
 		// El error REAL va en el detalle (timeout, 429 de la API, etc.): así en Telegram/panel se
@@ -746,17 +779,17 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 
 	// Si la IA ya envió un MENÚ interactivo (botones/lista) en este turno, ese es el mensaje;
 	// no mandamos además el texto de respuesta (evita duplicar la pregunta).
-	if ag.MenuSent() {
+	if res.MenuEnviado {
 		log.Printf("[webhook] menú interactivo enviado a %s ✔", inc.From)
-		menuTxt := ag.LastMenuText()
+		menuTxt := res.MenuTexto
 		if menuTxt == "" {
 			menuTxt = "menú interactivo enviado"
 		}
 		store.LogMessage(inc.From, "model", "📋 "+menuTxt)
-		ag.ClearMenuSent()
 		return
 	}
 
+	reply := res.Texto
 	log.Printf("[webhook] respuesta de la IA: %q", reply)
 	// Blindaje final: el cliente NUNCA debe ver JSON crudo ni algo técnico. Si la IA filtró una
 	// estructura (acción/menú mal formado) que no se convirtió en menú, la cambiamos por un
@@ -769,12 +802,11 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		log.Printf("[server] Error enviando a %s: %v", inc.From, err)
 		return
 	}
-	if ag.DidEscalate() {
+	if res.Escalo {
 		// Ya NO se borra el historial al escalar (antes el próximo mensaje reiniciaba el flujo
 		// como conversación nueva). El ticket queda registrado y el chat sigue con contexto.
 		log.Printf("[webhook] escalation detectada para %s (ticket creado; historial se conserva)", inc.From)
 		store.ClearPendingVerification(inc.From)
-		ag.ClearEscalated()
 	}
 	log.Printf("[webhook] respuesta enviada a %s ✔", inc.From)
 }

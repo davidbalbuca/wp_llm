@@ -45,7 +45,7 @@ func (a *Agent) ubicacionEsDeAhora(from string) bool {
 
 // pedirConfirmacionDireccion deja el pedido en pausa y le manda al cliente el menu con su
 // direccion. Devuelve el texto para el MODELO (no para el cliente) y si se hizo cargo.
-func (a *Agent) pedirConfirmacionDireccion(from, color string, cantidad int) (string, bool) {
+func (a *Agent) pedirConfirmacionDireccion(t *turno, from, color string, cantidad int) (string, bool) {
 	direccion, hay := a.store.GetDireccionTexto(from)
 	if !hay || strings.TrimSpace(direccion) == "" {
 		// Sin una direccion legible no se puede preguntar nada util: mostrarle coordenadas o el
@@ -62,9 +62,9 @@ func (a *Agent) pedirConfirmacionDireccion(from, color string, cantidad int) (st
 		return "", false
 	}
 
-	a.menuSent = true
-	a.lastMenuText = cuerpo + " [" + BotonMismaDireccion + " / " + BotonOtraDireccion + "]"
-	a.store.AppendModel(from, a.lastMenuText)
+	t.menuSent = true
+	t.lastMenuText = cuerpo + " [" + BotonMismaDireccion + " / " + BotonOtraDireccion + "]"
+	a.store.AppendModel(from, t.lastMenuText)
 	log.Printf("[direccion] %s: pedido en pausa esperando que confirme %q", from, direccion)
 	return "Se le pidió al cliente que confirme su dirección. ESPERA su respuesta.", true
 }
@@ -76,17 +76,18 @@ func (a *Agent) ConfirmarDireccion(from, texto string) (string, bool) {
 	if !enPausa {
 		return "", false
 	}
+	// Punto de entrada propio (lo llama cmd/bot, no HandleMessage): su turno nace aquí.
+	t := &turno{}
 	respuesta := normalizarRespuesta(texto)
 
 	switch respuesta {
 	case normalizarRespuesta(BotonMismaDireccion):
 		a.store.ClearPedidoEsperandoDireccion(from)
 		log.Printf("[direccion] %s confirmó su dirección; se registra el pedido", from)
-		a.ultimoPedido = resultadoPedido{}
-		a.runTool(from, "registrar_pedido", map[string]any{
+		a.runTool(t, from, "registrar_pedido", map[string]any{
 			"color": color, "cantidad": cantidad, "direccion_confirmada": true,
 		})
-		return a.mensajeDelPedido(from), true
+		return a.mensajeDelPedido(t, from), true
 
 	case normalizarRespuesta(BotonOtraDireccion):
 		a.store.ClearPedidoEsperandoDireccion(from)
@@ -105,8 +106,8 @@ func (a *Agent) ConfirmarDireccion(from, texto string) (string, bool) {
 // mensajeDelPedido redacta para el cliente el desenlace del registro. Mismo criterio que la
 // confirmación de entregas agendadas: el texto que devuelve la herramienta está escrito para el
 // modelo, no para el cliente.
-func (a *Agent) mensajeDelPedido(from string) string {
-	res := a.ultimoPedido
+func (a *Agent) mensajeDelPedido(t *turno, from string) string {
+	res := t.ultimoPedido
 	switch {
 	case res.ok:
 		mensaje := fmt.Sprintf("¡Listo! 🎉 Tu pedido de %d x %s color %s va en camino.",

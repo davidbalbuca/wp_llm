@@ -227,7 +227,7 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 	}()
 }
 
-func (a *Agent) registrarPedido(from string, args map[string]any) string {
+func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) string {
 	// REGLA DURA de horario: fuera del horario laboral NO se registran pedidos (no hay
 	// conductores). El prompt también lo dice; esto es la garantía en código.
 	if !a.dentroDeHorario(time.Now().In(zonaEcuador)) {
@@ -281,7 +281,7 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 	// Catálogo: mapear el color elegido a (producto, color) y elegir la forma de pago.
 	contexto, disponible := a.catalog.Get()
 	if !disponible || contexto == nil {
-		a.escalated = true // derivación REAL (señal explícita; ya no se adivina por texto)
+		t.escalado = true // derivación REAL (señal explícita; ya no se adivina por texto)
 		return "No puedo consultar el catálogo en este momento. Discúlpate con el cliente y deriva al dueño."
 	}
 	producto, color, ok := findProductByColor(contexto.Products, colorNombre)
@@ -291,7 +291,7 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 	}
 	idtipopago, ok := defaultPaymentID(contexto.Payments)
 	if !ok {
-		a.escalated = true
+		t.escalado = true
 		return "No hay una forma de pago configurada en el sistema. Deriva al dueño."
 	}
 
@@ -300,7 +300,7 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 	// pida en la mañana y en la tarde, desde otro lado, y el gas salga a la direccion vieja.
 	// El menu lo manda el codigo y la respuesta se resuelve en codigo (ver direccion.go).
 	if args["direccion_confirmada"] != true && !a.ubicacionEsDeAhora(from) {
-		if aviso, enPausa := a.pedirConfirmacionDireccion(from, colorNombre, cantidad); enPausa {
+		if aviso, enPausa := a.pedirConfirmacionDireccion(t, from, colorNombre, cantidad); enPausa {
 			return aviso
 		}
 		// Sin direccion legible que mostrar, lo correcto es pedirle el pin otra vez.
@@ -314,7 +314,7 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 	if !ok {
 		nueva, err := a.gr.WppGetOrCreateClient(identificacion, nombres, telefono)
 		if err != nil {
-			a.escalated = true
+			t.escalado = true
 			return "No se pudo registrar la cuenta del cliente (motivo: " + err.Error() + "). " +
 				"Informa al cliente y deriva al dueño."
 		}
@@ -328,14 +328,14 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 	if err != nil {
 		nueva, e2 := a.gr.WppGetOrCreateClient(identificacion, nombres, telefono)
 		if e2 != nil {
-			a.escalated = true
+			t.escalado = true
 			return "No se pudo autenticar al cliente (motivo: " + err.Error() + "). Deriva al dueño."
 		}
 		account = conversation.Account{Username: nueva.Username, Password: nueva.Password}
 		a.store.SetAccount(from, account)
 		tokens, err = a.gr.Login(account.Username, account.Password)
 		if err != nil {
-			a.escalated = true
+			t.escalado = true
 			return "No se pudo autenticar al cliente (motivo: " + err.Error() + "). Deriva al dueño."
 		}
 	}
@@ -368,7 +368,7 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 				Identificacion: identificacion,
 				Nombres:        nombres,
 			})
-			a.ultimoPedido = resultadoPedido{
+			t.ultimoPedido = resultadoPedido{
 				enEspera: true,
 				Producto: producto.Nombre,
 				Color:    color.Nombre,
@@ -376,7 +376,7 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 			}
 			return mensajeOfrecerEspera
 		}
-		a.escalated = true
+		t.escalado = true
 		return "No se pudo registrar el pedido (motivo: " + err.Error() + "). " +
 			"Informa al cliente del inconveniente y deriva al dueño para atención manual."
 	}
@@ -404,7 +404,7 @@ func (a *Agent) registrarPedido(from string, args map[string]any) string {
 	}
 
 	seguimiento := a.urlSeguimiento(resultado.SeguimientoToken)
-	a.ultimoPedido = resultadoPedido{
+	t.ultimoPedido = resultadoPedido{
 		ok:          true,
 		IDPedido:    resultado.IDPedido,
 		Conductor:   resultado.ConductorAsignado,

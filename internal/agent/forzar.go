@@ -28,7 +28,7 @@ import (
 // Si NO logra inferir color y cantidad, no inventa nada: devuelve un mensaje que le pide al
 // cliente retomar, y avisa al grupo. Mejor pedir un dato de más que registrar un pedido con un
 // color equivocado.
-func (a *Agent) forzarRegistroSiHaceFalta(from string) (string, bool) {
+func (a *Agent) forzarRegistroSiHaceFalta(t *turno, from string) (string, bool) {
 	color, cantidad, ok := a.inferirPedido(from)
 	if !ok {
 		// No sabemos qué pedir con certeza: honesto y sin inventar.
@@ -41,41 +41,41 @@ func (a *Agent) forzarRegistroSiHaceFalta(from string) (string, bool) {
 	}
 
 	log.Printf("[forzar] %s: el modelo confirmó sin registrar; se registra en código (%d x %s)", from, cantidad, color)
-	// registrarPedido hace TODO el flujo real (cuenta, login, geocerca, startOrder) y devuelve un
-	// texto pensado para el MODELO. Pero como aquí ya no hay otra vuelta al modelo, convertimos su
-	// resultado en algo para el cliente según lo que pasó (ver a.ultimoPedido, que registrarPedido
-	// deja seteado).
-	a.registrarPedido(from, map[string]any{"color": color, "cantidad": cantidad})
+	// Se entra por runTool y NO por registrarPedido directo: el TICKET de soporte lo crea ese
+	// envoltorio (ver el case "registrar_pedido"), no registrarPedido. Saltárselo dejaba al
+	// cliente oyendo "ya avisé al equipo" sin ticket ni aviso a nadie. Mismo camino que usan
+	// ConfirmarDireccion y confirmarYRegistrar. El resultado del pedido queda en t.ultimoPedido.
+	a.runTool(t, from, "registrar_pedido", map[string]any{"color": color, "cantidad": cantidad})
 
 	// Si registrarPedido envió un MENÚ (p. ej. confirmar la dirección porque la ubicación no es de
 	// esta conversación), ese menú YA salió al cliente: no lo pisamos con texto.
-	if a.menuSent {
+	if t.menuSent {
 		return "", true
 	}
 
 	switch {
-	case a.ultimoPedido.ok:
+	case t.ultimoPedido.ok:
 		notify.Default.Fallo(from, a.nombreDe(from), "Pedido rescatado por código",
 			"El modelo iba a confirmar sin registrar; el código lo registró de verdad. Pedido #"+
-				strconv.Itoa(a.ultimoPedido.IDPedido))
+				strconv.Itoa(t.ultimoPedido.IDPedido))
 		msg := "¡Listo! 🎉 Tu pedido de " + strconv.Itoa(cantidad) + " " + color + " quedó registrado."
-		if a.ultimoPedido.Conductor != "" {
-			msg += " Tu repartidor es " + a.ultimoPedido.Conductor + " 🚚"
-			if a.ultimoPedido.Placa != "" {
-				msg += " (placa " + a.ultimoPedido.Placa + ")"
+		if t.ultimoPedido.Conductor != "" {
+			msg += " Tu repartidor es " + t.ultimoPedido.Conductor + " 🚚"
+			if t.ultimoPedido.Placa != "" {
+				msg += " (placa " + t.ultimoPedido.Placa + ")"
 			}
 			msg += "."
 		}
-		if a.ultimoPedido.TotalPagar > 0 {
-			msg += fmt.Sprintf(" 💵 Valor a pagar: $%.2f.", a.ultimoPedido.TotalPagar)
+		if t.ultimoPedido.TotalPagar > 0 {
+			msg += fmt.Sprintf(" 💵 Valor a pagar: $%.2f.", t.ultimoPedido.TotalPagar)
 		}
-		if a.ultimoPedido.Seguimiento != "" {
+		if t.ultimoPedido.Seguimiento != "" {
 			// Este mensaje lo escribe el código (el modelo se saltó la herramienta), así que el
 			// enlace lo ponemos nosotros directamente.
-			msg += "\n\n📍 Sigue a tu repartidor en vivo aquí:\n" + a.ultimoPedido.Seguimiento
+			msg += "\n\n📍 Sigue a tu repartidor en vivo aquí:\n" + t.ultimoPedido.Seguimiento
 		}
 		return msg + "\n\nCualquier cosa, aquí estoy 😊", true
-	case a.ultimoPedido.enEspera:
+	case t.ultimoPedido.enEspera:
 		// Sin repartidor: registrarPedido ya dejó el PendingWait. Ofrecemos esperar.
 		return "¡Anotado tu pedido de " + strconv.Itoa(cantidad) + " " + color + "! 🙌 En este momento " +
 			"los repartidores están un poco lejos. ¿Deseas que busque uno para ti? Puede tardar hasta " +
@@ -230,7 +230,7 @@ func (a *Agent) clienteQuiereProgramar(from string) bool {
 // llamado a programar_entrega. Reconstruye color, cantidad y la hora que el cliente pidió, y llama
 // a programar_entrega de verdad. Mismo espíritu que el rescate de registro: una programación que
 // el cliente pidió no puede depender de que el modelo invoque la herramienta.
-func (a *Agent) forzarProgramacionSiHaceFalta(from string) (string, bool) {
+func (a *Agent) forzarProgramacionSiHaceFalta(t *turno, from string) (string, bool) {
 	color, cantidad, okP := a.inferirPedido(from)
 	hora := a.horaPedidaPorCliente(from)
 	if !okP || hora == "" {

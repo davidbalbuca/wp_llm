@@ -133,14 +133,15 @@ func (a *Agent) confirmarYRegistrar(from string, sch conversation.ScheduledOrder
 	log.Printf("[confirmacion] %s confirmó la entrega #%d; registrando el pedido sin pasar por el modelo",
 		from, sch.ID)
 
-	a.ultimoPedido = resultadoPedido{}
+	// Punto de entrada propio (lo llama cmd/bot, no HandleMessage): su turno nace aquí.
+	t := &turno{}
 	// Se reutiliza tal cual la herramienta de siempre: mismo camino, mismas validaciones, mismo
 	// backend. Lo único que cambia es quién decide llamarla.
-	a.runTool(from, "registrar_pedido", map[string]any{
+	a.runTool(t, from, "registrar_pedido", map[string]any{
 		"color":    sch.ColorNombre,
 		"cantidad": sch.Cantidad,
 	})
-	res := a.ultimoPedido
+	res := t.ultimoPedido
 
 	switch {
 	case res.ok:

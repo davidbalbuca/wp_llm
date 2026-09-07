@@ -75,43 +75,55 @@ type Agent struct {
 	cfg config.Config
 	// modelo es quien contesta: Gemini o Claude, segun LLM_PROVIDER. El bucle de abajo es
 	// el mismo para los dos.
-	modelo    llm.Provider
-	store     conversation.Store
-	catalog   *catalog.Client
-	gr        *georoutes.Client
-	tools     []*genai.Tool
-	escalated bool
+	modelo  llm.Provider
+	store   conversation.Store
+	catalog *catalog.Client
+	gr      *georoutes.Client
+	tools   []*genai.Tool
+}
+
+// turno agrupa el estado de UN mensaje de UN cliente: si se envió menú, qué pasó con el
+// pedido, si se canceló/programó/escaló. Vive en el stack del turno y se pasa como
+// parámetro; JAMÁS en el Agent, porque hay un solo *Agent (cmd/bot/main.go) y una
+// goroutine por mensaje entrante: cuando esto vivía en el struct, el turno de un cliente
+// borraba el del otro (ver internal/agent/carrera_test.go) y los candados de forzar.go
+// decidían con datos de otra conversación.
+type turno struct {
 	// menuSent indica que en este turno la IA ya envió un MENÚ interactivo por WhatsApp
 	// (vía la tool mostrar_menu); el llamador NO debe enviar además el texto de respuesta.
 	menuSent bool
-	// canceloEnEsteTurno se pone en true si en este turno se ejecutó cancelar_pedido. Sirve para
-	// el candado que fuerza la cancelación cuando el modelo la AFIRMA sin llamar a la herramienta.
-	canceloEnEsteTurno bool
-	// programoEnEsteTurno se pone en true si en este turno se ejecutó programar_entrega. Sirve
-	// para el candado que fuerza la programación cuando el modelo la afirma sin llamar la tool.
-	programoEnEsteTurno bool
-	// ultimoPedido guarda QUE paso en el ultimo registrar_pedido de este turno. El texto que
-	// esa funcion devuelve esta escrito para el modelo ("Ofrecele al cliente ESPERAR usando la
-	// herramienta..."), no para el cliente, asi que el flujo determinista de confirmacion
-	// (confirmacion.go) necesita el resultado en limpio y no adivinarlo del texto.
-	ultimoPedido resultadoPedido
 	// lastMenuText es la PREGUNTA del último menú enviado en este turno (cuerpo + opciones).
 	// Se guarda en el historial como turno del modelo, porque el historial solo persiste TEXTO
 	// (no function calls): sin esto los menús quedaban invisibles y el modelo, al no "recordar"
 	// que ya preguntó (color/cantidad), volvía a mandar el mismo menú una y otra vez.
 	lastMenuText string
+	// ultimoPedido guarda QUE paso en el ultimo registrar_pedido de este turno. El texto que
+	// esa funcion devuelve esta escrito para el modelo ("Ofrecele al cliente ESPERAR usando la
+	// herramienta..."), no para el cliente, asi que el flujo determinista de confirmacion
+	// (confirmacion.go) necesita el resultado en limpio y no adivinarlo del texto.
+	ultimoPedido resultadoPedido
+	// cancelo se pone en true si en este turno se ejecutó cancelar_pedido. Sirve para
+	// el candado que fuerza la cancelación cuando el modelo la AFIRMA sin llamar a la herramienta.
+	cancelo bool
+	// programo se pone en true si en este turno se ejecutó programar_entrega. Sirve
+	// para el candado que fuerza la programación cuando el modelo la afirma sin llamar la tool.
+	programo bool
+	// escalado marca que en este turno se derivó al dueño (tool o derivación en código).
+	escalado bool
 }
 
-func (a *Agent) DidEscalate() bool { return a.escalated }
-func (a *Agent) ClearEscalated()   { a.escalated = false }
-
-// MenuSent indica si en el último mensaje se envió un menú interactivo (para que el
-// llamador no mande un texto adicional). ClearMenuSent lo resetea.
-func (a *Agent) MenuSent() bool { return a.menuSent }
-func (a *Agent) ClearMenuSent() { a.menuSent = false }
-
-// LastMenuText devuelve la pregunta + opciones del último menú enviado (para auditar el chat).
-func (a *Agent) LastMenuText() string { return a.lastMenuText }
+// Resultado es lo que el llamador (cmd/bot) necesita saber de un turno. Antes lo consultaba
+// con getters sobre el Agent compartido, que devolvían lo del último cliente atendido.
+type Resultado struct {
+	// Texto es la respuesta para el cliente. Vacío si se envió un menú interactivo.
+	Texto string
+	// MenuEnviado indica que la respuesta de este turno fue un menú (no hay que mandar texto).
+	MenuEnviado bool
+	// MenuTexto es la pregunta + opciones del menú, para auditar el chat.
+	MenuTexto string
+	// Escalo indica que este turno derivó al dueño.
+	Escalo bool
+}
 
 // New crea un Agent con el cliente de Gemini y las herramientas declaradas.
 func New(ctx context.Context, cfg config.Config, store conversation.Store, catalogClient *catalog.Client, grClient *georoutes.Client) (*Agent, error) {
@@ -281,12 +293,10 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 }
 
 // HandleMessage procesa un mensaje del cliente y devuelve la respuesta para WhatsApp.
-func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, error) {
-	a.menuSent = false // se pone en true si la IA envía un menú interactivo en este turno
-	a.lastMenuText = ""
-	a.ultimoPedido = resultadoPedido{} // se llena SOLO si registrar_pedido corre en este turno
-	a.canceloEnEsteTurno = false       // se pone en true si cancelar_pedido corre en este turno
-	a.programoEnEsteTurno = false      // se pone en true si programar_entrega corre en este turno
+// Todo el estado del turno vive en t (ver el tipo turno): el Agent es compartido por
+// todas las goroutines y no puede guardar nada de un cliente concreto.
+func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado, error) {
+	t := &turno{}
 
 	// Vigilancia pasiva: avisa al grupo si el mensaje parece un sondeo del negocio en vez de un
 	// pedido. Va en su propia goroutine y NO altera la respuesta: el modelo ya tiene prohibido
@@ -308,7 +318,18 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 	for round := 0; round < maxToolRounds; round++ {
 		resp, err := a.modelo.Generate(ctx, llm.System{Estatico: sistemaFijo, Volatil: systemPrompt}, contents, a.tools)
 		if err != nil {
-			return "", err
+			// El pedido YA se creó en el backend en este turno y el modelo se cayó después
+			// (timeout, 429). Decirle al cliente "tuvimos un inconveniente" sería mentirle:
+			// su gas va en camino y volvería a pedirlo -> pedido duplicado. Se responde con
+			// el desenlace REAL y se guarda en el historial para que el modelo lo recuerde.
+			if t.ultimoPedido.ok || t.ultimoPedido.enEspera {
+				log.Printf("[turno] %s: el modelo falló (%v) pero el pedido SÍ se registró; se confirma igual", from, err)
+				texto := a.mensajeDelPedido(t, from)
+				a.store.AppendUser(from, text)
+				a.store.AppendModel(from, texto)
+				return Resultado{Texto: texto, Escalo: t.escalado}, nil
+			}
+			return Resultado{}, err
 		}
 		if resp.Content == nil {
 			break // el modelo no devolvio nada utilizable
@@ -318,7 +339,7 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 			contents = append(contents, resp.Content) // turno del modelo con las llamadas
 			respParts := make([]*genai.Part, 0, len(resp.Calls))
 			for _, c := range resp.Calls {
-				result := a.runTool(from, c.Name, c.Args)
+				result := a.runTool(t, from, c.Name, c.Args)
 				respParts = append(respParts, &genai.Part{
 					FunctionResponse: &genai.FunctionResponse{
 						// El ID es lo que empareja el resultado con su llamada. Gemini casa
@@ -333,7 +354,7 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 			// Una pregunta por turno: si en este round ya se envió un menú, cortamos aquí (no
 			// pedimos otro round que podría mandar una segunda pregunta). El texto no se envía
 			// porque menuSent hace que el llamador solo muestre el menú.
-			if a.menuSent {
+			if t.menuSent {
 				break
 			}
 			continue // vuelve a llamar al modelo con los resultados
@@ -348,7 +369,7 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 	// cliente vería ese JSON crudo. Si detectamos ese JSON en la respuesta y aún no se envió
 	// un menú, lo enviamos como menú interactivo real y limpiamos el texto (nunca dejamos salir
 	// el JSON al cliente).
-	if !a.menuSent {
+	if !t.menuSent {
 		if cuerpo, opciones, preamble, ok := extractLeakedMenu(reply); ok {
 			mensaje := strings.TrimSpace(cuerpo)
 			if preamble != "" {
@@ -363,8 +384,8 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 			}
 			if len(opciones) >= 2 && len(opciones) <= 10 {
 				if err := whatsapp.SendMenu(a.cfg, from, mensaje, opciones); err == nil {
-					a.menuSent = true
-					a.lastMenuText = mensaje + "\n• " + strings.Join(opciones, "\n• ")
+					t.menuSent = true
+					t.lastMenuText = mensaje + "\n• " + strings.Join(opciones, "\n• ")
 				}
 			}
 			// Enviara o no el menú, no dejamos el JSON crudo en el texto que se guarda/manda.
@@ -379,20 +400,20 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 	// haber llamado a la herramienta — un pedido que nunca existió, un cliente esperando gas que
 	// nadie iba a llevar. El prompt ya lo prohíbe, pero esto es el candado que no depende del
 	// modelo: si afirma una confirmación sin respaldo, se reemplaza por un mensaje honesto.
-	if !a.menuSent && !a.ultimoPedido.ok && !a.ultimoPedido.enEspera && afirmaPedidoConfirmado(reply) {
+	if !t.menuSent && !t.ultimoPedido.ok && !t.ultimoPedido.enEspera && afirmaPedidoConfirmado(reply) {
 		// Si el cliente pidió PROGRAMAR (dijo una hora) y el modelo afirmó sin llamar la tool, lo
 		// que hay que forzar es la PROGRAMACIÓN, no un registro inmediato. Pasó con María Elena el
 		// 05/09: pidió agendar para las 18:30, el modelo lo confirmó sin llamar programar_entrega,
 		// y el candado del fantasma le forzó una ESPERA de conductor. La programación nunca se
 		// creó y a las 18:30 no iba a pasar nada, aunque un humano ya le había confirmado la hora.
-		if !a.programoEnEsteTurno && a.clienteQuiereProgramar(from) {
+		if !t.programo && a.clienteQuiereProgramar(from) {
 			log.Printf("[fantasma] %s: el modelo afirmó una programación sin llamar programar_entrega; se fuerza", from)
-			if forzado, ok := a.forzarProgramacionSiHaceFalta(from); ok {
+			if forzado, ok := a.forzarProgramacionSiHaceFalta(t, from); ok {
 				reply = forzado
 			}
 		} else {
 			log.Printf("[fantasma] %s: el modelo afirmó un pedido sin registrar_pedido; se fuerza el registro", from)
-			if forzado, ok := a.forzarRegistroSiHaceFalta(from); ok {
+			if forzado, ok := a.forzarRegistroSiHaceFalta(t, from); ok {
 				reply = forzado
 			}
 		}
@@ -401,9 +422,9 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 	// Mismo candado para la CANCELACIÓN: si el modelo dijo "he cancelado tu pedido" sin haber
 	// llamado a cancelar_pedido, el pedido sigue vivo. El 03/09 pasó: el bot dijo cancelado y el
 	// pedido quedó activo hasta que el conductor lo canceló a mano. Si NO se canceló en este
-	// turno pero el modelo lo afirma, se cancela en código. a.canceloEnEsteTurno lo marca el
+	// turno pero el modelo lo afirma, se cancela en código. t.cancelo lo marca el
 	// dispatch de la tool.
-	if !a.canceloEnEsteTurno && afirmaCancelado(reply) {
+	if !t.cancelo && afirmaCancelado(reply) {
 		log.Printf("[fantasma] %s: el modelo dijo cancelado sin llamar cancelar_pedido; se fuerza", from)
 		if forzado, ok := a.forzarCancelacionSiHaceFalta(from); ok {
 			reply = forzado
@@ -415,8 +436,8 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 	// así el modelo recuerda qué preguntó y no repite el menú. El historial solo guarda texto,
 	// por eso sin esto los menús (function calls) quedaban invisibles para el modelo.
 	modelTurn := reply
-	if a.menuSent && a.lastMenuText != "" {
-		modelTurn = a.lastMenuText
+	if t.menuSent && t.lastMenuText != "" {
+		modelTurn = t.lastMenuText
 	}
 	if strings.TrimSpace(modelTurn) == "" {
 		// Sin menú y sin texto real: recién aquí cae el fallback visible al cliente.
@@ -426,7 +447,12 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (string, e
 
 	a.store.AppendUser(from, text)
 	a.store.AppendModel(from, modelTurn)
-	return reply, nil
+	return Resultado{
+		Texto:       reply,
+		MenuEnviado: t.menuSent,
+		MenuTexto:   t.lastMenuText,
+		Escalo:      t.escalado,
+	}, nil
 }
 
 // extractLeakedMenu detecta cuando el modelo escribió una llamada a mostrar_menu como TEXTO
@@ -486,12 +512,12 @@ func extractLeakedMenu(s string) (cuerpo string, opciones []string, preamble str
 	return m.Cuerpo, m.Opciones, strings.TrimSpace(pre), true
 }
 
-func (a *Agent) runTool(from, name string, args map[string]any) string {
+func (a *Agent) runTool(t *turno, from, name string, args map[string]any) string {
 	// Se registra CADA herramienta con sus argumentos y lo que devolvio. Sin esto, cuando el
 	// bot hace algo raro en produccion solo queda su mensaje final y hay que adivinar que
 	// llamo: asi paso el 27/08 con la reprogramacion de una clienta real.
 	log.Printf("[tool] %s %s args=%v", from, name, args)
-	res := a.runToolInterno(from, name, args)
+	res := a.runToolInterno(t, from, name, args)
 	corte := res
 	if len(corte) > 160 {
 		corte = corte[:160] + "..."
@@ -500,10 +526,10 @@ func (a *Agent) runTool(from, name string, args map[string]any) string {
 	return res
 }
 
-func (a *Agent) runToolInterno(from, name string, args map[string]any) string {
+func (a *Agent) runToolInterno(t *turno, from, name string, args map[string]any) string {
 	switch name {
 	case "escalar_al_dueno":
-		a.escalated = true
+		t.escalado = true
 		motivo, _ := args["motivo"].(string)
 		resumen, _ := args["resumen"].(string)
 		id := a.crearTicketSoporte(from, motivo, resumen)
@@ -517,32 +543,32 @@ func (a *Agent) runToolInterno(from, name string, args map[string]any) string {
 		return a.verificarCliente(from, args)
 
 	case "mostrar_menu":
-		return a.mostrarMenu(from, args)
+		return a.mostrarMenu(t, from, args)
 
 	case "calificar_conductor":
 		return a.calificarConductor(from, args)
 
 	case "registrar_pedido":
-		antesEscalado := a.escalated
-		result := a.registrarPedido(from, args)
-		// La escalación se marca EXPLÍCITAMENTE dentro de registrarPedido (a.escalated) solo en
+		antesEscalado := t.escalado
+		result := a.registrarPedido(t, from, args)
+		// La escalación se marca EXPLÍCITAMENTE dentro de registrarPedido (t.escalado) solo en
 		// las derivaciones reales. Antes se adivinaba buscando "dueño" en el texto, y el mensaje
 		// del flujo de ESPERA ("NO derives al dueño...") disparaba un falso positivo que creaba
 		// tickets y borraba la conversación en un flujo normal.
-		if a.escalated && !antesEscalado {
+		if t.escalado && !antesEscalado {
 			a.crearTicketSoporte(from, "Fallo al registrar un pedido", result)
 		}
 		return result
 
 	case "cancelar_pedido":
-		a.canceloEnEsteTurno = true
+		t.cancelo = true
 		return a.cancelarPedido(from)
 
 	case "esperar_conductor":
 		return a.esperarConductor(from)
 
 	case "programar_entrega":
-		a.programoEnEsteTurno = true
+		t.programo = true
 		return a.programarEntrega(from, args)
 
 	case "cancelar_programacion":
@@ -584,11 +610,11 @@ func (a *Agent) verificarCliente(from string, args map[string]any) string {
 
 // mostrarMenu envía al cliente un menú interactivo (botones o lista) con las opciones dadas.
 // Marca menuSent para que el llamador NO envíe además un texto. Si falla, pide usar texto.
-func (a *Agent) mostrarMenu(from string, args map[string]any) string {
+func (a *Agent) mostrarMenu(t *turno, from string, args map[string]any) string {
 	// Tope de UNA pregunta por turno: si ya se envió un menú en este turno, NO enviamos otro.
 	// Evita que el modelo encadene color + cantidad de un tiro (y se adelante asumiendo la
 	// elección). El segundo menú se rechaza y se le pide al modelo esperar la respuesta.
-	if a.menuSent {
+	if t.menuSent {
 		return "Ya enviaste un menú en este turno. NO envíes otro menú ni otra pregunta: espera a que el cliente responda el que ya mandaste."
 	}
 	cuerpo := strings.TrimSpace(str(args["cuerpo"]))
@@ -609,10 +635,10 @@ func (a *Agent) mostrarMenu(from string, args map[string]any) string {
 	if err := whatsapp.SendMenu(a.cfg, from, cuerpo, opciones); err != nil {
 		return "No pude enviar el menú (motivo: " + err.Error() + "). Preséntale las opciones por texto normal."
 	}
-	a.menuSent = true
-	// Guardamos la pregunta del menú para el historial (ver Agent.lastMenuText): así, en el
+	t.menuSent = true
+	// Guardamos la pregunta del menú para el historial (ver turno.lastMenuText): así, en el
 	// próximo mensaje, el modelo recuerda qué ofreció y no vuelve a mandar el mismo menú.
-	a.lastMenuText = cuerpo + "\n• " + strings.Join(opciones, "\n• ")
+	t.lastMenuText = cuerpo + "\n• " + strings.Join(opciones, "\n• ")
 	return "MENÚ ENVIADO al cliente con esas opciones. NO repitas las opciones por texto; espera a que elija."
 }
 
@@ -691,10 +717,10 @@ func (a *Agent) HandleVerification(from, codigo string) (string, bool) {
 // ya está verificado. Concreta el pedido por el flujo normal (registrar_pedido) y deja que
 // la IA redacte la confirmación al cliente. Es determinista: no depende de que la IA
 // "recuerde" el color/cantidad, porque los toma del draft guardado.
-func (a *Agent) ResumeOrder(ctx context.Context, from string) (string, error) {
+func (a *Agent) ResumeOrder(ctx context.Context, from string) (Resultado, error) {
 	draft, ok := a.store.GetOrderDraft(from)
 	if !ok || draft.Cantidad <= 0 {
-		return "¡Tu cuenta ya está verificada ✅! Cuéntame, ¿qué cilindro necesitas y cuántos?", nil
+		return Resultado{Texto: "¡Tu cuenta ya está verificada ✅! Cuéntame, ¿qué cilindro necesitas y cuántos?"}, nil
 	}
 	a.store.ClearOrderDraft(from)
 
