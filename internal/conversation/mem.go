@@ -346,6 +346,18 @@ func (s *memStore) CreateTicket(phone, motivo, resumen string) int64 {
 	return t.ID
 }
 
+func (s *memStore) GetOpenTicket(phone, motivo string) (Ticket, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.tickets) - 1; i >= 0; i-- { // del más reciente al más viejo
+		t := s.tickets[i]
+		if t.Phone == phone && t.Motivo == motivo && t.Estado == TicketAbierto {
+			return t, true
+		}
+	}
+	return Ticket{}, false
+}
+
 func (s *memStore) ListTickets(estado string, limit int) []Ticket {
 	s.mu.Lock()
 	defer s.mu.Unlock()

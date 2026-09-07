@@ -553,7 +553,11 @@ func main() {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
+				// El scheduler es quien avisa de las entregas agendadas: si muere en silencio,
+				// nadie se entera hasta que un cliente reclama que no le llegó su gas.
 				log.Printf("[schedule] panic recuperado: %v", r)
+				reportarFallo(cfg, store, "", "Panic en el scheduler de entregas",
+					fmt.Sprintf("El bucle que avisa las entregas agendadas cayó: %v. Revisar que siga vivo.", r))
 			}
 		}()
 		ticker := time.NewTicker(60 * time.Second)
@@ -575,7 +579,14 @@ func main() {
 				respaldo := cuerpo + " Responde \"Sí\" para enviarlo."
 				if err := avisarClienteMenu(cfg, store, sch.Phone, cuerpo,
 					[]string{agent.BotonConfirmarEntrega, agent.BotonCancelarEntrega}, respaldo); err != nil {
+					// Se reporta aunque reintente en 1 min: si WhatsApp lo rechaza siempre (ventana
+					// de 24h cerrada, número bloqueado), el cliente NUNCA recibe su confirmación y
+					// nadie se entera. El dedup de tickets por (cliente, motivo) evita que el
+					// reintento por minuto inunde al equipo: el detalle se suma al mismo caso.
 					log.Printf("[schedule] error escribiendo a %s: %v (reintento en 1 min)", sch.Phone, err)
+					reportarFallo(cfg, store, sch.Phone, "No se pudo avisar de la entrega agendada",
+						fmt.Sprintf("Programado #%d (%d x %s %s): %v. El cliente no recibió la confirmación.",
+							sch.ID, sch.Cantidad, sch.ProductoNombre, sch.ColorNombre, err))
 					continue // sigue 'pendiente'; el próximo tick reintenta
 				}
 				store.MarkConfirmSent(sch.ID, now)
@@ -602,6 +613,8 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[webhook] PANIC recuperado: %v", r)
+			reportarFallo(cfg, store, recoverPhone, "Panic atendiendo un mensaje",
+				fmt.Sprintf("El turno del cliente murió con panic: %v. Se le pidió reintentar.", r))
 			if recoverPhone != "" {
 				_ = whatsapp.SendText(cfg, recoverPhone, "Disculpa, estamos con un problema técnico. Por favor intenta de nuevo en un momento. 🙏")
 			}
@@ -823,7 +836,11 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		reply = "Disculpa, tuve un pequeño inconveniente 🙈. ¿Me repites qué necesitas, por favor?"
 	}
 	if err := replyClient(cfg, store, inc.From, reply); err != nil {
+		// El bot respondió pero WhatsApp no entregó el mensaje: para el cliente, el bot lo
+		// ignoró. Sin esto quedaba solo en el log y nadie se enteraba.
 		log.Printf("[server] Error enviando a %s: %v", inc.From, err)
+		reportarFallo(cfg, store, inc.From, "No se pudo entregar la respuesta al cliente",
+			fmt.Sprintf("La respuesta se generó pero WhatsApp la rechazó: %v. El cliente cree que no le contestamos.", err))
 		return
 	}
 	if res.Escalo {
@@ -850,6 +867,10 @@ func notifyOrderFinished(cfg config.Config, store conversation.Store, pedidoID i
 		return
 	}
 
+	// El pedido se entregó: deja de estar activo. Sin esto quedaba vivo para siempre (solo se
+	// limpiaba al cancelar), y el guard de idempotencia de registrarPedido impediría al cliente
+	// hacer su SIGUIENTE pedido — que es justo el cliente que ya nos compró.
+	store.ClearActivePedido(phone)
 	store.SetPendingRating(phone, conversation.PendingRating{PedidoID: pedidoID, Conductor: conductor})
 
 	msg := "¡Tu pedido fue entregado! 🎉 Gracias por preferirnos. 🙌\n\n"

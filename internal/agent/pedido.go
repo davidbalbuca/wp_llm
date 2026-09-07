@@ -154,7 +154,11 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
+				// El cliente aceptó esperar: si esta goroutine muere, nadie busca su repartidor
+				// y él sigue esperando un aviso que no va a llegar.
 				log.Printf("[espera] panic recuperado para %s: %v", from, r)
+				notify.ReportarFallo(cfg, store, from, "Panic buscando repartidor",
+					fmt.Sprintf("La búsqueda de repartidor murió con panic: %v. El cliente quedó esperando.", r))
 			}
 		}()
 		deadline := time.Now().Add(5 * time.Minute)
@@ -244,6 +248,18 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 	cantidad := toInt(args["cantidad"])
 	if cantidad <= 0 {
 		return "Falta una cantidad válida de cilindros. Pregúntale al cliente cuántos desea."
+	}
+
+	// IDEMPOTENCIA: si el cliente ya tiene un pedido activo, no se le crea otro. Pasa cuando el
+	// modelo llama la herramienta dos veces en el mismo turno, o cuando un mensaje repetido
+	// vuelve a disparar el flujo: el cliente terminaba con dos cilindros y dos conductores. El
+	// pedido activo se limpia al entregarse o cancelarse, así que un pedido legítimo posterior
+	// no se bloquea.
+	if idPrevio, hay := a.store.GetActivePedido(from); hay && idPrevio > 0 {
+		log.Printf("[pedido] %s ya tiene el pedido #%d activo; no se crea otro", from, idPrevio)
+		return fmt.Sprintf("El cliente YA tiene el pedido #%d en curso: NO se creó otro. "+
+			"Confírmale que su pedido sigue en camino. Si quiere cambiarlo o pedir más, primero "+
+			"hay que cancelar el actual con cancelar_pedido.", idPrevio)
 	}
 
 	// El bot SIEMPRE trabaja con la ubicación compartida por WhatsApp (ya no hay direcciones

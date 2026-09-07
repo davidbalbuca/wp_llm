@@ -297,6 +297,10 @@ type Store interface {
 	GetPendingRating(phone string) (PendingRating, bool)
 	// ClearPendingRating elimina el estado de calificación pendiente.
 	ClearPendingRating(phone string)
+	// GetOpenTicket devuelve el ticket ABIERTO de ese cliente con ese mismo motivo, si existe.
+	// Sirve para no crear #20, #21 y #22 por el mismo problema: el segundo reporte se suma al
+	// primero en vez de abrir otro caso.
+	GetOpenTicket(phone, motivo string) (Ticket, bool)
 	// SetPedidoEnCurso guarda la ficha del pedido que se está armando en la conversación.
 	SetPedidoEnCurso(phone string, p PedidoEnCurso)
 	// GetPedidoEnCurso devuelve esa ficha (ok=false si no hay o si ya expiró la sesión).

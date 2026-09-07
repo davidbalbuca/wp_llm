@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -206,5 +207,46 @@ func TestColorDelMenuQuedaEnLaFicha(t *testing.T) {
 	p, hay := store.GetPedidoEnCurso(from)
 	if !hay || p.Color != "AMARILLO" {
 		t.Fatalf("el color del menú no quedó guardado: %+v (hay=%v)", p, hay)
+	}
+}
+
+// IDEMPOTENCIA: con un pedido activo NO se crea otro. El modelo llamando dos veces a la
+// herramienta, o un mensaje repetido, dejaba al cliente con dos cilindros y dos conductores.
+func TestNoSeRegistraDosVecesConPedidoActivo(t *testing.T) {
+	const from = "593999000040"
+	store := conversation.NewMemStore()
+	store.SetLocation(from, -2.9, -79.0)
+	store.SetActivePedido(from, 512) // ya tiene un pedido en curso
+	ag := agentDePrueba(nil, store)
+	ag.cfg = config.Config{BotHorarioInicio: "00:00", BotHorarioFin: "23:59"}
+
+	salida := ag.registrarPedido(&turno{}, from, map[string]any{"color": "BLANCO", "cantidad": 1})
+	if !strings.Contains(salida, "512") || !strings.Contains(salida, "NO se creó otro") {
+		t.Errorf("se intentó crear un segundo pedido teniendo el #512 activo: %q", salida)
+	}
+}
+
+// Contrato que hace seguro el guard anterior: el pedido activo se limpia en los TRES finales
+// (entregado, cancelado, no-show). Si un final no lo limpia, ese cliente no puede volver a
+// pedir nunca — y el peor caso sería el cliente que SÍ recibió su gas.
+func TestElPedidoActivoSeLimpiaEnTodosLosFinales(t *testing.T) {
+	src, err := os.ReadFile("../../cmd/bot/main.go")
+	if err != nil {
+		t.Fatalf("no se pudo leer main.go: %v", err)
+	}
+	cuerpo := string(src)
+	for _, fn := range []string{"notifyOrderFinished", "notifyOrderCancelled", "notifyOrderNoShow"} {
+		ini := strings.Index(cuerpo, "func "+fn+"(")
+		if ini < 0 {
+			t.Errorf("no se encontró %s en main.go", fn)
+			continue
+		}
+		trozo := cuerpo[ini:]
+		if fin := strings.Index(trozo[10:], "\nfunc "); fin > 0 {
+			trozo = trozo[:fin+10]
+		}
+		if !strings.Contains(trozo, "ClearActivePedido") {
+			t.Errorf("%s no limpia el pedido activo: ese cliente no podría hacer otro pedido nunca", fn)
+		}
 	}
 }

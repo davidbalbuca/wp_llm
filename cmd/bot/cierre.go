@@ -12,6 +12,7 @@ package main
 // pedido donde lo dejó.
 
 import (
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -45,6 +46,8 @@ func revisarCierres(cfg config.Config, store conversation.Store) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[cierre] panic recuperado: %v", r)
+			reportarFallo(cfg, store, "", "Panic en el cierre por inactividad",
+				fmt.Sprintf("El barrido que despide conversaciones cayó: %v", r))
 		}
 	}()
 

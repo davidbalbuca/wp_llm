@@ -27,12 +27,28 @@ func ReportarFallo(cfg config.Config, store conversation.Store, phone, motivo, d
 	log.Printf("[fallo] %s (%s): %s", motivo, phone, detalle)
 
 	var tid int64
+	yaAbierto := false
 	if phone != "" {
-		tid = store.CreateTicket(phone, motivo, detalle)
-		if tid > 0 {
-			// Queda en la conversación: al abrir el chat en el panel se ve DÓNDE se rompió.
-			store.LogMessage(phone, "system", fmt.Sprintf("🎫 Ticket #%d — %s", tid, motivo))
+		// Un problema que se repite es UN caso, no tres. Si ya hay un ticket abierto de este
+		// cliente por este mismo motivo, el detalle nuevo se suma a la conversación y no se
+		// abre otro: el 05/09 un mismo pedido generó los tickets #20, #21 y #22, y el equipo
+		// tuvo que adivinar cuál mirar.
+		if previo, hay := store.GetOpenTicket(phone, motivo); hay {
+			tid, yaAbierto = previo.ID, true
+			store.LogMessage(phone, "system", fmt.Sprintf("🎫 (ticket #%d ya abierto) %s", tid, detalle))
+		} else {
+			tid = store.CreateTicket(phone, motivo, detalle)
+			if tid > 0 {
+				// Queda en la conversación: al abrir el chat en el panel se ve DÓNDE se rompió.
+				store.LogMessage(phone, "system", fmt.Sprintf("🎫 Ticket #%d — %s", tid, motivo))
+			}
 		}
+	}
+
+	// Si el caso ya estaba abierto no se repite el correo ni el aviso de Telegram: el equipo ya
+	// fue avisado y lo único nuevo es el detalle, que quedó en el chat.
+	if yaAbierto {
+		return tid
 	}
 
 	// El correo es async (SMTP puede tardar) y no debe frenar el chat.

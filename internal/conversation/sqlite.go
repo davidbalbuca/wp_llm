@@ -602,6 +602,22 @@ func (s *sqliteStore) CreateTicket(phone, motivo, resumen string) int64 {
 	return id
 }
 
+func (s *sqliteStore) GetOpenTicket(phone, motivo string) (Ticket, bool) {
+	var t Ticket
+	err := s.db.QueryRow(`
+        SELECT id, phone, motivo, resumen, estado, COALESCE(solucion,''), created_at, COALESCE(closed_at,0)
+        FROM tickets WHERE phone = ? AND motivo = ? AND estado = ?
+        ORDER BY id DESC LIMIT 1`, phone, motivo, TicketAbierto).
+		Scan(&t.ID, &t.Phone, &t.Motivo, &t.Resumen, &t.Estado, &t.Solucion, &t.CreatedAt, &t.ClosedAt)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("[sqlite] GetOpenTicket %s: %v", phone, err)
+		}
+		return Ticket{}, false
+	}
+	return t, true
+}
+
 func (s *sqliteStore) ListTickets(estado string, limit int) []Ticket {
 	if limit <= 0 {
 		limit = 200
