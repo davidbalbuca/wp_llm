@@ -45,6 +45,17 @@ func fueraDeCobertura(cfg config.Config, store conversation.Store, gr *georoutes
 	msg += " ¡Ojalá pronto podamos llegar hasta allá! 🙏"
 	_ = replyClient(cfg, store, from, msg)
 
+	// El modelo TIENE que enterarse de que se rechazó la zona. replyClient solo escribe en la
+	// auditoría (el panel); sin esto, en el siguiente turno el modelo no ve el rechazo y
+	// vuelve a pedir la ubicación como si nada. Pasó en producción el 08/09 con el cliente de
+	// Ambato: se le dijo "no llegamos a esa zona" y dos mensajes después "¿me mandas el pin?".
+	store.AppendModel(from, msg)
+
+	// Y la ubicación rechazada NO se conserva: si se quedara guardada, el bloque UBICACION del
+	// prompt le diría al modelo "ya la tienes" y podría intentar un pedido con una ubicación
+	// que el sistema YA descartó.
+	store.ClearLocation(from)
+
 	// El equipo ve la demanda al instante (además de la tabla): dónde y quién.
 	notify.Default.Fallo(from, conversation.NombreDe(store, from), "Cliente FUERA de cobertura",
 		fmt.Sprintf("Pidió gas desde una zona sin cobertura. Ubicación: https://maps.google.com/?q=%f,%f — "+
