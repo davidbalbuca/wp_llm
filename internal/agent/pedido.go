@@ -408,6 +408,13 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 		// Sin repartidores / fuera de cobertura NO es error técnico: guardamos el pedido a la
 		// espera y le ofrecemos al cliente esperar hasta 5 min (reintento de asignación).
 		if esFalloDeCobertura(err.Error()) {
+			// ANTES de ofrecer esperar: ¿hay un color EQUIVALENTE con conductor y stock reales?
+			// (specs/cobertura-y-color-alterno.md). Si lo hay, se le ofrece el cambio; si la
+			// consulta falla o no hay, el flujo de espera sigue exactamente como hoy.
+			if menu, ok := a.ofrecerColorAlterno(t, from, loc.Latitude, loc.Longitude,
+				producto, color, cantidad); ok {
+				return menu
+			}
 			a.store.SetPendingWait(from, conversation.PendingWait{
 				IDCategoria:    producto.IDCategoria,
 				IDProducto:     producto.IDProducto,

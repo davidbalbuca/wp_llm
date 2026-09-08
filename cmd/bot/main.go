@@ -228,7 +228,7 @@ func main() {
 	mux.HandleFunc("POST /webhook", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
-		go processWebhook(cfg, ag, store, body)
+		go processWebhook(cfg, ag, store, grClient, body)
 	})
 
 	// Notificación INTERNA del backend: un conductor finalizó un pedido. El bot le manda al
@@ -606,7 +606,7 @@ func main() {
 	log.Fatal(http.ListenAndServe(":"+cfg.Port, mux))
 }
 
-func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store, body []byte) {
+func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store, gr *georoutes.Client, body []byte) {
 	// Blindaje: un panic inesperado NO debe tumbar el proceso; si sabemos el teléfono, le avisamos
 	// al cliente con un mensaje amable (nunca un error crudo).
 	var recoverPhone string
@@ -701,6 +701,9 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	if inc.HasLocation {
 		store.SetLocation(inc.From, inc.Latitude, inc.Longitude)
 		log.Printf("[webhook] ubicación de %s: %f, %f", inc.From, inc.Latitude, inc.Longitude)
+		if fueraDeCobertura(cfg, store, gr, inc.From, inc.Latitude, inc.Longitude) {
+			return
+		}
 		messageForAgent = "He compartido mi ubicación actual."
 	} else if inc.IsText {
 		// Muchos clientes pegan la ubicación como enlace de Google Maps o texto con
@@ -709,6 +712,9 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		if lat, lng, ok := whatsapp.ParseCoordsFromText(inc.Text); ok {
 			store.SetLocation(inc.From, lat, lng)
 			log.Printf("[webhook] ubicación (de texto) de %s: %f, %f", inc.From, lat, lng)
+			if fueraDeCobertura(cfg, store, gr, inc.From, lat, lng) {
+				return
+			}
 			messageForAgent = "He compartido mi ubicación actual."
 		} else {
 			log.Printf("[webhook] mensaje de %s: %q", inc.From, inc.Text)
@@ -789,6 +795,13 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		if reply, manejado := ag.ResponderCalificacion(inc.From, inc.Text); manejado {
 			log.Printf("[webhook] calificacion resuelta para %s", inc.From)
 			_ = replyClient(cfg, store, inc.From, reply)
+			return
+		}
+		if reply, manejado := ag.ResponderCambioColor(inc.From, inc.Text); manejado {
+			log.Printf("[webhook] cambio de color resuelto para %s", inc.From)
+			if reply != "" {
+				_ = replyClient(cfg, store, inc.From, reply)
+			}
 			return
 		}
 		if reply, manejado := ag.ResponderRepetirPedido(inc.From, inc.Text); manejado {

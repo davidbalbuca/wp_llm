@@ -141,3 +141,26 @@ func TestPromptSinFichaNoMuestraBloque(t *testing.T) {
 		t.Errorf("se inyectó PEDIDO EN CURSO sin ficha:\n%s", vol)
 	}
 }
+
+// El bloque COBERTURA sale de las zonas reales del backend. Sin zonas, el modelo tiene
+// PROHIBIDO afirmar o negar cobertura: pide la ubicación y el sistema verifica.
+func TestRenderCobertura(t *testing.T) {
+	zonas := []georoutes.ZonaCobertura{{
+		Zona:       "AZUAY",
+		Parroquias: []string{"BANOS", "BELLAVISTA", "CAÑARIBAMBA", "SININCAY", "EL VALE"},
+	}}
+	texto := renderCobertura(zonas)
+	for _, quiero := range []string{"AZUAY", "BANOS", "SININCAY", "NO está en la lista"} {
+		if !strings.Contains(texto, quiero) {
+			t.Errorf("el bloque de cobertura no menciona %q:\n%s", quiero, texto)
+		}
+	}
+
+	vacio := renderCobertura(nil)
+	if !strings.Contains(vacio, "NO afirmes ni niegues") {
+		t.Errorf("sin zonas, el modelo debe tener prohibido inventar cobertura:\n%s", vacio)
+	}
+	if strings.Contains(vacio, "AZUAY") {
+		t.Error("sin zonas del backend no puede aparecer ninguna zona")
+	}
+}

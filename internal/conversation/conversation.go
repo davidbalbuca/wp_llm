@@ -200,6 +200,13 @@ type PendingWait struct {
 	Nombres        string `json:"nombres"`
 }
 
+// PendingColorSwap es la oferta de cambio de color esperando el sí/no del cliente.
+type PendingColorSwap struct {
+	ColorOriginal string `json:"color_original"`
+	ColorAlterno  string `json:"color_alterno"`
+	Cantidad      int    `json:"cantidad"`
+}
+
 // PedidoEnCurso es la ficha del pedido que se va armando EN LA CONVERSACIÓN, antes de
 // registrarse. Antes esto no existía: color y cantidad solo vivían en la transcripción del
 // chat, y cuando el código necesitaba saberlos (para rescatar un pedido que el modelo confirmó
@@ -297,6 +304,14 @@ type Store interface {
 	GetPendingRating(phone string) (PendingRating, bool)
 	// ClearPendingRating elimina el estado de calificación pendiente.
 	ClearPendingRating(phone string)
+	// SetPendingColorSwap guarda la oferta de cambio de color pendiente de respuesta
+	// (specs/cobertura-y-color-alterno.md): el cliente pidió un color sin conductor y se le
+	// ofreció un equivalente que SÍ tiene. Vive hasta que responde o expira la sesión.
+	SetPendingColorSwap(phone string, sw PendingColorSwap)
+	// GetPendingColorSwap devuelve la oferta pendiente (ok=false si no hay).
+	GetPendingColorSwap(phone string) (PendingColorSwap, bool)
+	// ClearPendingColorSwap la elimina (respondió, o ya no aplica).
+	ClearPendingColorSwap(phone string)
 	// GetOpenTicket devuelve el ticket ABIERTO de ese cliente con ese mismo motivo, si existe.
 	// Sirve para no crear #20, #21 y #22 por el mismo problema: el segundo reporte se suma al
 	// primero en vez de abrir otro caso.

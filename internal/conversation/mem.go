@@ -21,11 +21,12 @@ type memStore struct {
 	lastOrders         map[string]LastOrder
 	lastActivity       map[string]time.Time
 	orderDrafts        map[string]OrderDraft
-	pendingVerif       map[string]Account       // pending OTP verification accounts
-	pedidoEnCurso      map[string]PedidoEnCurso // ficha del pedido que se está armando
-	pendingRating      map[string]PendingRating // pedidos entregados por calificar
-	pendingRatingAt    map[string]time.Time     // cuándo se creó cada pendiente (para RatingTTL)
-	orderPhone         map[int]string           // pedido_id -> teléfono de WhatsApp con el que se hizo
+	pendingVerif       map[string]Account          // pending OTP verification accounts
+	pedidoEnCurso      map[string]PedidoEnCurso    // ficha del pedido que se está armando
+	pendingColorSwap   map[string]PendingColorSwap // oferta de cambio de color sin responder
+	pendingRating      map[string]PendingRating    // pedidos entregados por calificar
+	pendingRatingAt    map[string]time.Time        // cuándo se creó cada pendiente (para RatingTTL)
+	orderPhone         map[int]string              // pedido_id -> teléfono de WhatsApp con el que se hizo
 	activePedido       map[string]int
 	activePedidoAt     map[string]time.Time       // cuándo se marcó activo (para detectar huérfanos)             // teléfono -> id del pedido activo (para cancelar)
 	pendingWait        map[string]PendingWait     // teléfono -> pedido esperando conductor (reintento 5 min)
@@ -43,26 +44,27 @@ type memStore struct {
 // NewMemStore crea un almacén en memoria vacío.
 func NewMemStore() Store {
 	return &memStore{
-		data:            make(map[string][]*genai.Content),
-		locations:       make(map[string]Location),
-		accounts:        make(map[string]Account),
-		profiles:        make(map[string]Profile),
-		lastOrders:      make(map[string]LastOrder),
-		lastActivity:    make(map[string]time.Time),
-		orderDrafts:     make(map[string]OrderDraft),
-		pendingVerif:    make(map[string]Account),
-		pedidoEnCurso:   make(map[string]PedidoEnCurso),
-		pendingRating:   make(map[string]PendingRating),
-		pendingRatingAt: make(map[string]time.Time),
-		orderPhone:      make(map[int]string),
-		activePedido:    make(map[string]int),
-		activePedidoAt:  make(map[string]time.Time),
-		pendingWait:     make(map[string]PendingWait),
-		messageLog:      make(map[string][]LoggedMessage),
-		chatMode:        make(map[string]string),
-		tgThreads:       make(map[string]int64),
-		tgAvisado:       make(map[string]time.Time),
-		tgSondeo:        make(map[string]time.Time),
+		data:             make(map[string][]*genai.Content),
+		locations:        make(map[string]Location),
+		accounts:         make(map[string]Account),
+		profiles:         make(map[string]Profile),
+		lastOrders:       make(map[string]LastOrder),
+		lastActivity:     make(map[string]time.Time),
+		orderDrafts:      make(map[string]OrderDraft),
+		pendingVerif:     make(map[string]Account),
+		pedidoEnCurso:    make(map[string]PedidoEnCurso),
+		pendingColorSwap: make(map[string]PendingColorSwap),
+		pendingRating:    make(map[string]PendingRating),
+		pendingRatingAt:  make(map[string]time.Time),
+		orderPhone:       make(map[int]string),
+		activePedido:     make(map[string]int),
+		activePedidoAt:   make(map[string]time.Time),
+		pendingWait:      make(map[string]PendingWait),
+		messageLog:       make(map[string][]LoggedMessage),
+		chatMode:         make(map[string]string),
+		tgThreads:        make(map[string]int64),
+		tgAvisado:        make(map[string]time.Time),
+		tgSondeo:         make(map[string]time.Time),
 	}
 }
 
@@ -547,6 +549,25 @@ func (s *memStore) ClearPendingVerification(phone string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.pendingVerif, phone)
+}
+
+func (s *memStore) SetPendingColorSwap(phone string, sw PendingColorSwap) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pendingColorSwap[phone] = sw
+}
+
+func (s *memStore) GetPendingColorSwap(phone string) (PendingColorSwap, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sw, ok := s.pendingColorSwap[phone]
+	return sw, ok
+}
+
+func (s *memStore) ClearPendingColorSwap(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.pendingColorSwap, phone)
 }
 
 // --- Pedido en curso (ficha de lo que el cliente va eligiendo) ---

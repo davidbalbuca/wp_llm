@@ -171,10 +171,40 @@ func renderServiceInfo(contexto *catalog.Context, disponible bool) string {
 		fmt.Fprintf(&texto, "\n%s\n", negocio.Adicional)
 	}
 
+	texto.WriteString(renderCobertura(contexto.Zonas))
+
 	texto.WriteString("\nPara concretar un pedido necesitas del cliente: cédula, nombre completo, " +
 		"el color/marca deseado, la cantidad y su ubicación de WhatsApp (📎 → Ubicación). " +
 		"NUNCA pidas correo electrónico (no se necesita).\n")
 	return texto.String()
+}
+
+// renderCobertura arma el bloque COBERTURA con las zonas reales del backend. La lista
+// completa va al MODELO (para que no invente ni niegue de memoria); la instrucción de
+// mencionarle al cliente solo un par de parroquias vive en behavior.md.
+func renderCobertura(zonas []georoutes.ZonaCobertura) string {
+	if len(zonas) == 0 {
+		return "\nCOBERTURA: la información de zonas no está disponible en este momento. NO " +
+			"afirmes ni niegues cobertura de ningún lugar: pide la ubicación 📎 y el sistema " +
+			"la verificará.\n"
+	}
+	var b strings.Builder
+	b.WriteString("\nCOBERTURA: Sí atendemos. ")
+	for _, z := range zonas {
+		ejemplos := z.Parroquias
+		if len(ejemplos) > 3 {
+			ejemplos = ejemplos[:3]
+		}
+		fmt.Fprintf(&b, "Zona %s (parroquias como %s, entre otras). ", z.Zona, strings.Join(ejemplos, ", "))
+	}
+	b.WriteString("\nLista COMPLETA de parroquias con cobertura, por zona (para consultar si " +
+		"un lugar concreto está cubierto; al cliente menciónale solo dos o tres):\n")
+	for _, z := range zonas {
+		fmt.Fprintf(&b, "- %s: %s\n", z.Zona, strings.Join(z.Parroquias, ", "))
+	}
+	b.WriteString("Si una parroquia NO está en la lista, aún no llegamos ahí: dilo con amabilidad " +
+		"y sin prometer. Para confirmar el caso exacto del cliente, pídele su ubicación 📎.\n")
+	return b.String()
 }
 
 // yaEstabaCancelado reconoce el error del backend que significa "el pedido no está EN CAMINO, así

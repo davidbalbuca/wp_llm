@@ -20,6 +20,9 @@ type Context struct {
 	Business georoutes.Business
 	Products []georoutes.Product
 	Payments []georoutes.Payment
+	// Zonas de cobertura (specs/cobertura-y-color-alterno.md). nil si el backend no las
+	// pudo dar: el prompt lo distingue de "sí hay, y son estas".
+	Zonas []georoutes.ZonaCobertura
 }
 
 // Client obtiene y cachea el catálogo del backend (vía el cliente georoutes).
@@ -80,5 +83,13 @@ func (c *Client) fetch() (*Context, error) {
 	} else {
 		log.Printf("[catalog] sin configuración del negocio: %v", err)
 	}
-	return &Context{Business: business, Products: products, Payments: payments}, nil
+	// Las zonas también son secundarias: sin ellas el bot pide la ubicación y el sistema
+	// verifica, en vez de afirmar o negar cobertura de memoria.
+	var zonas []georoutes.ZonaCobertura
+	if hay, z, err := c.gr.GetCoverageZones(); err == nil && hay {
+		zonas = z
+	} else if err != nil {
+		log.Printf("[catalog] sin zonas de cobertura: %v", err)
+	}
+	return &Context{Business: business, Products: products, Payments: payments, Zonas: zonas}, nil
 }

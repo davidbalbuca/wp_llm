@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/genai"
@@ -986,6 +987,28 @@ func (s *sqliteStore) GetPendingVerification(phone string) (Account, bool) {
 		return Account{}, false
 	}
 	return account, true
+}
+
+// La oferta de cambio de color vive MINUTOS (hasta que el cliente toca un botón), así que
+// no amerita tabla: en el store sqlite se guarda en memoria, igual de válido para el proceso
+// único del bot. Si el bot se reinicia con una oferta pendiente, el cliente responde, el
+// interceptor no encuentra el slot y el mensaje sigue al modelo: degradación aceptable.
+var colorSwapMem sync.Map // phone -> PendingColorSwap
+
+func (s *sqliteStore) SetPendingColorSwap(phone string, sw PendingColorSwap) {
+	colorSwapMem.Store(phone, sw)
+}
+
+func (s *sqliteStore) GetPendingColorSwap(phone string) (PendingColorSwap, bool) {
+	v, ok := colorSwapMem.Load(phone)
+	if !ok {
+		return PendingColorSwap{}, false
+	}
+	return v.(PendingColorSwap), true
+}
+
+func (s *sqliteStore) ClearPendingColorSwap(phone string) {
+	colorSwapMem.Delete(phone)
 }
 
 // --- Pedido en curso (ficha de lo que el cliente va eligiendo) ---
