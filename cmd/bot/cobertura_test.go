@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +20,17 @@ func backendCobertura(t *testing.T, modo string) *georoutes.Client {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/georoutes/checkCoverage/":
+			// Modo "porUbicacion": responde según la coordenada, como el backend real. Sirve
+			// para el caso del cliente que fue rechazado en un lugar y vuelve desde otro.
+			if modo == "porUbicacion" {
+				cuerpo, _ := io.ReadAll(r.Body)
+				if strings.Contains(string(cuerpo), "-2.89") { // Cuenca
+					w.Write([]byte(`{"codigo":0,"mensaje":"ok","resultado":{"cubierto":true,"sector":"EL SAGRARIO","zona":"AZUAY"}}`))
+				} else {
+					w.Write([]byte(`{"codigo":0,"mensaje":"ok","resultado":{"cubierto":false,"sector":null,"zona":null}}`))
+				}
+				return
+			}
 			switch modo {
 			case "dentro":
 				w.Write([]byte(`{"codigo":0,"mensaje":"ok","resultado":{"cubierto":true,"sector":"EL SAGRARIO","zona":"AZUAY"}}`))
@@ -135,5 +147,56 @@ func TestElPromptNoUsaLaPalabraPin(t *testing.T) {
 			continue
 		}
 		t.Errorf("el prompt menciona \"pin\" fuera de la regla que lo prohíbe: %q", strings.TrimSpace(linea))
+	}
+}
+
+// El rechazo es del LUGAR, no de la persona: si el cliente vuelve desde una zona que SÍ
+// cubrimos, tiene que ser atendido con normalidad. Es el riesgo que crea la regla de "no le
+// vuelvas a pedir la ubicación": no puede convertirse en un veto al cliente.
+func TestClienteRechazadoEnUnaZonaEsAtendidoSiVuelveDesdeOtra(t *testing.T) {
+	gr := backendCobertura(t, "porUbicacion")
+	store := conversation.NewMemStore()
+	const from = "593999000074"
+
+	// Día 1: escribe desde Ambato -> fuera de cobertura.
+	store.SetLocation(from, -1.2535, -78.6247)
+	if !fueraDeCobertura(config.Config{}, store, gr, from, -1.2535, -78.6247) {
+		t.Fatal("Ambato debía quedar fuera de cobertura")
+	}
+	if _, hay := store.GetLocation(from); hay {
+		t.Fatal("la ubicación rechazada no se limpió")
+	}
+
+	// Día 2: el MISMO cliente escribe desde Cuenca. Llega con TODO el rastro del rechazo
+	// anterior encima (historial con el "no llegamos", su ficha de pedido, la marca en la
+	// auditoría), que es como llega en producción: nada de eso puede vetarlo.
+	if len(store.History(from)) == 0 {
+		t.Fatal("el rechazo del día 1 debía quedar en el historial")
+	}
+	store.SetPedidoEnCurso(from, conversation.PedidoEnCurso{Color: "BLANCO", Cantidad: 1})
+	store.SetLocation(from, -2.898, -79.002)
+	if fueraDeCobertura(config.Config{}, store, gr, from, -2.898, -79.002) {
+		t.Fatal("el cliente fue rechazado en Cuenca por haber sido rechazado antes en Ambato: " +
+			"el rechazo es del LUGAR, no de la persona")
+	}
+	// Y su ubicación de Cuenca SÍ queda guardada para poder pedir.
+	if _, hay := store.GetLocation(from); !hay {
+		t.Error("se perdió la ubicación válida: no podría completar el pedido")
+	}
+}
+
+// La regla del prompt no puede leerse como un veto al cliente: tiene que decir explícitamente
+// que si se movió a nuestra zona, se le atiende.
+func TestElPromptDistingueLugarDePersona(t *testing.T) {
+	src, err := os.ReadFile("../../internal/agent/prompts/behavior.md")
+	if err != nil {
+		t.Fatalf("no se pudo leer behavior.md: %v", err)
+	}
+	texto := string(src)
+	if !strings.Contains(texto, "rechazo es del LUGAR, no de la persona") {
+		t.Error("falta la regla que evita vetar a un cliente que se movió a una zona cubierta")
+	}
+	if !strings.Contains(texto, "ubicación ACTUAL con gusto") {
+		t.Error("el prompt no le dice al modelo que pida la ubicación nueva si el cliente se movió")
 	}
 }
