@@ -147,12 +147,15 @@ func (n *Notifier) Fallo(phone, nombre, motivo, detalle string) {
 		if d := strings.TrimSpace(detalle); d != "" {
 			cuerpo += "\n\n<pre>" + html.EscapeString(conversation.Recortar(d, 500)) + "</pre>"
 		}
-		// Al hilo de errores, con sonido: es lo que hay que atender.
+		// Al hilo de errores, con sonido y CON el detalle: ahí es donde se trabaja el caso.
 		n.enviar(n.hiloErroresID(), cuerpo, false)
-		// Y en el hilo del cliente, silencioso, para que su historia quede completa.
+		// En el hilo del cliente va solo una LÍNEA, silenciosa: sirve para entender su historia
+		// ("¿qué le pasó a este cliente?") sin repetir el bloque entero. Antes se mandaba el
+		// mismo texto a los dos sitios y en la lista del grupo se veían dos avisos idénticos
+		// seguidos, que fue justo lo que se reportó el 08/09.
 		if phone != "" {
 			if hilo := n.hiloDe(phone, nombre); hilo != 0 {
-				n.enviar(hilo, cuerpo, true)
+				n.enviar(hilo, "🔴 "+html.EscapeString(motivo)+" <i>(detalle en Errores del sistema)</i>", true)
 			}
 		}
 	})
@@ -275,26 +278,41 @@ func (n *Notifier) hiloDe(phone, nombre string) int64 {
 	return id
 }
 
-// hiloErroresID / hiloSinRepartidorID son los dos hilos FIJOS del grupo (no dependen del
-// cliente). Se crean la primera vez que hacen falta y se recuerdan en memoria: si el bot
-// reinicia se crea uno nuevo, cosa asumible para hilos de bandeja.
+// Claves con las que se PERSISTEN los hilos fijos, en la misma tabla que los de cliente. No
+// son teléfonos, y por eso llevan un prefijo que ningún número puede tener.
+const (
+	claveHiloErrores       = "#hilo-errores"
+	claveHiloSinRepartidor = "#hilo-sin-repartidor"
+	claveHiloSondeo        = "#hilo-sondeo"
+)
+
+// hiloErroresID / hiloSinRepartidorID / hiloSondeoID son los hilos FIJOS del grupo (no dependen
+// del cliente). Se guardan en la BD igual que los de cliente: antes vivían SOLO en memoria y
+// cada reinicio del bot creaba un hilo nuevo con el mismo nombre. Con los deploys del 08/09 el
+// grupo terminó con una pila de "⚠️ Errores del sistema" repetidos.
 func (n *Notifier) hiloErroresID() int64 {
-	return n.hiloFijo(&n.hiloErrores, "⚠️ Errores del sistema", 16478047) // rojo
+	return n.hiloFijo(&n.hiloErrores, claveHiloErrores, "⚠️ Errores del sistema", 16478047) // rojo
 }
 
 func (n *Notifier) hiloSinRepartidorID() int64 {
-	return n.hiloFijo(&n.hiloSinRepartidor, "🟠 Pedidos sin atender", 16766590) // naranja
+	return n.hiloFijo(&n.hiloSinRepartidor, claveHiloSinRepartidor, "🟠 Pedidos sin atender", 16766590) // naranja
 }
 
 func (n *Notifier) hiloSondeoID() int64 {
-	return n.hiloFijo(&n.hiloSondeo, "🕵️ Posibles sondeos", 9367192) // morado
+	return n.hiloFijo(&n.hiloSondeo, claveHiloSondeo, "🕵️ Posibles sondeos", 9367192) // morado
 }
 
-// hiloFijo devuelve el hilo apuntado por destino, creándolo la primera vez. La creación queda
-// FUERA del lock: es una llamada de red y retenerlo dejaría bloqueado a todo el que quiera
-// avisar. Si dos goroutines entran a la vez puede crearse un hilo de más; se prefiere eso a
-// serializar los avisos detrás de una petición HTTP.
-func (n *Notifier) hiloFijo(destino *int64, nombre string, color int) int64 {
+// hiloFijo devuelve el hilo apuntado por destino, creándolo SOLO la primera vez de todas. El
+// orden importa: memoria (rápido) -> BD (sobrevive reinicios) -> crear.
+//
+// Sin el paso de la BD, cada reinicio del bot creaba un hilo nuevo con el mismo nombre; tras
+// los deploys del 08/09 el grupo tenía una pila de "Errores del sistema" idénticos y el equipo
+// no sabía cuál mirar.
+//
+// La creación queda FUERA del lock: es una llamada de red y retenerlo dejaría bloqueado a todo
+// el que quiera avisar. Si dos goroutines entran a la vez puede crearse un hilo de más; se
+// prefiere eso a serializar los avisos detrás de una petición HTTP.
+func (n *Notifier) hiloFijo(destino *int64, clave, nombre string, color int) int64 {
 	n.mu.Lock()
 	if *destino != 0 {
 		defer n.mu.Unlock()
@@ -302,11 +320,20 @@ func (n *Notifier) hiloFijo(destino *int64, nombre string, color int) int64 {
 	}
 	n.mu.Unlock()
 
+	// ¿Ya existe de una ejecución anterior?
+	if id, ok := n.store.GetTelegramThread(clave); ok {
+		n.mu.Lock()
+		*destino = id
+		n.mu.Unlock()
+		return id
+	}
+
 	id, err := n.crearHilo(nombre, color)
 	if err != nil {
 		log.Printf("[telegram] no se pudo crear el hilo %q: %v", nombre, err)
 		return 0
 	}
+	n.store.SetTelegramThread(clave, id)
 	n.mu.Lock()
 	*destino = id
 	n.mu.Unlock()
