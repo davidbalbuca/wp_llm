@@ -1,9 +1,6 @@
-// Package catalog obtiene del backend GEOWARE (georoutes) el catálogo del negocio
-// (productos con colores/marcas y precio, y formas de pago) y lo cachea con un TTL.
-//
-// Así el agente refleja los cambios hechos en el backend (nuevos productos, precios,
-// colores o formas de pago) sin reiniciarse y sin duplicar esos datos en su código: la
-// única fuente de verdad es la base de datos de `ubi-geoware`.
+// Package catalog obtiene del backend GEOWARE (georoutes) el catálogo del negocio (productos,
+// colores, precios, formas de pago) y lo cachea con un TTL. La única fuente de verdad es la BD de
+// ubi-geoware; el agente refleja los cambios sin reiniciarse ni duplicar datos.
 package catalog
 
 import (
@@ -20,8 +17,7 @@ type Context struct {
 	Business georoutes.Business
 	Products []georoutes.Product
 	Payments []georoutes.Payment
-	// Zonas de cobertura (specs/cobertura-y-color-alterno.md). nil si el backend no las
-	// pudo dar: el prompt lo distingue de "sí hay, y son estas".
+	// Zonas de cobertura. nil si el backend no las dio (el prompt lo distingue de "sí hay, son estas").
 	Zonas []georoutes.ZonaCobertura
 }
 
@@ -83,8 +79,7 @@ func (c *Client) fetch() (*Context, error) {
 	} else {
 		log.Printf("[catalog] sin configuración del negocio: %v", err)
 	}
-	// Las zonas también son secundarias: sin ellas el bot pide la ubicación y el sistema
-	// verifica, en vez de afirmar o negar cobertura de memoria.
+	// Zonas también secundarias: sin ellas el bot verifica la ubicación en vez de afirmar cobertura.
 	var zonas []georoutes.ZonaCobertura
 	if hay, z, err := c.gr.GetCoverageZones(); err == nil && hay {
 		zonas = z

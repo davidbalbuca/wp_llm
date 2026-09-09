@@ -11,17 +11,15 @@ import (
 
 // Config agrupa toda la configuración del servicio.
 type Config struct {
-	// LLMProvider elige quien atiende las conversaciones: "gemini" (el de siempre, default)
-	// o "anthropic". Se cambia con una linea del .env y se vuelve atras igual de rapido; la
-	// configuracion del otro proveedor se queda donde esta, sin borrarse.
+	// LLMProvider: "gemini" (default) o "anthropic". Se cambia con una línea del .env sin borrar
+	// la config del otro proveedor.
 	LLMProvider string
 	// Anthropic (Claude). Solo se usan si LLMProvider es "anthropic".
 	AnthropicAPIKey    string
 	AnthropicModel     string
 	AnthropicMaxTokens int
-	// AnthropicCacheTTL: "5m" (default) o "1h". Cuanto vive el prompt cacheado. Con poco
-	// trafico conviene "1h" (sobrevive entre conversaciones, aunque escribirla cueste mas);
-	// con conversaciones seguidas alcanza con los 5 minutos.
+	// AnthropicCacheTTL: "5m" (default) o "1h", cuánto vive el prompt cacheado. "1h" conviene con
+	// poco tráfico (sobrevive entre conversaciones aunque escribirla cueste más).
 	AnthropicCacheTTL string
 
 	GoogleAPIKey    string
@@ -31,23 +29,20 @@ type Config struct {
 	VerifyToken     string
 	Port            string
 	GraphAPIVersion string
-	// BackendURL es la URL base del backend GEOWARE (ubi-geoware). El bot consume
-	// la API de georoutes (mismo flujo que la app móvil) bajo {BackendURL}/georoutes/.
+	// BackendURL es la URL base del backend GEOWARE. El bot consume {BackendURL}/georoutes/.
 	BackendURL string
-	// SeguimientoBaseURL es el dominio PÚBLICO (el que ve el cliente en su teléfono) donde vive
-	// la página de seguimiento en vivo: {SeguimientoBaseURL}/seguimiento/<token>/. Suele diferir
-	// de BackendURL (interno). Si está vacía, el bot NO ofrece el enlace de seguimiento.
+	// SeguimientoBaseURL es el dominio PÚBLICO de la página de seguimiento en vivo
+	// ({SeguimientoBaseURL}/seguimiento/<token>/); suele diferir de BackendURL (interno). Vacía =
+	// el bot no ofrece el enlace.
 	SeguimientoBaseURL string
 	// ChannelSecret autentica al bot como canal de confianza ante el backend
 	// (verificación tipo Camino B). Opcional hasta que David lo habilite.
 	ChannelSecret string
-	// CatalogUser/CatalogPassword son las credenciales de una cuenta de servicio para
-	// leer el catálogo cuando el backend corre con DEBUG=False (los GET exigen JWT).
-	// Opcionales: si están vacías, el catálogo se pide sin token (DEV con DEBUG=True).
+	// CatalogUser/CatalogPassword: cuenta de servicio para leer el catálogo con JWT en prod
+	// (DEBUG=False). Vacías = catálogo sin token (DEV).
 	CatalogUser     string
 	CatalogPassword string
-	// DBPath es la ruta del archivo SQLite para persistir el historial.
-	// Si está vacía, el bot usa el almacén en memoria (desarrollo).
+	// DBPath es la ruta del SQLite del historial. Vacía = almacén en memoria (desarrollo).
 	DBPath string
 	// AuditLogDays es cuántos días se conserva el registro de auditoría (message_log) de las
 	// conversaciones, para revisarlas desde la web. Parametrizable; default 15.
@@ -62,15 +57,12 @@ type Config struct {
 	// HumanTakeoverTimeout es la inactividad tras la cual un chat en control HUMANO vuelve solo
 	// al bot (para que un pedido nuevo lo atienda el bot y no quede colgado). Default 15 min.
 	HumanTakeoverTimeout time.Duration
-	// CierreInactividad es el silencio tras el cual el bot se despide de una conversacion que
-	// quedo a medias. CierreVentanaMax es el techo: pasado ese tiempo ya no se dice nada, para
-	// no salir a despedirse de los chats viejos al reiniciar el servicio.
+	// CierreInactividad: silencio tras el cual el bot se despide de una conversación a medias.
+	// CierreVentanaMax es el techo (evita despedirse de chats viejos al reiniciar el servicio).
 	CierreInactividad time.Duration
 	CierreVentanaMax  time.Duration
-	// Telegram: grupo de alertas de operación para la etapa de test productivo (avisos de inicio
-	// de conversación y de fallos). Si falta el token o el chat, la función queda APAGADA y el
-	// bot sigue igual: los avisos son un observador, nunca parte del flujo del cliente.
-	// TelegramAvisarInicio permite dejar solo los errores (los verdes son los ruidosos).
+	// Telegram: alertas de operación (test productivo). Sin token o chat queda APAGADO y el bot
+	// sigue igual. TelegramAvisarInicio permite dejar solo errores (los verdes son ruidosos).
 	TelegramBotToken     string
 	TelegramChatID       string
 	TelegramAvisarInicio bool
@@ -106,8 +98,7 @@ func optionalInt(k string, def int) int {
 
 // Load construye la Config leyendo el entorno. Aborta el arranque si falta una obligatoria.
 func Load() Config {
-	// Se exige la clave del proveedor ELEGIDO, no la de los dos: asi se puede probar Anthropic
-	// sin borrar lo de Gemini, y volver a Gemini sin tener que conseguir la otra clave.
+	// Solo se exige la clave del proveedor ELEGIDO, no la de ambos.
 	proveedor := strings.ToLower(strings.TrimSpace(optional("LLM_PROVIDER", "gemini")))
 	googleKey := os.Getenv("GOOGLE_API_KEY")
 	anthropicKey := os.Getenv("ANTHROPIC_API_KEY")

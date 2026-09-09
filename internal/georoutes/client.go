@@ -36,14 +36,12 @@ type Client struct {
 	baseURL string
 	http    *http.Client
 
-	// Credenciales de una cuenta de servicio para leer el catálogo cuando el backend
-	// corre con DEBUG=False (los GET de catálogo exigen JWT). Si están vacías, el bot
-	// llama al catálogo sin token (comportamiento de DEV con DEBUG=True).
+	// Cuenta de servicio para leer el catálogo con JWT en prod (DEBUG=False). Vacías = catálogo
+	// sin token (DEV con DEBUG=True).
 	svcUser     string
 	svcPassword string
 
-	// svcToken es el JWT de servicio cacheado; svcMu lo protege del acceso concurrente.
-	svcMu    sync.Mutex
+	svcMu    sync.Mutex // protege svcToken (JWT de servicio cacheado)
 	svcToken string
 }
 
@@ -55,17 +53,16 @@ func NewClient(backendURL string) *Client {
 	}
 }
 
-// SetServiceAccount define las credenciales de la cuenta de servicio usada para leer el
-// catálogo con JWT (necesario en prod con DEBUG=False). Si user o password están vacíos,
-// el catálogo se pide sin token (DEV).
+// SetServiceAccount fija las credenciales de servicio para leer el catálogo con JWT (prod).
+// Vacías = catálogo sin token (DEV).
 func (c *Client) SetServiceAccount(user, password string) {
 	c.svcUser = user
 	c.svcPassword = password
 }
 
-// serviceToken devuelve el JWT de servicio cacheado, autenticando si hace falta. Si no
-// hay credenciales de servicio configuradas, devuelve "" (el catálogo se pedirá sin token).
-// Si force es true, ignora la caché y vuelve a hacer login (para recuperarse de un 401).
+// serviceToken devuelve el JWT de servicio cacheado, autenticando si hace falta. Sin
+// credenciales configuradas devuelve "" (catálogo sin token). force ignora la caché y
+// re-loguea (para recuperarse de un 401).
 func (c *Client) serviceToken(force bool) (string, error) {
 	if c.svcUser == "" || c.svcPassword == "" {
 		return "", nil
@@ -130,9 +127,8 @@ type ClientInfo struct {
 	Correo  string `json:"correo"`
 }
 
-// ClientExists consulta (SOLO LECTURA, sin efectos secundarios) si ya existe un cliente
-// con esa cédula. NO crea usuario ni envía código: sirve para reconocer al cliente al
-// inicio y saltarse el registro (nombre/correo).
+// ClientExists consulta (SOLO LECTURA) si ya existe un cliente con esa cédula. NO crea
+// usuario ni envía código: sirve para reconocerlo al inicio y saltarse el registro.
 func (c *Client) ClientExists(identificacion string) (*ClientInfo, error) {
 	res, err := c.get("/clientExists/?identificacion=" + url.QueryEscape(identificacion))
 	if err != nil {
@@ -152,10 +148,9 @@ type Account struct {
 	Password string `json:"password"`
 }
 
-// WppGetOrCreateClient recupera (o crea) el cliente del BOT de WhatsApp y devuelve sus
-// credenciales. El backend lo deja YA VERIFICADO (sin OTP ni correo) y usa un correo
-// placeholder. Endpoint EXCLUSIVO del bot: POST /wppGetOrCreateClient/. Reemplazó al flujo
-// viejo de alta (que reseteaba la verificación y mandaba correo).
+// WppGetOrCreateClient recupera (o crea) el cliente del bot y devuelve sus credenciales. El
+// backend lo deja YA VERIFICADO (sin OTP ni correo, correo placeholder). Endpoint exclusivo del
+// bot: POST /wppGetOrCreateClient/.
 func (c *Client) WppGetOrCreateClient(identificacion, nombres, telefono string) (*Account, error) {
 	res, err := c.post("/wppGetOrCreateClient/", map[string]any{
 		"identificacion": identificacion,

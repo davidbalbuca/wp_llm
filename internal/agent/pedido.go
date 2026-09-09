@@ -198,7 +198,23 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 							store.SetOrderPhone(res.IDPedido, from)
 							store.SetActivePedido(from, res.IDPedido)
 						}
-						store.SetLastOrder(from, conversation.LastOrder{Producto: w.ProductoNombre, Color: w.ColorNombre, Cantidad: w.Cantidad, Fecha: time.Now().Format("02/01/2006")})
+						// Se guarda TAMBIÉN a dónde va, para que "repetir lo mismo" pueda decirlo.
+						// Aquí no se consultan las direcciones del backend (esto corre en una
+						// goroutine, minutos después): se usa lo que ya se sabe del cliente.
+						calle, _ := store.GetDireccionTexto(from)
+						nombre := ""
+						if anterior, hay := store.GetLastOrder(from); hay &&
+							mismaUbicacion(anterior.Latitude, anterior.Longitude, loc.Latitude, loc.Longitude) {
+							nombre = anterior.Alias
+						}
+						store.SetLastOrder(from, conversation.LastOrder{
+							Producto: w.ProductoNombre, Color: w.ColorNombre, Cantidad: w.Cantidad,
+							Fecha:     time.Now().Format("02/01/2006"),
+							Latitude:  loc.Latitude,
+							Longitude: loc.Longitude,
+							Alias:     nombre,
+							Direccion: calle,
+						})
 						store.ClearPendingWait(from)
 						// El historial NO se borra (memoria de 24h). El mensaje queda AUDITADO.
 						msg := "🎉 ¡Listo! Ya tienes un repartidor asignado"
@@ -396,14 +412,22 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 	account.Refresh = tokens.Refresh
 	a.store.SetAccount(from, account)
 
-	// Pedido: el backend hace UPSERT de la dirección "WhatsApp" del cliente con esta ubicación
-	// (la reemplaza; el cliente no la ve ni la nombra) y REUTILIZA el flujo real de pedido.
-	resultado, err := a.gr.WppOrder(tokens.Access, loc.Latitude, loc.Longitude, idtipopago, []georoutes.OrderProduct{{
-		IDCategoria: producto.IDCategoria,
-		IDProducto:  producto.IDProducto,
-		IDColor:     color.ID,
-		Cantidad:    cantidad,
-	}})
+	// ¿Esta ubicación es una que el cliente guardó con nombre ("Casa")? Si lo es, el pedido va
+	// a ESA dirección: el backend la usa tal cual en vez de pisar su dirección interna de
+	// WhatsApp, y así "Casa" sigue siendo Casa entre un pedido y otro. Si no, alias vacío y
+	// todo se comporta como siempre.
+	aliasDestino, calleDestino := a.destinoDelPedido(from, tokens.Access, loc.Latitude, loc.Longitude)
+
+	// Pedido: con alias, el backend usa la dirección con nombre del cliente; sin él, hace
+	// UPSERT de la dirección "WhatsApp" con esta ubicación. En ambos casos REUTILIZA el flujo
+	// real de pedido.
+	resultado, err := a.gr.WppOrderEnDireccion(tokens.Access, loc.Latitude, loc.Longitude, idtipopago,
+		[]georoutes.OrderProduct{{
+			IDCategoria: producto.IDCategoria,
+			IDProducto:  producto.IDProducto,
+			IDColor:     color.ID,
+			Cantidad:    cantidad,
+		}}, aliasDestino)
 	if err != nil {
 		// Sin repartidores / fuera de cobertura NO es error técnico: guardamos el pedido a la
 		// espera y le ofrecemos al cliente esperar hasta 5 min (reintento de asignación).
@@ -450,11 +474,22 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 		a.store.SetOrderPhone(resultado.IDPedido, from)
 		a.store.SetActivePedido(from, resultado.IDPedido)
 	}
+	// A dónde se entregó, para que "repetir lo mismo" diga "2 Blanco a Casa" y no solo
+	// "2 Blanco". Se reutiliza lo resuelto arriba (antes del pedido, para elegir la dirección)
+	// en vez de volver a preguntárselo al backend.
+	//
+	// La calle NO se lee del store: ahí queda la de la ÚLTIMA ubicación conocida, que si el
+	// cliente se movió a un sitio sin dirección registrada sería la del pedido anterior — y
+	// "repetir" le ofrecería una calle a la que este pedido nunca fue.
 	a.store.SetLastOrder(from, conversation.LastOrder{
-		Producto: producto.Nombre,
-		Color:    color.Nombre,
-		Cantidad: cantidad,
-		Fecha:    time.Now().Format("02/01/2006"),
+		Producto:  producto.Nombre,
+		Color:     color.Nombre,
+		Cantidad:  cantidad,
+		Fecha:     time.Now().Format("02/01/2006"),
+		Latitude:  loc.Latitude,
+		Longitude: loc.Longitude,
+		Alias:     aliasDestino,
+		Direccion: calleDestino,
 	})
 	// La ficha ya cumplió: el pedido existe. Si no se limpiara, el próximo mensaje del cliente
 	// ("gracias") seguiría arrastrando color y cantidad de un pedido que ya está en camino.
@@ -475,18 +510,6 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 		Cantidad:    cantidad,
 		TotalPagar:  producto.PrecioTotal() * float64(cantidad),
 		Seguimiento: seguimiento,
-	}
-
-	// Se guarda la direccion legible que el backend acaba de resolver, para poder preguntarle
-	// "¿te lo enviamos a X?" la proxima vez sin tener que mostrarle coordenadas.
-	if dirs, err := a.gr.GetDirections(tokens.Access); err == nil {
-		for _, d := range dirs {
-			if strings.EqualFold(d.Alias, "WhatsApp") && strings.TrimSpace(d.Direccion) != "" &&
-				!strings.HasPrefix(d.Direccion, "Ubicación compartida") {
-				a.store.SetDireccionTexto(from, d.Direccion)
-				break
-			}
-		}
 	}
 
 	// El VALOR A PAGAR se calcula con el precio del catálogo (unitario + envío + instalación +
@@ -515,6 +538,49 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 			"invitándolo a seguir a su repartidor en el mapa): " + seguimiento
 	}
 	return mensaje
+}
+
+// destinoDelPedido averigua a dónde se acaba de entregar, para poder decirle luego "¿te lo
+// envío otra vez a Casa?" en vez de mostrarle coordenadas.
+//
+// Devuelve (alias, direccion): el alias es el nombre que el cliente le puso a esa ubicación
+// ("Casa") y la dirección la calle que resolvió el backend. Se busca la dirección guardada que
+// COINCIDA con las coordenadas del pedido (±150 m): el cliente puede tener varias -Casa,
+// Trabajo, y la 'WhatsApp' que el bot pisa en cada pedido- y quedarse con la primera daría un
+// destino equivocado.
+//
+// Best-effort: ante cualquier fallo devuelve lo que tenga (posiblemente vacío). Nunca es un
+// error: el pedido ya está registrado y esto solo mejora el mensaje de la próxima vez.
+func (a *Agent) destinoDelPedido(from, jwt string, lat, lng float64) (alias, direccion string) {
+	dirs, err := a.gr.GetDirections(jwt)
+	if err != nil {
+		log.Printf("[destino] %s: no se pudieron leer las direcciones (%v)", from, err)
+		return "", ""
+	}
+	for _, d := range dirs {
+		if !mismaUbicacion(d.Latitude, d.Longitude, lat, lng) {
+			continue
+		}
+		// La calle solo sirve si el backend la resolvió de verdad; el texto de respaldo
+		// ("Ubicación compartida por WhatsApp (-2.9, -79.0)") no se le muestra a nadie.
+		if calle := strings.TrimSpace(d.Direccion); calle != "" &&
+			!strings.HasPrefix(calle, "Ubicación compartida") {
+			direccion = calle
+		}
+		// 'WhatsApp' es el alias interno que pone el backend, no un nombre que el cliente
+		// eligió: no se le puede decir "te lo envío a WhatsApp".
+		if !strings.EqualFold(d.Alias, aliasInternoWhatsApp) {
+			alias = strings.TrimSpace(d.Alias)
+		}
+		// Con nombre puesto por el cliente ya no hay nada mejor que buscar.
+		if alias != "" {
+			break
+		}
+	}
+	if direccion != "" {
+		a.store.SetDireccionTexto(from, direccion)
+	}
+	return alias, direccion
 }
 
 // urlSeguimiento arma la URL pública del seguimiento a partir del token firmado que devuelve el

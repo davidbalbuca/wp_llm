@@ -1,12 +1,10 @@
-// Package llm aísla al agente del proveedor de modelo. Hoy hay dos: Gemini, el de siempre,
-// y Anthropic (Claude), que se elige con LLM_PROVIDER para comparar cómo atiende cada uno
-// sin tocar el resto del bot ni borrar la configuración del otro.
+// Package llm aísla al agente del proveedor de modelo: Gemini (default) y Anthropic (Claude),
+// elegibles con LLM_PROVIDER sin tocar el resto del bot.
 //
-// Los tipos de google.golang.org/genai se usan como VOCABULARIO COMÚN entre el agente y los
-// proveedores en vez de inventar unos propios. No es comodidad: el historial persistido, las
-// diez herramientas declaradas y todo el bucle de agent.go ya hablan ese idioma, y traducirlo
-// entero para probar un segundo modelo significaría reescribir el camino que hoy atiende a
-// clientes reales. Cada proveedor traduce hacia y desde su propio formato de puertas adentro.
+// Los tipos de google.golang.org/genai se usan como VOCABULARIO COMÚN entre agente y proveedores:
+// el historial persistido, las herramientas y todo agent.go ya hablan ese idioma, y reescribirlo
+// para un segundo modelo tocaría el camino que atiende clientes reales. Cada proveedor traduce a
+// su propio formato de puertas adentro.
 package llm
 
 import (
@@ -15,13 +13,10 @@ import (
 	"google.golang.org/genai"
 )
 
-// System es el prompt de sistema partido en dos: lo que NUNCA cambia entre llamadas y lo que
-// si. La division existe por una sola razon, el cacheo: Anthropic cobra a la decima parte el
-// texto que ya vio, pero solo si el principio del prompt es identico byte a byte. Antes la
-// hora actual iba pegada al final del mismo bloque, y con eso el prompt cambiaba cada minuto.
-//
-// El modelo sigue recibiendo EXACTAMENTE el mismo texto que antes: Estatico + Volatil, en ese
-// orden, es el prompt de siempre. Cachear no cambia lo que el modelo lee ni lo que responde.
+// System es el prompt de sistema partido en fijo + volátil. La división existe solo por el
+// cacheo de Anthropic (cobra 0.1x el texto ya visto, pero solo si el principio del prompt es
+// idéntico byte a byte; antes la hora iba pegada al bloque y lo invalidaba cada minuto). El
+// modelo recibe EXACTAMENTE el mismo texto: Estatico + Volatil en ese orden.
 type System struct {
 	// Estatico es la parte fija: las reglas del bot y la informacion del servicio.
 	Estatico string

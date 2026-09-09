@@ -1,0 +1,114 @@
+package conversation
+
+import (
+	"database/sql"
+	"path/filepath"
+	"testing"
+)
+
+// El último pedido guarda TAMBIÉN a dónde se entregó. Se prueba contra los DOS backends: si
+// sqlite y memoria divergen, el bot se comporta distinto en dev y en producción.
+func TestLastOrderGuardaElDestino(t *testing.T) {
+	backends := map[string]func() Store{
+		"mem": func() Store { return NewMemStore() },
+		"sqlite": func() Store {
+			s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "bot.db"), 15)
+			if err != nil {
+				t.Fatalf("abrir sqlite: %v", err)
+			}
+			return s
+		},
+	}
+	for nombre, abrir := range backends {
+		t.Run(nombre, func(t *testing.T) {
+			store := abrir()
+			const from = "593999000080"
+			store.SetLastOrder(from, LastOrder{
+				Producto: "GAS 15KG", Color: "BLANCO", Cantidad: 2, Fecha: "09/09/2026",
+				Latitude: -2.898, Longitude: -79.002, Alias: "Casa", Direccion: "Av. Solano 123",
+			})
+
+			last, hay := store.GetLastOrder(from)
+			if !hay {
+				t.Fatal("no se recuperó el último pedido")
+			}
+			if last.Alias != "Casa" || last.Direccion != "Av. Solano 123" {
+				t.Errorf("se perdió el destino: alias=%q dir=%q", last.Alias, last.Direccion)
+			}
+			if last.Latitude != -2.898 || last.Longitude != -79.002 {
+				t.Errorf("se perdieron las coordenadas: %f, %f", last.Latitude, last.Longitude)
+			}
+			if last.Destino() != "Casa" {
+				t.Errorf("el destino mostrado debía ser el nombre del cliente: %q", last.Destino())
+			}
+		})
+	}
+}
+
+// NO-REGRESIÓN CRÍTICA: en producción la tabla last_orders YA EXISTE, así que el
+// CREATE TABLE IF NOT EXISTS del esquema no la actualiza. Sin la migración de columnas, al
+// arrancar contra la base de prod TODA lectura de last_orders fallaría ("no such column") y
+// ningún cliente podría repetir su pedido.
+//
+// Este test simula ese arranque: crea la tabla con el esquema VIEJO, mete una fila como las que
+// ya hay en producción, y abre el store como lo haría el bot al desplegarse.
+func TestBaseDeProduccionSinLasColumnasNuevasSigueFuncionando(t *testing.T) {
+	ruta := filepath.Join(t.TempDir(), "prod.db")
+
+	// 1) Base "vieja": la tabla tal como está hoy en el servidor, con un pedido dentro.
+	db, err := sql.Open("sqlite", ruta)
+	if err != nil {
+		t.Fatalf("abrir base: %v", err)
+	}
+	if _, err := db.Exec(`
+        CREATE TABLE last_orders (
+            phone      TEXT    PRIMARY KEY,
+            producto   TEXT,
+            color      TEXT,
+            cantidad   INTEGER,
+            fecha      TEXT,
+            updated_at INTEGER NOT NULL
+        );
+        INSERT INTO last_orders VALUES('593999000081','GAS 15KG','BLANCO',2,'01/09/2026',0);`); err != nil {
+		t.Fatalf("preparar la base vieja: %v", err)
+	}
+	db.Close()
+
+	// 2) Arranque del bot nuevo sobre esa base: no puede fallar.
+	store, err := NewSQLiteStore(ruta, 15)
+	if err != nil {
+		t.Fatalf("el bot NO ARRANCA sobre la base de producción: %v", err)
+	}
+
+	// 3) El pedido que ya estaba se sigue leyendo, y sin destino (nadie lo guardó entonces).
+	last, hay := store.GetLastOrder("593999000081")
+	if !hay {
+		t.Fatal("se perdió un pedido que ya existía en producción: el cliente no podría repetirlo")
+	}
+	if last.Color != "BLANCO" || last.Cantidad != 2 {
+		t.Errorf("el pedido viejo se leyó mal: %+v", last)
+	}
+	if last.Destino() != "" {
+		t.Errorf("un pedido viejo no tiene destino guardado y no puede inventarse uno: %q", last.Destino())
+	}
+
+	// 4) Y el pedido siguiente ya guarda destino con normalidad.
+	store.SetLastOrder("593999000081", LastOrder{
+		Producto: "GAS 15KG", Color: "BLANCO", Cantidad: 2, Fecha: "09/09/2026",
+		Latitude: -2.898, Longitude: -79.002, Alias: "Casa",
+	})
+	if last, _ := store.GetLastOrder("593999000081"); last.Destino() != "Casa" {
+		t.Errorf("tras migrar, el destino no se guardó: %q", last.Destino())
+	}
+}
+
+// La migración corre en CADA arranque: tiene que ser idempotente o el bot dejaría de arrancar
+// en el segundo deploy.
+func TestElArranqueRepetidoNoRompeLaBase(t *testing.T) {
+	ruta := filepath.Join(t.TempDir(), "bot.db")
+	for intento := 1; intento <= 3; intento++ {
+		if _, err := NewSQLiteStore(ruta, 15); err != nil {
+			t.Fatalf("arranque %d falló: %v (el bot no volvería a levantar tras un reinicio)", intento, err)
+		}
+	}
+}

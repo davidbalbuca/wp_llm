@@ -15,9 +15,8 @@ import (
 	"wp-llm-gas/internal/config"
 )
 
-// coordsRe captura un par de coordenadas (lat, lng) dentro de un texto: enlaces de Google
-// Maps (`?q=-2.84,-78.99`, `@-2.84,-78.99`), pares "lat, lng" sueltos, etc. Muchos clientes
-// pegan la ubicación como URL en vez de usar el adjunto nativo de WhatsApp; así igual la tomamos.
+// coordsRe captura un par (lat, lng) dentro de un texto (enlaces de Google Maps, pares sueltos):
+// muchos clientes pegan la ubicación como URL en vez del adjunto nativo de WhatsApp.
 var coordsRe = regexp.MustCompile(`(-?\d{1,3}\.\d{3,})[,\s]+(-?\d{1,3}\.\d{3,})`)
 
 // ParseCoordsFromText intenta extraer coordenadas GPS de un texto (p. ej. un enlace de
@@ -92,10 +91,9 @@ func trunc(s string, n int) string {
 	return string(r[:n])
 }
 
-// SendMenu envía un MENÚ INTERACTIVO tappable por WhatsApp: con 2-3 opciones usa botones,
-// con 4-10 usa una lista. El "id" de cada opción lleva el texto completo (para no perder
-// información por el truncado del título visible); ese id vuelve en el webhook al elegir.
-// Devuelve error si hay <1 o >10 opciones (el llamador debe caer a texto normal).
+// SendMenu envía un menú interactivo tappable: botones si <=3 opciones, lista si 4-10. El "id"
+// de cada opción lleva el texto completo (el título visible se trunca) y vuelve en el webhook al
+// elegir. Error si <1 o >10 opciones (el llamador cae a texto normal).
 func SendMenu(cfg config.Config, to, body string, opciones []string) error {
 	interactive, err := buildInteractiveMenu(body, opciones)
 	if err != nil {

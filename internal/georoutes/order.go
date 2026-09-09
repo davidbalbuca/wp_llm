@@ -33,6 +33,15 @@ type OrderResult struct {
 // el backend hace upsert de la única dirección "WhatsApp" del cliente (reemplaza sus
 // coordenadas) y REUTILIZA el flujo real de pedido. Endpoint exclusivo: POST /wppOrder/.
 func (c *Client) WppOrder(jwt string, latitude, longitude float64, idtipopago int, productos []OrderProduct) (*OrderResult, error) {
+	return c.WppOrderEnDireccion(jwt, latitude, longitude, idtipopago, productos, "")
+}
+
+// WppOrderEnDireccion es WppOrder apuntando a una dirección GUARDADA del cliente por su alias
+// ("Casa"). Con alias vacío se comporta igual que WppOrder (dirección interna de WhatsApp, que
+// se reemplaza en cada pedido); con alias el backend usa esa dirección sin sobrescribirla.
+func (c *Client) WppOrderEnDireccion(jwt string, latitude, longitude float64, idtipopago int,
+	productos []OrderProduct, alias string) (*OrderResult, error) {
+
 	items := make([]map[string]any, 0, len(productos))
 	for _, p := range productos {
 		item := map[string]any{
@@ -47,12 +56,18 @@ func (c *Client) WppOrder(jwt string, latitude, longitude float64, idtipopago in
 		items = append(items, item)
 	}
 
-	res, err := c.post("/wppOrder/", map[string]any{
+	cuerpo := map[string]any{
 		"latitude":   latitude,
 		"longitude":  longitude,
 		"idtipopago": idtipopago,
 		"productos":  items,
-	}, jwt)
+	}
+	// Solo se manda si lo hay: un alias vacío no debe alterar el camino de siempre.
+	if alias != "" {
+		cuerpo["alias_direccion"] = alias
+	}
+
+	res, err := c.post("/wppOrder/", cuerpo, jwt)
 	if err != nil {
 		return nil, err
 	}
@@ -106,12 +121,10 @@ func (c *Client) RatingOrder(jwt string, idpedido, calificacion int, observacion
 // CancelOrder cancela el pedido del cliente (POST /cancelOrder/) con su JWT. El backend lo marca
 // CANCELADO_CLIENTE, devuelve el stock al conductor y le avisa. Igual que el "Cancelar" de la app.
 func (c *Client) CancelOrder(jwt string, idpedido int) error {
-	// observacion SIEMPRE se envía aunque el serializer del backend la marque required=False:
-	// cancelar_pedido_producto la lee con datos['observacion'] (acceso directo), así que si no va
-	// lanza KeyError -> el backend responde "motivo: 'observacion'" y el bot cree que falló. Pasó
-	// el 05/09 con David: no podía cancelar y quedó en un loop de reasignaciones. De paso, el
-	// texto queda como motivo_cancelacion en la auditoría del pedido. (El fix de raíz sería usar
-	// datos.get('observacion','') en el backend; queda como deuda técnica de David.)
+	// observacion SIEMPRE se envía aunque el serializer la marque required=False: el backend la
+	// lee con datos['observacion'] (acceso directo), así que sin ella lanza KeyError y el bot cree
+	// que falló. Pasó el 05/09 con David (loop de reasignaciones sin poder cancelar). Fix de raíz:
+	// datos.get('observacion','') en el backend, deuda técnica de David.
 	_, err := c.post("/cancelOrder/", map[string]any{
 		"idpedido":    idpedido,
 		"observacion": "Cancelado por el cliente vía WhatsApp",
@@ -149,4 +162,21 @@ func (c *Client) GetDirections(jwt string) ([]SavedDirection, error) {
 		return nil, fmt.Errorf("respuesta de direcciones no válida del backend: %w", err)
 	}
 	return dirs, nil
+}
+
+// CreateDirection guarda una ubicación del cliente con su alias ("Casa") en el MISMO sitio que
+// la app móvil (POST /createDirectionClient/).
+//
+// principal va SIEMPRE en false a propósito: con principal=true el backend APAGA la principal
+// que el cliente tenga en la app móvil, y el bot no debe reconfigurarle la app.
+func (c *Client) CreateDirection(jwt, alias, direccion string, latitude, longitude float64) error {
+	_, err := c.post("/createDirectionClient/", map[string]any{
+		"direccion":  direccion,
+		"alias":      alias,
+		"principal":  false,
+		"referencia": "",
+		"latitude":   latitude,
+		"longitude":  longitude,
+	}, jwt)
+	return err
 }

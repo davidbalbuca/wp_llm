@@ -3,7 +3,6 @@ package agent
 import (
 	"log"
 	"strings"
-	"unicode"
 
 	"wp-llm-gas/internal/conversation"
 	"wp-llm-gas/internal/notify"
@@ -106,33 +105,6 @@ func DetectarSondeo(mensaje string) (fuertes, debiles []SeñalSondeo) {
 	return fuertes, debiles
 }
 
-// normalizar deja el texto comparable: minúsculas, sin tildes y con los signos convertidos en
-// espacios, para que "¿Cuántos conductores?" y "cuantos conductores" sean lo mismo.
-func normalizar(s string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
-		switch r {
-		case 'á', 'à', 'ä', 'â':
-			b.WriteRune('a')
-		case 'é', 'è', 'ë', 'ê':
-			b.WriteRune('e')
-		case 'í', 'ì', 'ï', 'î':
-			b.WriteRune('i')
-		case 'ó', 'ò', 'ö', 'ô':
-			b.WriteRune('o')
-		case 'ú', 'ù', 'ü', 'û':
-			b.WriteRune('u')
-		default:
-			if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsSpace(r) {
-				b.WriteRune(r)
-			} else {
-				b.WriteRune(' ')
-			}
-		}
-	}
-	return strings.Join(strings.Fields(b.String()), " ")
-}
-
 // umbralDebiles es cuántas señales débiles DISTINTAS hacen falta en una conversación para avisar.
 // Dos preguntas de categorías distintas ("cuántos conductores tienen" + "cuánto facturan") ya no
 // parecen curiosidad de alguien con prisa. Una sola nunca avisa.
@@ -200,22 +172,17 @@ func (a *Agent) revisarSondeo(from, mensaje string) {
 // legítimas como "¿confirmas tu color?" o "el repartidor te avisará". Conservador a propósito:
 // mejor dejar pasar un caso raro que bloquear una respuesta buena.
 func afirmaPedidoConfirmado(texto string) bool {
-	t := normalizar(texto)
-	if t == "" {
+	if esOfrecimiento(normalizar(texto)) {
 		return false
 	}
-	// Señales de que el pedido estaría HECHO/EN MARCHA (no una pregunta ni una promesa futura).
-	hechos := []string{
-		"esta confirmado", "quedo confirmado", "pedido confirmado", "esta registrado",
-		"quedo registrado", "pedido registrado", "en camino", "esta asignado",
-		"repartidor ya fue asignado", "repartidor fue asignado", "repartidor asignado",
-		"conductor asignado", "conductor ya fue asignado", "ya fue asignado", "te llegara en breve",
-		"esta en proceso de entrega", "asignado y en camino",
-	}
-	for _, h := range hechos {
-		if strings.Contains(t, h) {
-			return true
-		}
-	}
-	return false
+	// El pedido HECHO/EN MARCHA, en cualquier redacción. La negación en el hueco lo descarta
+	// ("el pedido aún no está confirmado").
+	return afirmaSecuencia(texto, [][]string{
+		{"pedido", "confirmado"}, {"pedido", "registrado"},
+		{"esta", "confirmado"}, {"quedo", "confirmado"},
+		{"esta", "registrado"}, {"quedo", "registrado"},
+		{"repartidor", "asignado"}, {"conductor", "asignado"},
+		{"repartidor", "fue", "asignado"}, {"conductor", "fue", "asignado"},
+		{"en", "camino"}, {"en", "proceso", "de", "entrega"},
+	}, 3)
 }

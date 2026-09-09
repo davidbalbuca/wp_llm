@@ -1,16 +1,12 @@
-// Package notify manda avisos de operación a un grupo de Telegram: cuándo empieza a hablar un
-// cliente y qué se rompió. Es para la etapa de TEST PRODUCTIVO, donde hace falta enterarse rápido
-// sin abrir el panel.
+// Package notify manda avisos de operación a un grupo de Telegram (inicio de conversación y
+// fallos) para el test productivo.
 //
-// REGLA DE ESTE PAQUETE: es un observador, nunca un participante. Si el token está mal, si no hay
-// red o si Telegram responde error, se escribe una línea en el log y se sigue. Nada de lo que pase
-// aquí puede cortar la conversación del cliente ni cambiar lo que recibe por WhatsApp. Por eso
-// todo entra por Avisar*/Fallo, que arrancan una goroutine y no devuelven error: quien llama no
-// tiene nada que decidir con el resultado.
+// REGLA: es un observador, nunca un participante. Ningún error de Telegram puede cortar ni
+// alterar la conversación del cliente; por eso todo entra por Avisar*/Fallo, que lanzan una
+// goroutine y no devuelven error.
 //
-// Los mensajes van a un grupo con TEMAS (forum) activados: cada cliente tiene su hilo, así el
-// grupo no es un muro cronológico donde se mezclan cinco conversaciones. Los errores van a un
-// hilo aparte. Si el grupo no es forum, todo cae en el general y el bot igual funciona.
+// Los avisos van a un grupo con TEMAS (forum): un hilo por cliente y hilos aparte para errores.
+// Sin forum, todo cae en el general y el bot igual funciona.
 package notify
 
 import (
@@ -27,26 +23,21 @@ import (
 	"wp-llm-gas/internal/conversation"
 )
 
-// ventanaAviso es cuánto dura una "sesión" a efectos del aviso de inicio: dentro de este tiempo,
-// el mismo cliente NO vuelve a generar un aviso verde. Es el mismo criterio de sesión que usa el
-// bot para limpiar el historial (conversation.SessionGap), para que el grupo cuente lo mismo que
-// el bot considera una conversación nueva.
+// ventanaAviso: dentro de este tiempo el mismo cliente no vuelve a generar aviso verde. Igual
+// criterio de sesión que usa el bot para limpiar el historial (conversation.SessionGap).
 const ventanaAviso = conversation.SessionGap
 
-// tiempoLimite acota cada llamada a la API. Corto a propósito: un aviso que tarda no sirve, y
-// nada de lo que hay detrás justifica retener una goroutine.
+// tiempoLimite acota cada llamada a la API. Corto: un aviso que tarda no sirve.
 const tiempoLimite = 8 * time.Second
 
-// topeFallosIguales / ventanaTope limitan los avisos repetidos: si Meta se cae, los 5 notifyOrder*
-// fallan en cadena y sin esto el grupo recibe cientos de mensajes iguales (y se silencia, que es
-// justo lo que no queremos). Se cuenta por MOTIVO, no por cliente: el motivo es lo que se repite.
+// topeFallosIguales / ventanaTope: anti-inundación. Si Meta se cae, los avisos fallarían en
+// cadena y el grupo se llenaría de mensajes iguales (y se silenciaría). Se cuenta por MOTIVO.
 const (
 	topeFallosIguales = 5
 	ventanaTope       = 30 * time.Minute
 )
 
-// Notifier manda los avisos. Se construye una vez en el arranque y se comparte; sus métodos son
-// seguros para usar desde varias goroutines.
+// Notifier manda los avisos. Se construye una vez y se comparte; sus métodos son concurrency-safe.
 type Notifier struct {
 	token        string
 	chatID       string
@@ -69,9 +60,8 @@ type contador struct {
 	avisado bool // ya se dijo en el grupo que se está silenciando este motivo
 }
 
-// New construye el Notifier. Si falta el token o el chat ID devuelve nil: es la forma de apagar
-// la función sin condicionales repartidos por el código — los métodos sobre un *Notifier nil no
-// hacen nada, así que quien llama no necesita comprobar si está configurado.
+// New construye el Notifier. Sin token o chat ID devuelve nil (los métodos sobre *Notifier nil no
+// hacen nada, así que quien llama no comprueba si está configurado).
 func New(token, chatID string, avisarInicio bool, store conversation.Store) *Notifier {
 	token, chatID = strings.TrimSpace(token), strings.TrimSpace(chatID)
 	if token == "" || chatID == "" {
@@ -89,15 +79,12 @@ func New(token, chatID string, avisarInicio bool, store conversation.Store) *Not
 	}
 }
 
-// Activo dice si hay a dónde avisar. Sirve para saltarse trabajo de preparación (armar textos)
-// cuando la función está apagada.
+// Activo dice si hay a dónde avisar (para saltarse armar textos cuando está apagado).
 func (n *Notifier) Activo() bool { return n != nil }
 
-// Default es el notificador del proceso. Existe para que paquetes hondos (agent) puedan avisar
-// sin arrastrar la dependencia por la firma de sus constructores, que tendrían que propagarla
-// hasta sitios que no tienen nada que ver con esto. Se asigna UNA vez en el arranque, antes de
-// que exista cualquier goroutine, y de ahí en adelante es de solo lectura: por eso no lleva
-// mutex. Vale nil cuando Telegram no está configurado, y los métodos sobre nil no hacen nada.
+// Default es el notificador del proceso, para que paquetes hondos (agent) avisen sin propagar la
+// dependencia por sus constructores. Se asigna UNA vez en el arranque (antes de cualquier
+// goroutine) y de ahí es solo lectura, por eso no lleva mutex. nil si Telegram no está configurado.
 var Default *Notifier
 
 // AvisarInicio manda el aviso verde de que un cliente empezó a hablar. Silencioso (no vibra el
@@ -107,7 +94,7 @@ func (n *Notifier) AvisarInicio(phone, nombre, primerMensaje string) {
 	if n == nil || !n.avisarInicio {
 		return
 	}
-	// La marca se toma ANTES de la goroutine: si dos mensajes llegan a la vez, solo uno pasa.
+	// La marca se toma ANTES de la goroutine: con dos mensajes a la vez solo uno pasa.
 	if !n.store.MarcarAvisoInicio(phone, ventanaAviso) {
 		return
 	}
@@ -147,12 +134,10 @@ func (n *Notifier) Fallo(phone, nombre, motivo, detalle string) {
 		if d := strings.TrimSpace(detalle); d != "" {
 			cuerpo += "\n\n<pre>" + html.EscapeString(conversation.Recortar(d, 500)) + "</pre>"
 		}
-		// Al hilo de errores, con sonido y CON el detalle: ahí es donde se trabaja el caso.
+		// Al hilo de errores, con sonido y CON detalle: ahí se trabaja el caso.
 		n.enviar(n.hiloErroresID(), cuerpo, false)
-		// En el hilo del cliente va solo una LÍNEA, silenciosa: sirve para entender su historia
-		// ("¿qué le pasó a este cliente?") sin repetir el bloque entero. Antes se mandaba el
-		// mismo texto a los dos sitios y en la lista del grupo se veían dos avisos idénticos
-		// seguidos, que fue justo lo que se reportó el 08/09.
+		// En el hilo del cliente va solo una LÍNEA silenciosa, para su contexto. Antes se mandaba
+		// el texto completo a los dos sitios y salían dos avisos idénticos seguidos (reportado 08/09).
 		if phone != "" {
 			if hilo := n.hiloDe(phone, nombre); hilo != 0 {
 				n.enviar(hilo, "🔴 "+html.EscapeString(motivo)+" <i>(detalle en Errores del sistema)</i>", true)
@@ -161,15 +146,9 @@ func (n *Notifier) Fallo(phone, nombre, motivo, detalle string) {
 	})
 }
 
-// SinRepartidor avisa de un pedido que quedó sin conductor: el cliente tiene ubicación, producto
-// y cantidad, pero nadie se lo va a llevar salvo que una persona lo gestione.
-//
-// Va aparte de Fallo a propósito, y con su propio hilo. No es un error -el bot buscó, no encontró
-// y se lo dijo al cliente, todo correcto- sino una VENTA en riesgo, y las dos cosas se atienden
-// distinto. Mezcladas en el mismo hilo terminarían ignorándose las dos.
-//
-// Tampoco pasa por el anti-inundación: si cinco clientes se quedan sin repartidor a la vez, hay
-// que ver los cinco. Cada uno es un cliente distinto esperando, no la misma alerta repetida.
+// SinRepartidor avisa de un pedido que quedó sin conductor. Va aparte de Fallo y con su propio
+// hilo: no es un error sino una VENTA en riesgo, y se atienden distinto. Tampoco pasa por el
+// anti-inundación: cada cliente sin repartidor es un caso distinto que hay que ver.
 func (n *Notifier) SinRepartidor(phone, nombre, pedido, motivo string, lat, lng float64) {
 	if n == nil {
 		return
@@ -188,7 +167,7 @@ func (n *Notifier) SinRepartidor(phone, nombre, pedido, motivo string, lat, lng 
 		if motivo != "" {
 			texto += "\n\n" + html.EscapeString(motivo)
 		}
-		// Con sonido: alguien tiene que hacer algo, y cuanto antes.
+		// Con sonido: alguien tiene que gestionarlo cuanto antes.
 		n.enviar(n.hiloSinRepartidorID(), texto, false)
 		if hilo := n.hiloDe(phone, nombre); hilo != 0 {
 			n.enviar(hilo, texto, true)
@@ -196,16 +175,11 @@ func (n *Notifier) SinRepartidor(phone, nombre, pedido, motivo string, lat, lng 
 	})
 }
 
-// Sondeo avisa de alguien que parece estar sacando información del negocio en vez de pedir gas:
-// preguntas por la operación interna, por los números, por datos de otros clientes, o intentos de
-// manipular al asistente para que se salte sus reglas.
+// Sondeo avisa de alguien que parece sacar información del negocio en vez de pedir gas (operación
+// interna, números, datos de otros clientes, o intentos de manipular al asistente).
 //
-// NO es una alarma de que algo se filtró: el bot solo habla de gas y usa el catálogo, así que no
-// tiene nada que contar. Es para que una persona MIRE quién está preguntando — el patrón de una
-// conversación entera de preguntas raras dice algo que un mensaje suelto no dice.
-//
-// Silencioso a propósito: no hay nada que atender de urgencia, y una alerta que suena por algo
-// que no requiere acción inmediata es la que hace que se silencie el grupo entero.
+// NO es alarma de fuga (el bot solo habla de gas): es para que una persona MIRE el patrón de la
+// conversación. Silencioso a propósito: nada urgente que atender.
 func (n *Notifier) Sondeo(phone, nombre, detalle string) {
 	if n == nil {
 		return
@@ -258,9 +232,8 @@ func (n *Notifier) permitido(motivo string) bool {
 	return false
 }
 
-// hiloDe devuelve el hilo del cliente, creándolo la primera vez. Devuelve 0 si no se pudo crear
-// (grupo sin temas o sin permiso): con 0 el mensaje cae en el general, que es un degradado
-// aceptable — se pierde el orden, no el aviso.
+// hiloDe devuelve el hilo del cliente, creándolo la primera vez. 0 si no se pudo crear (grupo sin
+// temas/permiso): el mensaje cae en el general, degradado aceptable (se pierde el orden, no el aviso).
 func (n *Notifier) hiloDe(phone, nombre string) int64 {
 	if id, ok := n.store.GetTelegramThread(phone); ok {
 		return id
@@ -278,18 +251,17 @@ func (n *Notifier) hiloDe(phone, nombre string) int64 {
 	return id
 }
 
-// Claves con las que se PERSISTEN los hilos fijos, en la misma tabla que los de cliente. No
-// son teléfonos, y por eso llevan un prefijo que ningún número puede tener.
+// Claves para PERSISTIR los hilos fijos en la misma tabla que los de cliente. El prefijo "#"
+// evita colisión con cualquier teléfono.
 const (
 	claveHiloErrores       = "#hilo-errores"
 	claveHiloSinRepartidor = "#hilo-sin-repartidor"
 	claveHiloSondeo        = "#hilo-sondeo"
 )
 
-// hiloErroresID / hiloSinRepartidorID / hiloSondeoID son los hilos FIJOS del grupo (no dependen
-// del cliente). Se guardan en la BD igual que los de cliente: antes vivían SOLO en memoria y
-// cada reinicio del bot creaba un hilo nuevo con el mismo nombre. Con los deploys del 08/09 el
-// grupo terminó con una pila de "⚠️ Errores del sistema" repetidos.
+// hiloErroresID / hiloSinRepartidorID / hiloSondeoID son los hilos FIJOS del grupo. Se persisten
+// en BD: antes vivían solo en memoria y cada reinicio creaba un hilo duplicado (los deploys del
+// 08/09 llenaron el grupo de "Errores del sistema" repetidos).
 func (n *Notifier) hiloErroresID() int64 {
 	return n.hiloFijo(&n.hiloErrores, claveHiloErrores, "⚠️ Errores del sistema", 16478047) // rojo
 }
@@ -302,16 +274,12 @@ func (n *Notifier) hiloSondeoID() int64 {
 	return n.hiloFijo(&n.hiloSondeo, claveHiloSondeo, "🕵️ Posibles sondeos", 9367192) // morado
 }
 
-// hiloFijo devuelve el hilo apuntado por destino, creándolo SOLO la primera vez de todas. El
-// orden importa: memoria (rápido) -> BD (sobrevive reinicios) -> crear.
+// hiloFijo devuelve el hilo apuntado por destino, creándolo SOLO la primera vez. Orden: memoria
+// -> BD (sobrevive reinicios) -> crear.
 //
-// Sin el paso de la BD, cada reinicio del bot creaba un hilo nuevo con el mismo nombre; tras
-// los deploys del 08/09 el grupo tenía una pila de "Errores del sistema" idénticos y el equipo
-// no sabía cuál mirar.
-//
-// La creación queda FUERA del lock: es una llamada de red y retenerlo dejaría bloqueado a todo
-// el que quiera avisar. Si dos goroutines entran a la vez puede crearse un hilo de más; se
-// prefiere eso a serializar los avisos detrás de una petición HTTP.
+// La creación queda FUERA del lock (es una llamada de red y retenerlo bloquearía a todos los que
+// avisan). Dos goroutines a la vez pueden crear un hilo de más; se prefiere a serializar avisos
+// detrás de un HTTP.
 func (n *Notifier) hiloFijo(destino *int64, clave, nombre string, color int) int64 {
 	n.mu.Lock()
 	if *destino != 0 {
@@ -320,7 +288,7 @@ func (n *Notifier) hiloFijo(destino *int64, clave, nombre string, color int) int
 	}
 	n.mu.Unlock()
 
-	// ¿Ya existe de una ejecución anterior?
+	// ¿Ya existe de una ejecución anterior (BD)?
 	if id, ok := n.store.GetTelegramThread(clave); ok {
 		n.mu.Lock()
 		*destino = id
@@ -382,8 +350,7 @@ func (n *Notifier) enviar(hilo int64, texto string, silencioso bool) {
 		log.Printf("[telegram] rechazado: %s", resp.Description)
 		return
 	}
-	// Una sola línea por aviso enviado: si falla el anti-inundación o la creación de hilo
-	// callados, al menos queda constancia de que SALIO al grupo.
+	// Constancia de que el aviso SALIÓ al grupo.
 	log.Printf("[telegram] enviado a hilo=%d (silencioso=%v)", hilo, silencioso)
 }
 

@@ -25,7 +25,12 @@ internal/conversation/          # estado por teléfono (Store: memoria o SQLite)
 internal/catalog/catalog.go     # datos del negocio (productos, pagos, zonas)
 internal/escalation/            # derivación al dueño
 internal/llm/                   # proveedor de modelo (gemini | anthropic)
+internal/texto/                 # normalizar + AfirmaSecuencia (candados fantasma). Puro
+internal/geo/                   # distancias entre coordenadas (haversine). Puro
 ```
+
+`texto` y `geo` son paquetes SIN estado: no dependen de Agent ni del store, así que se prueban
+solos. El agente los usa con nombre corto vía `internal/agent/helpers.go`.
 
 Solo se exige la clave del proveedor ELEGIDO: se puede probar Anthropic sin borrar lo de
 Gemini y volver atrás cambiando `LLM_PROVIDER`. Los tipos de `genai` se usan como formato

@@ -124,22 +124,18 @@ func primerNumero(s string) int {
 // pedido sigue vivo en el backend (pasó el 03/09: el bot dijo "he cancelado tu pedido" y el
 // pedido quedó activo hasta que el conductor lo canceló a mano desde su app).
 func afirmaCancelado(texto string) bool {
-	t := normalizar(texto)
-	if t == "" {
+	if esOfrecimiento(normalizar(texto)) {
 		return false
 	}
-	// "cancelaste/cancelé" en pasado + referencia al pedido. Evita "¿quieres cancelar?" (futuro).
-	hechos := []string{
-		"he cancelado", "cancele tu pedido", "pedido cancelado", "quedo cancelado",
-		"tu pedido fue cancelado", "cancelado con exito", "ya cancele", "acabo de cancelar",
-		"lo he cancelado", "cancelamos tu pedido",
-	}
-	for _, h := range hechos {
-		if strings.Contains(t, h) {
-			return true
-		}
-	}
-	return false
+	// El pedido YA cancelado, en cualquier redacción: "pedido cancelado", "pedido ha sido
+	// cancelado", "he cancelado tu pedido". Una negación en el hueco lo descarta ("aún no cancelado").
+	return afirmaSecuencia(texto, [][]string{
+		{"pedido", "cancelado"}, // "tu pedido (ha sido) cancelado"
+		{"cancelado", "pedido"}, // "he cancelado tu pedido"
+		{"cancele", "pedido"},   // "ya cancelé tu pedido"
+		{"cancelamos", "pedido"},
+		{"cancelado", "con", "exito"},
+	}, 3)
 }
 
 // esOfrecimiento dice si el texto OFRECE hacer algo en vez de afirmar que ya se hizo.
@@ -161,22 +157,19 @@ func esOfrecimiento(normalizado string) bool {
 // salvo que el modelo usara además una palabra de pedido confirmado. Lo delató la revisión del
 // 07/09: specs/mapa-reglas-prompt.md daba la regla por cubierta y no lo estaba.
 func afirmaProgramado(texto string) bool {
-	t := normalizar(texto)
-	if t == "" || esOfrecimiento(t) {
+	if esOfrecimiento(normalizar(texto)) {
 		return false
 	}
-	hechos := []string{
-		"quedo agendada", "quedo agendado", "te deje agendada", "te deje agendado",
-		"quedo programada", "quedo programado", "ya agende", "ya programe",
-		"entrega programada para", "agendada para las", "programada para las",
-		"te la agende", "quedo lista para las",
-	}
-	for _, h := range hechos {
-		if strings.Contains(t, h) {
-			return true
-		}
-	}
-	return false
+	// La entrega YA agendada, en cualquier redacción: "quedó programada", "entrega está
+	// programada para hoy", "te la dejé agendada". El 09/09 falló "está programada para hoy a las".
+	return afirmaSecuencia(texto, [][]string{
+		{"entrega", "programada"}, {"entrega", "agendada"},
+		{"quedo", "programada"}, {"quedo", "agendada"},
+		{"quedo", "programado"}, {"quedo", "agendado"},
+		{"deje", "agendada"}, {"deje", "programada"},
+		{"ya", "agende"}, {"ya", "programe"},
+		{"te", "la", "agende"},
+	}, 3)
 }
 
 // afirmaAvisoAlEquipo detecta que el texto le promete al cliente que una persona lo va a
@@ -184,26 +177,19 @@ func afirmaProgramado(texto string) bool {
 // queda esperando una llamada que nadie va a hacer, porque nunca se creó el ticket. No había
 // candado para esto (lo detectó la auditoría del 07/09).
 func afirmaAvisoAlEquipo(texto string) bool {
-	t := normalizar(texto)
-	if t == "" {
+	if esOfrecimiento(normalizar(texto)) {
 		return false
 	}
-	if esOfrecimiento(t) {
-		return false
-	}
-	hechos := []string{
-		"ya avise al equipo", "avise al equipo", "ya notifique al equipo", "notifique al equipo",
-		"ya avise al dueno", "avise al dueno", "ya le avise", "ya informe al equipo",
-		"el equipo se pondra en contacto", "se pondran en contacto", "te van a contactar",
-		"te contactara", "te contactaran", "alguien te escribira", "alguien te contactara",
-		"un asesor se comunicara", "nos pondremos en contacto",
-	}
-	for _, h := range hechos {
-		if strings.Contains(t, h) {
-			return true
-		}
-	}
-	return false
+	// "avisé al equipo" ya hecho, o "te van a contactar" prometido, en cualquier redacción.
+	return afirmaSecuencia(texto, [][]string{
+		{"avise", "equipo"}, {"notifique", "equipo"}, {"informe", "equipo"},
+		{"avise", "dueno"}, {"ya", "le", "avise"},
+		{"se", "pondra", "en", "contacto"}, {"se", "pondran", "en", "contacto"},
+		{"nos", "pondremos", "en", "contacto"},
+		{"te", "van", "a", "contactar"}, {"te", "contactara"}, {"te", "contactaran"},
+		{"alguien", "te", "contactara"}, {"alguien", "te", "escribira"},
+		{"asesor", "se", "comunicara"},
+	}, 3)
 }
 
 // forzarAvisoAlEquipoSiHaceFalta se llama cuando el modelo prometió que el equipo contactaría

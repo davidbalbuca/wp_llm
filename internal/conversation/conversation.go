@@ -161,11 +161,32 @@ type Profile struct {
 
 // LastOrder es el resumen del último pedido exitoso de un cliente. Se guarda (durable) para
 // ofrecerle repetir lo mismo cuando vuelve, en lugar de preguntarle todo desde cero.
+//
+// Guarda TAMBIÉN a dónde se entregó: sin eso "repetir lo mismo" solo puede decir "2 Blanco" y
+// el cliente no sabe si va a su casa o a donde pidió la última vez desde el trabajo.
 type LastOrder struct {
 	Producto string `json:"producto"` // nombre del producto (ej: "GAS 23KG")
 	Color    string `json:"color"`    // color/marca del cilindro
 	Cantidad int    `json:"cantidad"` // cantidad de cilindros
 	Fecha    string `json:"fecha"`    // fecha del pedido, formato legible (dd/mm/aaaa)
+
+	// Dónde se entregó. Alias es el nombre que el cliente le puso ("Casa", Fase B) y Direccion
+	// la calle que resolvió el backend; se prefiere Alias por ser lo que él reconoce.
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+	Alias     string  `json:"alias"`
+	Direccion string  `json:"direccion"`
+}
+
+// Destino devuelve a dónde se entregó el pedido, en el texto que el cliente reconoce: su
+// nombre si lo puso ("Casa"), la calle si no, y "" si el pedido es anterior a esta función
+// (los pedidos viejos no guardaban ubicación). Con "" NO se menciona destino: el bot pide la
+// ubicación como siempre en vez de inventar a dónde va el gas.
+func (l LastOrder) Destino() string {
+	if l.Alias != "" {
+		return l.Alias
+	}
+	return l.Direccion
 }
 
 // PendingRating indica que un pedido del cliente acaba de ser ENTREGADO y el bot le pidió
@@ -205,6 +226,15 @@ type PendingColorSwap struct {
 	ColorOriginal string `json:"color_original"`
 	ColorAlterno  string `json:"color_alterno"`
 	Cantidad      int    `json:"cantidad"`
+}
+
+// PendingGuardarUbicacion es la oferta de guardar la ubicación recién compartida con un nombre
+// ("¿La guardo como Casa?"), esperando la respuesta del cliente. Guarda las coordenadas de esa
+// ubicación concreta: entre la pregunta y la respuesta el cliente puede compartir otra, y el
+// nombre tiene que ir a la que se le preguntó, no a la última que llegó.
+type PendingGuardarUbicacion struct {
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
 }
 
 // PedidoEnCurso es la ficha del pedido que se va armando EN LA CONVERSACIÓN, antes de
@@ -312,6 +342,13 @@ type Store interface {
 	GetPendingColorSwap(phone string) (PendingColorSwap, bool)
 	// ClearPendingColorSwap la elimina (respondió, o ya no aplica).
 	ClearPendingColorSwap(phone string)
+
+	// SetPendingGuardarUbicacion guarda la oferta de nombrar la ubicación recién compartida.
+	SetPendingGuardarUbicacion(phone string, p PendingGuardarUbicacion)
+	// GetPendingGuardarUbicacion devuelve esa oferta (ok=false si no hay).
+	GetPendingGuardarUbicacion(phone string) (PendingGuardarUbicacion, bool)
+	// ClearPendingGuardarUbicacion la elimina (respondió, o ya no aplica).
+	ClearPendingGuardarUbicacion(phone string)
 	// GetOpenTicket devuelve el ticket ABIERTO de ese cliente con ese mismo motivo, si existe.
 	// Sirve para no crear #20, #21 y #22 por el mismo problema: el segundo reporte se suma al
 	// primero en vez de abrir otro caso.

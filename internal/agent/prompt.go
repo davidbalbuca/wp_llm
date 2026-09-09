@@ -39,6 +39,13 @@ func (a *Agent) construirSistema(from string) (fijo, volatil string) {
 				"este mismo pedido (ej: \"¿Deseas lo mismo de la última vez: %d %s %s? ¿O prefieres cambiar algo?\"). "+
 				"Si acepta repetir, solo necesitas confirmar y pedirle la ubicación.",
 				last.Fecha, last.Cantidad, last.Producto, last.Color, last.Cantidad, last.Producto, last.Color)
+			// A dónde fue ese pedido. Sin esto el cliente confirma "lo mismo" sin saber si va a
+			// su casa o a donde pidió la última vez desde otro lado.
+			if destino := last.Destino(); destino != "" {
+				fmt.Fprintf(&b, " Ese pedido se entregó en: %s — MENCIÓNASELO al ofrecer repetir "+
+					"(ej: \"¿te lo envío otra vez a %s?\") y así no tiene que compartir la ubicación de nuevo.",
+					destino, destino)
+			}
 		}
 	}
 
@@ -93,11 +100,11 @@ func (a *Agent) construirSistema(from string) (fijo, volatil string) {
 		}
 	}
 
-	// Hora actual + horario laboral: fuera de horario NO se registran pedidos (regla dura,
-	// también validada en código); se ofrece PROGRAMAR la entrega.
+	// Fecha y hora de Ecuador. Sin la fecha el modelo inventa el día y agenda mal (09/09: dijo
+	// "hoy es sábado" un miércoles). Va en la parte volátil: cambia cada mensaje.
 	ahora := time.Now().In(zonaEcuador)
-	fmt.Fprintf(&b, "\n\nHORA ACTUAL: %s (Ecuador). HORARIO DE ENTREGAS: %s a %s.",
-		ahora.Format("15:04"), a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
+	fmt.Fprintf(&b, "\n\nHOY ES: %s. HORA ACTUAL: %s (Ecuador). HORARIO DE ENTREGAS: %s a %s.",
+		fechaEnEspanol(ahora), ahora.Format("15:04"), a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
 	if !a.dentroDeHorario(ahora) {
 		b.WriteString(" ESTAMOS FUERA DE HORARIO: a esta hora NO hay conductores disponibles, así que NO llames " +
 			"a registrar_pedido. Explícaselo con amabilidad y ofrécele PROGRAMAR la entrega con la herramienta " +
@@ -173,4 +180,14 @@ func cantidadTexto(n int) string {
 		return ""
 	}
 	return strconv.Itoa(n)
+}
+
+// fechaEnEspanol devuelve "miércoles 9 de septiembre de 2026". Go no localiza nombres de
+// día/mes, así que se mapean a mano.
+func fechaEnEspanol(t time.Time) string {
+	dias := [...]string{"domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"}
+	meses := [...]string{"enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+		"agosto", "septiembre", "octubre", "noviembre", "diciembre"}
+	return fmt.Sprintf("%s %d de %s de %d",
+		dias[t.Weekday()], t.Day(), meses[t.Month()-1], t.Year())
 }

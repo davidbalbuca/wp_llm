@@ -7,10 +7,9 @@ import (
 	"strings"
 )
 
-// get hace un GET a path y devuelve el "resultado" del envoltorio, o un error con el
-// "mensaje" del backend. Adjunta el JWT de la cuenta de servicio cuando está configurada
-// (necesario en prod con DEBUG=False). Si el backend responde 401 con un token cacheado,
-// re-autentica una vez y reintenta (el JWT pudo haber vencido).
+// get hace un GET a path y devuelve el "resultado" del envoltorio (o un error con el
+// "mensaje" del backend). Adjunta el JWT de servicio si está configurado y, ante 401,
+// re-autentica una vez y reintenta (JWT vencido).
 func (c *Client) get(path string) (json.RawMessage, error) {
 	token, err := c.serviceToken(false)
 	if err != nil {
@@ -18,11 +17,9 @@ func (c *Client) get(path string) (json.RawMessage, error) {
 	}
 
 	res, status, derr := c.doGet(path, token)
-	// 401 con token: el JWT probablemente venció. Reintentamos con un login forzado ANTES de
-	// rendirnos, AUNQUE el cuerpo del 401 no sea JSON (derr != nil por el decode fallido). Antes
-	// el `if err != nil { return }` salía primero y este reintento NUNCA se alcanzaba: el bot se
-	// quedaba pegado en 401 para siempre y el catálogo jamás se refrescaba hasta reiniciar el
-	// contenedor (precios/descripciones cambiados en el backend no se reflejaban).
+	// El reintento va ANTES del chequeo de derr a propósito: el cuerpo del 401 puede no ser JSON
+	// (derr != nil). Si se comprobara derr primero, nunca se reintentaría y el bot quedaría pegado
+	// en 401 sin refrescar catálogo hasta reiniciar el contenedor.
 	if status == http.StatusUnauthorized && token != "" {
 		token, err = c.serviceToken(true)
 		if err != nil {
@@ -72,9 +69,8 @@ type Color struct {
 	Nombre string `json:"nombre"`
 }
 
-// Product es un producto del catálogo con su precio y los colores/marcas disponibles.
-// El precio que se cobra al cliente incluye TODOS los rubros (unitario + envío +
-// instalación + servicio), no solo el unitario.
+// Product es un producto del catálogo. El precio al cliente incluye TODOS los rubros
+// (unitario + envío + instalación + servicio), no solo el unitario.
 type Product struct {
 	IDCategoria      int     `json:"idcategoria"`
 	IDProducto       int     `json:"idproducto"`

@@ -17,22 +17,18 @@ import (
 const (
 	anthropicURL     = "https://api.anthropic.com/v1/messages"
 	anthropicVersion = "2023-06-01"
-	// Reintentos ante 429 (límite de tasa) y 5xx/529 (sobrecargada). Un cliente esperando su
-	// gas por WhatsApp no debe quedarse sin respuesta por un pico de la API. Con backoff lineal
-	// (2s, 4s, 6s) los 4 intentos cubren ~12s de espera acumulada: el 03/09 hubo un bache de
-	// sobrecarga de ~90s con 6 clientes que fallaron con solo 3 intentos (~6s), demasiado corto.
+	// Reintentos ante 429 y 5xx/529. Backoff lineal (2s,4s,6s): 4 intentos cubren ~12s. El 03/09
+	// un bache de ~90s tumbó a 6 clientes con solo 3 intentos (~6s), demasiado corto.
 	anthropicIntentos = 4
 )
 
-// anthropicProvider habla directo con la API de Mensajes de Anthropic. No se usa un SDK
-// para no arrastrar dependencias nuevas al binario por una prueba: son dos traducciones
-// (herramientas e historial) y un POST.
+// anthropicProvider habla directo con la API de Mensajes de Anthropic (sin SDK, para no sumar
+// dependencias por dos traducciones y un POST).
 type anthropicProvider struct {
 	apiKey    string
 	modelo    string
 	maxTokens int
-	// cacheTTL es cuanto vive el prompt cacheado: "" son los 5 minutos por defecto, "1h" la
-	// hora. Cual conviene depende del ritmo real de conversaciones (ver marcarCache).
+	// cacheTTL: "" = 5 min por defecto, "1h" = la hora (ver marcarCache).
 	cacheTTL string
 	http     *http.Client
 }
@@ -53,8 +49,7 @@ func NewAnthropic(apiKey, modelo string, maxTokens int, cacheTTL string) (Provid
 		modelo:    modelo,
 		maxTokens: maxTokens,
 		cacheTTL:  cacheTTL,
-		// El webhook de WhatsApp ya respondió 200 antes de llegar aquí, así que este timeout
-		// solo acota cuánto esperamos al modelo antes de darnos por vencidos.
+		// El webhook ya respondió 200; este timeout solo acota cuánto esperamos al modelo.
 		http: &http.Client{Timeout: 90 * time.Second},
 	}, nil
 }
@@ -138,8 +133,7 @@ func (a *anthropicProvider) Generate(ctx context.Context, system System, history
 		}
 	}
 
-	// Consumo a la vista: es lo que se factura, y con el bot en producción conviene poder
-	// mirarlo en el log sin entrar a la consola de Anthropic.
+	// Consumo a la vista en el log: es lo que se factura, sin entrar a la consola de Anthropic.
 	log.Printf("[llm] anthropic %s entrada=%d cache_lee=%d cache_escribe=%d salida=%d motivo=%s",
 		a.modelo, datos.Usage.InputTokens, datos.Usage.CacheReadInputTokens,
 		datos.Usage.CacheCreationInputTokens, datos.Usage.OutputTokens, datos.StopReason)
@@ -174,8 +168,7 @@ func (a *anthropicProvider) Generate(ctx context.Context, system System, history
 	}, nil
 }
 
-// errorAPI distingue lo que vale la pena reintentar de lo que no: una clave inválida no
-// mejora reintentando.
+// errorAPI distingue lo reintentable de lo que no (una clave inválida no mejora reintentando).
 type errorAPI struct {
 	codigo  int
 	mensaje string
@@ -233,17 +226,12 @@ func (a *anthropicProvider) enviar(ctx context.Context, cuerpo []byte) (anthResp
 
 // --- Cacheo del prompt ---
 //
-// Anthropic cobra a la decima parte el texto que ya vio, siempre que el PRINCIPIO del prompt
-// sea identico byte a byte. En este bot la mayor parte de cada llamada es exactamente eso:
-// las reglas del bot y las diez herramientas viajan enteras en cada mensaje, y se repiten
-// unas seis veces por conversacion.
+// Anthropic cobra 0.1x el texto ya visto si el PRINCIPIO del prompt es idéntico byte a byte. Aquí
+// eso es casi toda la llamada (reglas + herramientas, repetidas ~6 veces por conversación). No
+// cambia lo que el modelo lee ni responde, solo el precio.
 //
-// Cachear NO cambia lo que el modelo lee ni lo que contesta: es el mismo prompt, cobrado
-// distinto. Solo cambia el precio.
-//
-// Se marcan dos cortes: uno al final de la parte fija del sistema (que arrastra tambien a las
-// herramientas, porque van antes en el prompt) y otro al final del ultimo mensaje, para que la
-// conversacion acumulada tampoco se pague entera en cada vuelta.
+// Se marcan dos cortes: al final del sistema fijo (arrastra las herramientas, que van antes) y al
+// final del último mensaje (para no pagar el historial acumulado en cada vuelta).
 
 // bloqueCache devuelve la marca de cacheo con el TTL configurado.
 func (a *anthropicProvider) bloqueCache() map[string]any {
@@ -259,7 +247,7 @@ func (a *anthropicProvider) sistemaEnBloques(system System) []map[string]any {
 	var out []map[string]any
 	if fijo := system.Estatico; fijo != "" {
 		bloque := map[string]any{"type": "text", "text": fijo}
-		// Por debajo del minimo cacheable la API ignora la marca; no se pone y listo.
+		// Por debajo del mínimo cacheable la API ignora la marca; no se pone.
 		if len(fijo) > 8000 {
 			bloque["cache_control"] = a.bloqueCache()
 		}
@@ -271,8 +259,8 @@ func (a *anthropicProvider) sistemaEnBloques(system System) []map[string]any {
 	return out
 }
 
-// marcarCache marca el final de la conversacion para que la proxima vuelta no vuelva a pagar
-// el historial completo. Cada llamada solo escribe en cache lo que se agrego desde la anterior.
+// marcarCache marca el final de la conversación para no repagar el historial completo en la
+// próxima vuelta.
 func (a *anthropicProvider) marcarCache(mensajes []anthMensaje) {
 	if len(mensajes) == 0 {
 		return

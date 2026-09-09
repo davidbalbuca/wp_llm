@@ -696,6 +696,12 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	// Determina el texto a procesar por la IA.
 	messageForAgent := inc.Text
 
+	// Ubicación recibida en ESTE mensaje: al final del turno se le ofrece guardarla con un
+	// nombre. Se anota aquí (y no se ofrece ya) para no interponer una pregunta administrativa
+	// entre la ubicación del cliente y el pedido que vino a hacer.
+	var ubicacionNueva bool
+	var ubicLat, ubicLng float64
+
 	// Mensaje de ubicación: lo guardamos y avisamos a la IA (en nombre del cliente)
 	// que ya compartió su ubicación, para que pueda continuar/cerrar el pedido.
 	if inc.HasLocation {
@@ -704,6 +710,7 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		if fueraDeCobertura(cfg, store, gr, inc.From, inc.Latitude, inc.Longitude) {
 			return
 		}
+		ubicacionNueva, ubicLat, ubicLng = true, inc.Latitude, inc.Longitude
 		messageForAgent = "He compartido mi ubicación actual."
 	} else if inc.IsText {
 		// Muchos clientes pegan la ubicación como enlace de Google Maps o texto con
@@ -715,6 +722,7 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 			if fueraDeCobertura(cfg, store, gr, inc.From, lat, lng) {
 				return
 			}
+			ubicacionNueva, ubicLat, ubicLng = true, lat, lng
 			messageForAgent = "He compartido mi ubicación actual."
 		} else {
 			log.Printf("[webhook] mensaje de %s: %q", inc.From, inc.Text)
@@ -811,6 +819,16 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 			}
 			return
 		}
+		// El nombre de la ubicación va DESPUÉS de los demás: los otros menús resuelven cosas
+		// urgentes (el pedido, la espera, la calificación) y este es un extra. Si el cliente
+		// ignora la pregunta y sigue con su pedido, este devuelve false y el turno continúa.
+		if reply, manejado := ag.ResponderGuardarUbicacion(inc.From, inc.Text); manejado {
+			log.Printf("[webhook] guardar ubicacion resuelto para %s", inc.From)
+			if reply != "" {
+				_ = replyClient(cfg, store, inc.From, reply)
+			}
+			return
+		}
 	}
 
 	// Timeout del turno: si el proveedor del modelo se cuelga, el turno se aborta, el cliente
@@ -863,6 +881,13 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		store.ClearPendingVerification(inc.From)
 	}
 	log.Printf("[webhook] respuesta enviada a %s ✔", inc.From)
+
+	// Ubicación nueva: ofrecerle guardarla con un nombre ("Casa"). Va AL FINAL, después de que
+	// el bot ya atendió lo que el cliente vino a hacer: la pregunta es un extra y no puede
+	// colarse entre su ubicación y su pedido. Si no acepta, no pasa nada; el flujo sigue igual.
+	if ubicacionNueva && !res.Escalo {
+		ag.OfrecerGuardarUbicacion(inc.From, ubicLat, ubicLng)
+	}
 }
 
 // notifyOrderFinished maneja el aviso del backend de que un pedido se entregó: le manda al

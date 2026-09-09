@@ -107,14 +107,23 @@ func (a *Agent) ResponderRepetirPedido(from, texto string) (string, bool) {
 		return "", false
 	}
 
-	log.Printf("[menu-repetir] %s repite su último pedido en código: %d x %s", from, last.Cantidad, last.Color)
+	log.Printf("[menu-repetir] %s repite su último pedido en código: %s", from, describirPedido(last))
 	a.store.SetPedidoEnCurso(from, conversation.PedidoEnCurso{
 		Color: last.Color, Cantidad: last.Cantidad, Flujo: conversation.FlujoInmediato,
 	})
 
 	if _, hayUbicacion := a.store.GetLocation(from); !hayUbicacion {
-		return fmt.Sprintf("¡Listo! %d %s como la última vez 🙌 Compárteme tu ubicación por WhatsApp 📎 "+
-			"y te lo envío enseguida.", last.Cantidad, last.Color), true
+		// Sin ubicación en curso hay que pedírsela igual, aunque sepamos a dónde fue la última
+		// vez: la guardada puede ser vieja y el cliente estar en otro lado. Se nombra el destino
+		// anterior para que entienda por qué se la pedimos otra vez.
+		texto := fmt.Sprintf("¡Listo! %d %s como la última vez 🙌 ", last.Cantidad, last.Color)
+		if destino := last.Destino(); destino != "" {
+			texto += fmt.Sprintf("La última vez te lo entregamos en %s. Compárteme tu ubicación "+
+				"por WhatsApp 📎 y te lo envío enseguida.", destino)
+		} else {
+			texto += "Compárteme tu ubicación por WhatsApp 📎 y te lo envío enseguida."
+		}
+		return texto, true
 	}
 
 	// Con ubicación y ficha completa ya no falta nada: se registra AQUÍ MISMO. Decirle "ya te

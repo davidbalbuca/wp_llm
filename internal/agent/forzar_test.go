@@ -43,11 +43,23 @@ func TestAfirmaCancelado(t *testing.T) {
 			t.Errorf("NO detectó cancelación afirmada: %q", m)
 		}
 	}
+	// Caso REAL del 09/09 que el detector viejo no atrapó: "ha sido" en medio de "pedido
+	// cancelado". Es el bug que motivó unificar la detección.
+	if !afirmaCancelado("Listo, David. Tu pedido ha sido cancelado 🙏") {
+		t.Error("no detectó el caso real del 09/09 con palabras intercaladas: 'pedido ha sido cancelado'")
+	}
+
 	legitimos := []string{
 		"¿Quieres cancelar tu pedido?",
 		"Si deseas cancelar, dímelo.",
 		"Tu pedido está confirmado y en camino 🚚.",
 		"¿En qué te puedo ayudar?",
+		// NEGACIÓN: el modelo admite que NO se canceló. No debe disparar el forzado.
+		"Acabo de verificar y tu pedido aún no ha sido cancelado, sigue activo.",
+		"Tu pedido no se ha cancelado todavía.",
+		// Negación con el verbo antes del objeto ("no he cancelado tu pedido"): el 'no' va
+		// antes del inicio de la secuencia, no en el hueco.
+		"No he cancelado tu pedido, sigue en curso.",
 	}
 	for _, m := range legitimos {
 		if afirmaCancelado(m) {
@@ -176,11 +188,19 @@ func TestAfirmaProgramado(t *testing.T) {
 		}
 	}
 
+	// Caso REAL del 09/09: "está programada PARA HOY A LAS" — el "está ... para hoy a las" en
+	// medio hacía que el detector viejo ("programada para") no calzara.
+	if !afirmaProgramado("¡Listo! Tu entrega está programada para hoy a las 12:00.") {
+		t.Error("no detectó el caso real del 09/09: 'entrega está programada para hoy a las'")
+	}
+
 	noAgenda := []string{
 		"¿A qué hora te gustaría recibirlo?",
 		"Atendemos de 07:00 a 19:00, dime qué hora prefieres",
 		"¿Quieres que te la agende para mañana?",
 		"",
+		// NEGACIÓN: aún no se agendó.
+		"Tu entrega aún no está programada, dame la hora y la dejo lista.",
 	}
 	for _, txt := range noAgenda {
 		if afirmaProgramado(txt) {

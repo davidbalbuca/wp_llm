@@ -3,6 +3,7 @@ package agent
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"wp-llm-gas/internal/catalog"
 	"wp-llm-gas/internal/config"
@@ -39,9 +40,12 @@ func TestConstruirSistemaBloques(t *testing.T) {
 		if strings.Contains(vol, "YA compartio su ubicacion") {
 			t.Error("sin ubicación guardada no debe afirmar que la compartió")
 		}
-		// La hora SIEMPRE va (en positivo o negativo).
+		// Fecha y hora SIEMPRE van: sin la fecha el modelo inventa el día y agenda mal.
 		if !strings.Contains(vol, "HORA ACTUAL:") {
 			t.Error("siempre debe incluir HORA ACTUAL")
+		}
+		if !strings.Contains(vol, "HOY ES:") {
+			t.Error("siempre debe incluir la fecha (HOY ES); sin ella el modelo inventa el día")
 		}
 	})
 
@@ -162,5 +166,21 @@ func TestRenderCobertura(t *testing.T) {
 	}
 	if strings.Contains(vacio, "AZUAY") {
 		t.Error("sin zonas del backend no puede aparecer ninguna zona")
+	}
+}
+
+// fechaEnEspanol debe dar el día de la semana y el mes correctos en español: es lo que evita
+// que el modelo invente el día (09/09 dijo "sábado" un miércoles).
+func TestFechaEnEspanol(t *testing.T) {
+	// Miércoles 9 de septiembre de 2026, en zona de Ecuador.
+	d := time.Date(2026, 9, 9, 7, 32, 0, 0, zonaEcuador)
+	got := fechaEnEspanol(d)
+	if got != "miércoles 9 de septiembre de 2026" {
+		t.Errorf("fecha mal formada: %q", got)
+	}
+	// Un domingo (índice 0 del arreglo de días) y diciembre (índice 11 de meses): los extremos.
+	dom := time.Date(2026, 12, 6, 10, 0, 0, 0, zonaEcuador)
+	if got := fechaEnEspanol(dom); got != "domingo 6 de diciembre de 2026" {
+		t.Errorf("los extremos del mapa fallan: %q", got)
 	}
 }

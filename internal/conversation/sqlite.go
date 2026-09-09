@@ -3,6 +3,7 @@ package conversation
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -274,9 +275,40 @@ CREATE TABLE IF NOT EXISTS pedido_en_curso (
 		db.Close()
 		return nil, err
 	}
+	if err := agregarColumnasNuevas(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	st := &sqliteStore{db: db, auditTTL: time.Duration(auditDays) * 24 * time.Hour}
 	st.arrancarCheckpoints()
 	return st, nil
+}
+
+// agregarColumnasNuevas añade columnas a tablas que YA EXISTEN en la base de producción.
+//
+// El esquema de arriba usa CREATE TABLE IF NOT EXISTS: en una base ya creada no se aplica, así
+// que una columna nueva escrita ahí NO existiría en producción y toda lectura de esa tabla
+// fallaría al arrancar. Por eso los ALTER van aquí, uno por columna e IDEMPOTENTES: si la
+// columna ya está, SQLite devuelve "duplicate column name" y se ignora.
+func agregarColumnasNuevas(db *sql.DB) error {
+	// tabla -> columnas con su definición. Añadir aquí toda columna nueva sobre tabla existente.
+	nuevas := map[string][]string{
+		"last_orders": {
+			"latitude REAL NOT NULL DEFAULT 0",
+			"longitude REAL NOT NULL DEFAULT 0",
+			"alias TEXT NOT NULL DEFAULT ''",
+			"direccion TEXT NOT NULL DEFAULT ''",
+		},
+	}
+	for tabla, columnas := range nuevas {
+		for _, col := range columnas {
+			_, err := db.Exec("ALTER TABLE " + tabla + " ADD COLUMN " + col)
+			if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("agregando %s a %s: %w", col, tabla, err)
+			}
+		}
+	}
+	return nil
 }
 
 // arrancarCheckpoints fuerza cada 10 minutos un checkpoint TRUNCATE, que vuelca el WAL a la base
@@ -878,15 +910,21 @@ func (s *sqliteStore) GetProfile(phone string) (Profile, bool) {
 
 func (s *sqliteStore) SetLastOrder(phone string, order LastOrder) {
 	if _, err := s.db.Exec(`
-        INSERT INTO last_orders(phone, producto, color, cantidad, fecha, updated_at)
-        VALUES(?, ?, ?, ?, ?, ?)
+        INSERT INTO last_orders(phone, producto, color, cantidad, fecha,
+                                latitude, longitude, alias, direccion, updated_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(phone) DO UPDATE SET
             producto=excluded.producto,
             color=excluded.color,
             cantidad=excluded.cantidad,
             fecha=excluded.fecha,
+            latitude=excluded.latitude,
+            longitude=excluded.longitude,
+            alias=excluded.alias,
+            direccion=excluded.direccion,
             updated_at=excluded.updated_at`,
-		phone, order.Producto, order.Color, order.Cantidad, order.Fecha, time.Now().Unix()); err != nil {
+		phone, order.Producto, order.Color, order.Cantidad, order.Fecha,
+		order.Latitude, order.Longitude, order.Alias, order.Direccion, time.Now().Unix()); err != nil {
 		log.Printf("[sqlite] SetLastOrder %s: %v", phone, err)
 	}
 }
@@ -894,8 +932,10 @@ func (s *sqliteStore) SetLastOrder(phone string, order LastOrder) {
 func (s *sqliteStore) GetLastOrder(phone string) (LastOrder, bool) {
 	var order LastOrder
 	err := s.db.QueryRow(
-		`SELECT producto, color, cantidad, fecha FROM last_orders WHERE phone = ?`, phone).
-		Scan(&order.Producto, &order.Color, &order.Cantidad, &order.Fecha)
+		`SELECT producto, color, cantidad, fecha, latitude, longitude, alias, direccion
+         FROM last_orders WHERE phone = ?`, phone).
+		Scan(&order.Producto, &order.Color, &order.Cantidad, &order.Fecha,
+			&order.Latitude, &order.Longitude, &order.Alias, &order.Direccion)
 	if err == sql.ErrNoRows {
 		return LastOrder{}, false
 	}
@@ -1009,6 +1049,28 @@ func (s *sqliteStore) GetPendingColorSwap(phone string) (PendingColorSwap, bool)
 
 func (s *sqliteStore) ClearPendingColorSwap(phone string) {
 	colorSwapMem.Delete(phone)
+}
+
+// guardarUbicMem: la oferta de nombrar la ubicación vive en memoria como la de cambio de color.
+// Es de un solo turno -se pregunta y se responde en el momento-, así que no merece una tabla; y
+// si el bot se reinicia entremedias, lo peor que pasa es que no se guarde el nombre y se le
+// vuelva a ofrecer en el pedido siguiente.
+var guardarUbicMem sync.Map // phone -> PendingGuardarUbicacion
+
+func (s *sqliteStore) SetPendingGuardarUbicacion(phone string, p PendingGuardarUbicacion) {
+	guardarUbicMem.Store(phone, p)
+}
+
+func (s *sqliteStore) GetPendingGuardarUbicacion(phone string) (PendingGuardarUbicacion, bool) {
+	v, ok := guardarUbicMem.Load(phone)
+	if !ok {
+		return PendingGuardarUbicacion{}, false
+	}
+	return v.(PendingGuardarUbicacion), true
+}
+
+func (s *sqliteStore) ClearPendingGuardarUbicacion(phone string) {
+	guardarUbicMem.Delete(phone)
 }
 
 // --- Pedido en curso (ficha de lo que el cliente va eligiendo) ---

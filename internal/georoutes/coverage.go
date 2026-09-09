@@ -19,8 +19,7 @@ type respuestaZonas struct {
 	Zonas        []ZonaCobertura `json:"zonas"`
 }
 
-// GetCoverageZones trae las zonas con cobertura activa (GET /getCoverageZones/). Si mañana
-// se cargan zonas nuevas en el panel, aparecen aquí sin tocar el bot.
+// GetCoverageZones trae las zonas con cobertura activa (GET /getCoverageZones/).
 func (c *Client) GetCoverageZones() (bool, []ZonaCobertura, error) {
 	res, err := c.get("/getCoverageZones/")
 	if err != nil {
@@ -40,10 +39,8 @@ type ResultadoCobertura struct {
 	Zona     string `json:"zona"`
 }
 
-// CheckCoverage verifica la ubicación del cliente ANTES de seguir con el pedido
-// (POST /checkCoverage/). El teléfono viaja para que, si el punto está fuera de zona, el
-// backend registre la demanda (DemandaFueraDeZona): no es un error, es el mapa de dónde
-// conviene expandirse.
+// CheckCoverage verifica la ubicación ANTES de seguir con el pedido (POST /checkCoverage/). El
+// teléfono viaja para que, fuera de zona, el backend registre la demanda (DemandaFueraDeZona).
 func (c *Client) CheckCoverage(latitude, longitude float64, telefono string) (ResultadoCobertura, error) {
 	res, err := c.post("/checkCoverage/", map[string]any{
 		"latitude":  latitude,
@@ -71,10 +68,9 @@ type respuestaAlternativas struct {
 	Alternativas []AlternativaColor `json:"alternativas"`
 }
 
-// CheckColorAlternatives consulta, tras un pedido sin conductor, si algún color equivalente
-// SÍ tiene conductor disponible (POST /checkColorAlternatives/). El backend pregunta a la
-// misma función de las 5 compuertas, así que una alternativa devuelta es real: conductor
-// activo, en zona, con el producto y con stock.
+// CheckColorAlternatives consulta, tras un pedido sin conductor, si algún color equivalente SÍ
+// tiene conductor (POST /checkColorAlternatives/). Usa la misma función de las 5 compuertas, así
+// que una alternativa devuelta es real: conductor activo, en zona, con producto y stock.
 func (c *Client) CheckColorAlternatives(latitude, longitude float64, idproducto, idcolor, cantidad int) ([]AlternativaColor, error) {
 	res, err := c.post("/checkColorAlternatives/", map[string]any{
 		"latitude":   latitude,
