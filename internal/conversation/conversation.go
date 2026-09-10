@@ -414,6 +414,10 @@ type Store interface {
 	DueScheduled(now int64) []ScheduledOrder
 	// GetConfirmingSchedule devuelve el programado EN CONFIRMACIÓN de un cliente (si hay).
 	GetConfirmingSchedule(phone string) (ScheduledOrder, bool)
+	// TieneProgramacionViva dice si el cliente ya tiene una entrega agendada que aún va a
+	// ocurrir (pendiente o en confirmación). Lo usa el candado del fantasma para no "rescatar"
+	// una programación que ya existe.
+	TieneProgramacionViva(phone string) bool
 	// CerrarProgramadoEnEspera cierra la entrega agendada que quedo buscando repartidor: pasa a
 	// confirmado si se asigno, o a sin_repartidor si se agotaron los 5 minutos. Sin esto el panel
 	// se queda diciendo "buscando" para siempre. No hace nada si el cliente no venia de una

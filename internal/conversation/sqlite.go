@@ -563,6 +563,17 @@ func (s *sqliteStore) GetConfirmingSchedule(phone string) (ScheduledOrder, bool)
 	return out[0], true
 }
 
+func (s *sqliteStore) TieneProgramacionViva(phone string) bool {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM scheduled_orders
+        WHERE phone = ? AND estado IN (?, ?)`, phone, SchedulePendiente, ScheduleConfirmando).Scan(&n)
+	if err != nil {
+		log.Printf("[sqlite] TieneProgramacionViva %s: %v", phone, err)
+		return false
+	}
+	return n > 0
+}
+
 func (s *sqliteStore) SetScheduledEstado(id int64, estado string) {
 	if _, err := s.db.Exec(`UPDATE scheduled_orders SET estado = ? WHERE id = ?`, estado, id); err != nil {
 		log.Printf("[sqlite] SetScheduledEstado %d: %v", id, err)

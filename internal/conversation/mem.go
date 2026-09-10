@@ -208,6 +208,17 @@ func (s *memStore) GetConfirmingSchedule(phone string) (ScheduledOrder, bool) {
 	return ScheduledOrder{}, false
 }
 
+func (s *memStore) TieneProgramacionViva(phone string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, o := range s.scheduled {
+		if o.Phone == phone && (o.Estado == SchedulePendiente || o.Estado == ScheduleConfirmando) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *memStore) SetScheduledEstado(id int64, estado string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

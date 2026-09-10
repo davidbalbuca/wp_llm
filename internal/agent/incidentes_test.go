@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"google.golang.org/genai"
 
@@ -145,6 +146,92 @@ func TestIncidente_ProgramacionFantasma(t *testing.T) {
 		t.Errorf("le confirmó una programación que no existe: %q", res.Texto)
 	}
 }
+
+// INCIDENTE 10/09 — EL CANDADO MINTIÓ (Ilda). Su pedido SÍ estaba registrado (#231, repartidor
+// Carlos). Escribió "a lado de la funeraria" —solo una referencia de su casa—, el modelo repitió
+// con razón que su pedido estaba confirmado, y como en ESE turno no se llamó ninguna herramienta
+// el candado lo tomó por fantasma: le respondió "tuve un problema al registrar tu pedido" y la
+// hizo repetir color, cantidad y ubicación de un pedido que ya existía.
+func TestIncidente_PedidoRealNoSeTratacomoFantasma(t *testing.T) {
+	const from = "593999100010"
+	store := conversation.NewMemStore()
+	store.SetLocation(from, -2.898331, -78.972586)
+	store.SetActivePedido(from, 231) // el pedido de Ilda: existe de verdad
+	fake := &modeloQueDice{respuestas: []string{
+		"Tu pedido está confirmado y el repartidor Carlos va en camino 🚚",
+	}}
+	ag := agentIncidente(fake, store)
+
+	res, err := ag.HandleMessage(context.Background(), from, "a lado de la funeraria")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if strings.Contains(res.Texto, "Disculpa") {
+		t.Errorf("se disculpó por un pedido que SÍ existe: %q", res.Texto)
+	}
+	if !strings.Contains(res.Texto, "camino") {
+		t.Errorf("pisó la respuesta correcta del modelo: %q", res.Texto)
+	}
+	if id, hay := store.GetActivePedido(from); !hay || id != 231 {
+		t.Errorf("se perdió el pedido real: id=%d hay=%v", id, hay)
+	}
+}
+
+// Misma trampa del lado de la PROGRAMACIÓN: el cliente ya tiene su entrega agendada y solo
+// escribe otra cosa. Repetir "quedó agendada" es verdad, no un fantasma que haya que rescatar.
+func TestIncidente_ProgramacionRealNoSeTratacomoFantasma(t *testing.T) {
+	const from = "593999100011"
+	store := conversation.NewMemStore()
+	store.SetLocation(from, -2.9, -79.0)
+	store.CreateScheduled(conversation.ScheduledOrder{
+		Phone: from, Cantidad: 1, ColorNombre: "BLANCO",
+		Estado: conversation.SchedulePendiente,
+	})
+	fake := &modeloQueDice{respuestas: []string{
+		"Tu entrega quedó agendada para las 18:30 📅",
+	}}
+	ag := agentIncidente(fake, store)
+
+	ag.anotarDelMensaje(from, "Blanco")
+	ag.anotarDelMensaje(from, "1")
+	ag.anotarDelMensaje(from, "18:30")
+
+	res, err := ag.HandleMessage(context.Background(), from, "gracias")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if strings.Contains(res.Texto, "Disculpa") {
+		t.Errorf("se disculpó por una programación que SÍ existe: %q", res.Texto)
+	}
+}
+
+// Un pedido activo COLGADO (el backend nunca lo cerró) no puede volver ciego al candado: pasada
+// la ventana de huérfanos deja de contar como vivo, para que un fantasma real siga detectándose.
+func TestIncidente_PedidoHuerfanoNoTapaAlFantasma(t *testing.T) {
+	const from = "593999100012"
+	store := conversation.NewMemStore()
+	store.SetLocation(from, -2.9, -79.0)
+	store.SetActivePedido(from, 99)
+	ag := agentIncidente(nil, store)
+
+	if !ag.tienePedidoVivo(from) {
+		t.Fatal("un pedido recién creado tiene que contar como vivo")
+	}
+
+	ag.store = storeConPedidoViejo{Store: store, edad: ventanaPedidoActivo + time.Hour}
+	if ag.tienePedidoVivo(from) {
+		t.Error("un pedido huérfano no puede seguir contando como vivo")
+	}
+}
+
+// storeConPedidoViejo envejece el pedido activo sin esperar horas: solo cambia hace cuánto se
+// marcó. Todo lo demás lo resuelve el store real.
+type storeConPedidoViejo struct {
+	conversation.Store
+	edad time.Duration
+}
+
+func (s storeConPedidoViejo) ActivePedidoDesde(string) time.Duration { return s.edad }
 
 // INCIDENTE 05/09 (bis) — LA HORA REPETIDA. La clienta dijo "6h30" y luego "18:30 pm", y el bot
 // le pidió confirmar la hora TRES veces. Con la ficha, la hora se guarda cuando la dice.

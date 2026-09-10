@@ -87,6 +87,21 @@ func (a *Agent) forzarRegistroSiHaceFalta(t *turno, from string) (string, bool) 
 	}
 }
 
+// tienePedidoVivo dice si el cliente TIENE AHORA un pedido en marcha: uno registrado en el
+// backend, o uno esperando repartidor. Es la verdad durable contra la que se contrasta lo que
+// el modelo afirma, para no "rescatar" un pedido que ya existe.
+//
+// Usa la misma ventana que la idempotencia de registrarPedido: un activo más viejo que eso se
+// considera huérfano (el backend nunca lo cerró) y NO cuenta como vivo, para que un cliente con
+// un pedido colgado siga pudiendo pedir de verdad.
+func (a *Agent) tienePedidoVivo(from string) bool {
+	if _, hay := a.store.GetPendingWait(from); hay {
+		return true
+	}
+	id, hay := a.store.GetActivePedido(from)
+	return hay && id > 0 && a.store.ActivePedidoDesde(from) <= ventanaPedidoActivo
+}
+
 // inferirPedido dice qué color y cantidad pidió el cliente. Lee la FICHA del pedido en curso
 // (ver encurso.go), que se escribe en el momento en que el cliente elige cada dato.
 //

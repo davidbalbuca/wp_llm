@@ -408,6 +408,15 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// haber llamado a la herramienta — un pedido que nunca existió, un cliente esperando gas que
 	// nadie iba a llevar. El prompt ya lo prohíbe, pero esto es el candado que no depende del
 	// modelo: si afirma una confirmación sin respaldo, se reemplaza por un mensaje honesto.
+	//
+	// Un pedido es fantasma solo si la afirmación es FALSA. No basta con que este turno no haya
+	// llamado la herramienta: el cliente pudo pedir hace dos mensajes y ahora solo estar dando
+	// una referencia de su casa. El 10/09 le pasó a Ilda — su pedido #231 estaba registrado
+	// (Carlos, placa ABB04517), escribió "a lado de la funeraria", el modelo repitió con razón
+	// que su pedido estaba confirmado, y el candado le respondió "tuve un problema al registrar
+	// tu pedido" y la hizo repetir color, cantidad y ubicación de un pedido que ya existía.
+	// Por eso se pregunta por el estado DURABLE (igual que hace la cancelación), no por un
+	// booleano del turno: si el pedido ya vive, no hay nada que rescatar.
 	if !t.menuSent && !t.ultimoPedido.ok && !t.ultimoPedido.enEspera &&
 		(afirmaPedidoConfirmado(reply) || (!t.programo && afirmaProgramado(reply))) {
 		// Si el cliente pidió PROGRAMAR (dijo una hora) y el modelo afirmó sin llamar la tool, lo
@@ -415,12 +424,19 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 		// 05/09: pidió agendar para las 18:30, el modelo lo confirmó sin llamar programar_entrega,
 		// y el candado del fantasma le forzó una ESPERA de conductor. La programación nunca se
 		// creó y a las 18:30 no iba a pasar nada, aunque un humano ya le había confirmado la hora.
-		if !t.programo && a.clienteQuiereProgramar(from) {
+		switch {
+		case a.tienePedidoVivo(from):
+			log.Printf("[fantasma] %s: el modelo afirmó un pedido y el pedido EXISTE; no se fuerza nada", from)
+		case !t.programo && a.clienteQuiereProgramar(from):
+			if a.store.TieneProgramacionViva(from) {
+				log.Printf("[fantasma] %s: el modelo afirmó una programación y la programación EXISTE; no se fuerza nada", from)
+				break
+			}
 			log.Printf("[fantasma] %s: el modelo afirmó una programación sin llamar programar_entrega; se fuerza", from)
 			if forzado, ok := a.forzarProgramacionSiHaceFalta(t, from); ok {
 				reply = forzado
 			}
-		} else {
+		default:
 			log.Printf("[fantasma] %s: el modelo afirmó un pedido sin registrar_pedido; se fuerza el registro", from)
 			if forzado, ok := a.forzarRegistroSiHaceFalta(t, from); ok {
 				reply = forzado
