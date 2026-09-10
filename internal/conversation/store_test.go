@@ -120,3 +120,53 @@ func envejecerPedidoEnCurso(t *testing.T, s Store, phone string, edad time.Durat
 		t.Fatalf("backend desconocido: %T", s)
 	}
 }
+
+// El nombre de WhatsApp se guarda en CADA mensaje, así que no puede pisar la cédula ni el
+// nombre legal del cliente (que es el que va al backend con el pedido). Se prueba contra los
+// dos backends: si divergen, el bot se comporta distinto en dev y en producción.
+func TestPerfilWhatsAppNoPisaLosDatosDelCliente(t *testing.T) {
+	backends := map[string]func() Store{
+		"mem": func() Store { return NewMemStore() },
+		"sqlite": func() Store {
+			s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "bot.db"), 15)
+			if err != nil {
+				t.Fatalf("abrir sqlite: %v", err)
+			}
+			return s
+		},
+	}
+
+	for nombre, nuevo := range backends {
+		t.Run(nombre, func(t *testing.T) {
+			s := nuevo()
+			const phone = "593963646872"
+
+			// Llega un mensaje antes de que el cliente dé ningún dato.
+			s.SetPerfilWhatsApp(phone, "Guillermo Pacheco")
+			p, ok := s.GetProfile(phone)
+			if !ok || p.PerfilWhatsApp != "Guillermo Pacheco" {
+				t.Fatalf("no se guardó el nombre de WhatsApp: ok=%v perfil=%+v", ok, p)
+			}
+
+			// Se registra con su cédula y nombre legal.
+			s.SetProfile(phone, Profile{Identificacion: "0152648176", Nombres: "Guillermo Pacheco",
+				PerfilWhatsApp: "Guillermo Pacheco"})
+
+			// Sigue conversando: cada mensaje reescribe el nombre de WhatsApp.
+			s.SetPerfilWhatsApp(phone, "Guille 🔥")
+			p, ok = s.GetProfile(phone)
+			if !ok {
+				t.Fatal("se perdió el perfil")
+			}
+			if p.Identificacion != "0152648176" {
+				t.Errorf("se borró la cédula del cliente: %q", p.Identificacion)
+			}
+			if p.Nombres != "Guillermo Pacheco" {
+				t.Errorf("se pisó el nombre legal que va al backend: %q", p.Nombres)
+			}
+			if p.PerfilWhatsApp != "Guille 🔥" {
+				t.Errorf("no se actualizó el nombre de WhatsApp: %q", p.PerfilWhatsApp)
+			}
+		})
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"wp-llm-gas/internal/config"
@@ -154,6 +155,14 @@ type webhookPayload struct {
 	Entry []struct {
 		Changes []struct {
 			Value struct {
+				// Contacts trae el nombre que el propio cliente puso en su perfil de WhatsApp.
+				// Es mejor dato que cualquier nombre inferido del texto del mensaje.
+				Contacts []struct {
+					WaID    string `json:"wa_id"`
+					Profile struct {
+						Name string `json:"name"`
+					} `json:"profile"`
+				} `json:"contacts"`
 				Messages []struct {
 					From string `json:"from"`
 					Type string `json:"type"`
@@ -190,6 +199,10 @@ type Incoming struct {
 	HasLocation bool
 	Latitude    float64
 	Longitude   float64
+	// PerfilNombre es el nombre del perfil de WhatsApp del cliente (vacío si Meta no lo manda:
+	// no viene en todos los eventos). Lo escribió la propia persona, así que se prefiere a
+	// deducirlo del mensaje.
+	PerfilNombre string
 }
 
 // ParseIncoming extrae el primer mensaje útil del payload de Meta.
@@ -207,16 +220,26 @@ func ParseIncoming(body []byte) (Incoming, bool) {
 		return Incoming{}, false // evento de estado u otro sin mensaje
 	}
 	m := msgs[0]
+	// El nombre del perfil viene aparte de los mensajes, en contacts[]. Se resuelve una vez y
+	// se adjunta al Incoming sea cual sea el tipo de mensaje.
+	perfil := ""
+	for _, c := range p.Entry[0].Changes[0].Value.Contacts {
+		if c.WaID == m.From || c.WaID == "" {
+			perfil = strings.TrimSpace(c.Profile.Name)
+			break
+		}
+	}
 	switch {
 	case m.Type == "location" && m.Location != nil:
 		return Incoming{
-			From:        m.From,
-			HasLocation: true,
-			Latitude:    m.Location.Latitude,
-			Longitude:   m.Location.Longitude,
+			From:         m.From,
+			HasLocation:  true,
+			Latitude:     m.Location.Latitude,
+			Longitude:    m.Location.Longitude,
+			PerfilNombre: perfil,
 		}, true
 	case m.Type == "text":
-		return Incoming{From: m.From, Text: m.Text.Body, IsText: true}, true
+		return Incoming{From: m.From, Text: m.Text.Body, IsText: true, PerfilNombre: perfil}, true
 	case m.Type == "interactive" && m.Interactive != nil:
 		// El cliente tocó un botón o una opción de lista. Tomamos el id (que lleva el texto
 		// completo) y lo tratamos como si lo hubiera escrito.
@@ -227,11 +250,11 @@ func ParseIncoming(body []byte) (Incoming, bool) {
 			elegido = firstNonEmpty(m.Interactive.ListReply.ID, m.Interactive.ListReply.Title)
 		}
 		if elegido != "" {
-			return Incoming{From: m.From, Text: elegido, IsText: true}, true
+			return Incoming{From: m.From, Text: elegido, IsText: true, PerfilNombre: perfil}, true
 		}
-		return Incoming{From: m.From, IsText: false}, true
+		return Incoming{From: m.From, IsText: false, PerfilNombre: perfil}, true
 	default:
-		return Incoming{From: m.From, IsText: false}, true // mensaje no-texto
+		return Incoming{From: m.From, IsText: false, PerfilNombre: perfil}, true // mensaje no-texto
 	}
 }
 

@@ -54,3 +54,41 @@ func TestParseIncoming_ListReply(t *testing.T) {
 		t.Fatalf("esperaba 'Casa', got ok=%v text=%q", ok, inc.Text)
 	}
 }
+
+// El payload REAL de Guillermo Pacheco (10/09): su nombre venía en contacts[].profile.name y el
+// parser lo tiraba, así que el bot lo dedujo del texto y lo llamó "Brito" tres veces.
+func TestParseIncoming_NombreDelPerfil(t *testing.T) {
+	payload := []byte(`{"entry":[{"changes":[{"value":{"contacts":[{"profile":{"name":"Guillermo Pacheco"},"wa_id":"593963646872"}],"messages":[{"from":"593963646872","type":"text","text":{"body":"Brito por favor 2 cilindros a la iglesia"}}]}}]}]}`)
+	inc, ok := ParseIncoming(payload)
+	if !ok {
+		t.Fatal("no se parseó el mensaje")
+	}
+	if inc.PerfilNombre != "Guillermo Pacheco" {
+		t.Errorf("se perdió el nombre del perfil: %q", inc.PerfilNombre)
+	}
+}
+
+// La ubicación llega en un payload aparte: el nombre tiene que viajar igual, o el bot lo pierde
+// justo en el mensaje donde va a registrar el pedido.
+func TestParseIncoming_NombreDelPerfilEnUbicacion(t *testing.T) {
+	payload := []byte(`{"entry":[{"changes":[{"value":{"contacts":[{"profile":{"name":"Guillermo Pacheco"},"wa_id":"593963646872"}],"messages":[{"from":"593963646872","type":"location","location":{"latitude":-2.915673,"longitude":-79.039159}}]}}]}]}`)
+	inc, ok := ParseIncoming(payload)
+	if !ok || !inc.HasLocation {
+		t.Fatalf("esperaba ubicación, got ok=%v hasLoc=%v", ok, inc.HasLocation)
+	}
+	if inc.PerfilNombre != "Guillermo Pacheco" {
+		t.Errorf("se perdió el nombre del perfil en la ubicación: %q", inc.PerfilNombre)
+	}
+}
+
+// Meta no manda contacts[] en todos los eventos: sin nombre no se rompe nada.
+func TestParseIncoming_SinContactos(t *testing.T) {
+	payload := []byte(`{"entry":[{"changes":[{"value":{"messages":[{"from":"593999","type":"text","text":{"body":"hola"}}]}}]}]}`)
+	inc, ok := ParseIncoming(payload)
+	if !ok || inc.Text != "hola" {
+		t.Fatalf("esperaba 'hola', got ok=%v text=%q", ok, inc.Text)
+	}
+	if inc.PerfilNombre != "" {
+		t.Errorf("se inventó un nombre: %q", inc.PerfilNombre)
+	}
+}

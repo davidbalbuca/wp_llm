@@ -647,6 +647,13 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	mu.Lock()
 	defer mu.Unlock()
 
+	// El nombre del perfil de WhatsApp lo escribió el propio cliente: es mejor dato que
+	// deducirlo del mensaje. El 10/09 Guillermo Pacheco escribió "Brito por favor 2 cilindros"
+	// y el bot lo llamó "Brito" tres veces teniendo su nombre real en el mismo payload.
+	if inc.PerfilNombre != "" {
+		store.SetPerfilWhatsApp(inc.From, inc.PerfilNombre)
+	}
+
 	// --- Delimitación de la conversación por SESIÓN (no por número de turnos) ---
 	// Si pasó más de SessionGap desde el último mensaje del cliente, esto es una
 	// conversación NUEVA: limpiamos el historial anterior para arrancar fresco, sin

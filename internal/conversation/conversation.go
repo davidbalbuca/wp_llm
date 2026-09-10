@@ -157,6 +157,10 @@ type Profile struct {
 	Identificacion string `json:"identificacion"`
 	Nombres        string `json:"nombres"`
 	Correo         string `json:"correo"`
+	// PerfilWhatsApp es el nombre que el cliente puso en SU perfil de WhatsApp. Se guarda
+	// aparte de Nombres a propósito: Nombres es el nombre legal que va al backend con la
+	// cédula, y este es solo para saludarlo y para no tener que adivinarlo del texto.
+	PerfilWhatsApp string `json:"perfil_whatsapp"`
 }
 
 // LastOrder es el resumen del último pedido exitoso de un cliente. Se guarda (durable) para
@@ -412,6 +416,9 @@ type Store interface {
 	CreateScheduled(s ScheduledOrder) int64
 	// DueScheduled devuelve los programados PENDIENTES cuya hora ya llegó.
 	DueScheduled(now int64) []ScheduledOrder
+	// SetPerfilWhatsApp guarda SOLO el nombre del perfil de WhatsApp, sin tocar la cédula ni el
+	// nombre legal. Se llama en cada mensaje: el cliente puede cambiar su perfil cuando quiera.
+	SetPerfilWhatsApp(phone, nombre string)
 	// GetConfirmingSchedule devuelve el programado EN CONFIRMACIÓN de un cliente (si hay).
 	GetConfirmingSchedule(phone string) (ScheduledOrder, bool)
 	// TieneProgramacionViva dice si el cliente ya tiene una entrega agendada que aún va a

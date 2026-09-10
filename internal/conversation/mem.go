@@ -487,6 +487,14 @@ func (s *memStore) SetProfile(phone string, profile Profile) {
 	s.profiles[phone] = profile
 }
 
+func (s *memStore) SetPerfilWhatsApp(phone, nombre string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.profiles[phone]
+	p.PerfilWhatsApp = nombre
+	s.profiles[phone] = p
+}
+
 func (s *memStore) ClearHistory(phone string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -299,6 +299,9 @@ func agregarColumnasNuevas(db *sql.DB) error {
 			"alias TEXT NOT NULL DEFAULT ''",
 			"direccion TEXT NOT NULL DEFAULT ''",
 		},
+		"profiles": {
+			"perfil_whatsapp TEXT NOT NULL DEFAULT ''",
+		},
 	}
 	for tabla, columnas := range nuevas {
 		for _, col := range columnas {
@@ -896,23 +899,40 @@ func (s *sqliteStore) GetAccount(phone string) (Account, bool) {
 
 func (s *sqliteStore) SetProfile(phone string, profile Profile) {
 	if _, err := s.db.Exec(`
-        INSERT INTO profiles(phone, identificacion, nombres, correo, updated_at)
-        VALUES(?, ?, ?, ?, ?)
+        INSERT INTO profiles(phone, identificacion, nombres, correo, perfil_whatsapp, updated_at)
+        VALUES(?, ?, ?, ?, ?, ?)
         ON CONFLICT(phone) DO UPDATE SET
             identificacion=excluded.identificacion,
             nombres=excluded.nombres,
             correo=excluded.correo,
+            perfil_whatsapp=excluded.perfil_whatsapp,
             updated_at=excluded.updated_at`,
-		phone, profile.Identificacion, profile.Nombres, profile.Correo, time.Now().Unix()); err != nil {
+		phone, profile.Identificacion, profile.Nombres, profile.Correo,
+		profile.PerfilWhatsApp, time.Now().Unix()); err != nil {
 		log.Printf("[sqlite] SetProfile %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) SetPerfilWhatsApp(phone, nombre string) {
+	// UPSERT: el cliente puede escribir por primera vez sin tener aún cédula ni nombre legal,
+	// y aun así queremos guardar cómo se llama en WhatsApp.
+	if _, err := s.db.Exec(`
+        INSERT INTO profiles(phone, identificacion, nombres, correo, perfil_whatsapp, updated_at)
+        VALUES(?, '', '', '', ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET
+            perfil_whatsapp=excluded.perfil_whatsapp,
+            updated_at=excluded.updated_at`,
+		phone, nombre, time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] SetPerfilWhatsApp %s: %v", phone, err)
 	}
 }
 
 func (s *sqliteStore) GetProfile(phone string) (Profile, bool) {
 	var profile Profile
 	err := s.db.QueryRow(
-		`SELECT identificacion, nombres, correo FROM profiles WHERE phone = ?`, phone).
-		Scan(&profile.Identificacion, &profile.Nombres, &profile.Correo)
+		`SELECT identificacion, nombres, correo, COALESCE(perfil_whatsapp,'')
+         FROM profiles WHERE phone = ?`, phone).
+		Scan(&profile.Identificacion, &profile.Nombres, &profile.Correo, &profile.PerfilWhatsApp)
 	if err == sql.ErrNoRows {
 		return Profile{}, false
 	}

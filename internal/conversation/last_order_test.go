@@ -112,3 +112,53 @@ func TestElArranqueRepetidoNoRompeLaBase(t *testing.T) {
 		}
 	}
 }
+
+// Mismo riesgo con la columna perfil_whatsapp (10/09): la tabla profiles YA existe en el
+// servidor, así que la columna nueva solo entra por el ALTER idempotente. Si no entrara, toda
+// lectura de perfiles reventaría al arrancar y el bot no atendería a nadie.
+func TestBaseDeProduccionSinPerfilWhatsAppSigueFuncionando(t *testing.T) {
+	ruta := filepath.Join(t.TempDir(), "prod.db")
+
+	// 1) Base "vieja": profiles como está hoy en el servidor, con un cliente registrado.
+	db, err := sql.Open("sqlite", ruta)
+	if err != nil {
+		t.Fatalf("abrir base: %v", err)
+	}
+	if _, err := db.Exec(`
+        CREATE TABLE profiles (
+            phone          TEXT PRIMARY KEY,
+            identificacion TEXT,
+            nombres        TEXT,
+            correo         TEXT,
+            updated_at     INTEGER NOT NULL
+        );
+        INSERT INTO profiles VALUES('593963646872','0152648176','Guillermo Pacheco','',0);`); err != nil {
+		t.Fatalf("preparar la base vieja: %v", err)
+	}
+	db.Close()
+
+	// 2) Arranque del bot nuevo sobre esa base: no puede fallar.
+	store, err := NewSQLiteStore(ruta, 15)
+	if err != nil {
+		t.Fatalf("el bot NO ARRANCA sobre la base de producción: %v", err)
+	}
+
+	// 3) El cliente que ya estaba se sigue leyendo, sin nombre de WhatsApp (nadie lo guardó).
+	p, hay := store.GetProfile("593963646872")
+	if !hay || p.Identificacion != "0152648176" {
+		t.Fatalf("se perdió un cliente que ya existía en producción: ok=%v perfil=%+v", hay, p)
+	}
+	if p.PerfilWhatsApp != "" {
+		t.Errorf("un perfil viejo no tiene nombre de WhatsApp y no puede inventarse uno: %q", p.PerfilWhatsApp)
+	}
+
+	// 4) Y desde el primer mensaje ya se guarda con normalidad, sin tocar sus datos.
+	store.SetPerfilWhatsApp("593963646872", "Guillermo Pacheco")
+	p, _ = store.GetProfile("593963646872")
+	if p.PerfilWhatsApp != "Guillermo Pacheco" {
+		t.Errorf("tras migrar, el nombre de WhatsApp no se guardó: %+v", p)
+	}
+	if p.Identificacion != "0152648176" {
+		t.Errorf("la migración le borró la cédula: %+v", p)
+	}
+}

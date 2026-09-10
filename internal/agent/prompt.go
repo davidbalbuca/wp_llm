@@ -23,6 +23,18 @@ func (a *Agent) construirSistema(from string) (fijo, volatil string) {
 
 	var b strings.Builder
 
+	// Cómo se llama el cliente EN WHATSAPP. Lo puso él mismo, así que es el único nombre fiable
+	// mientras no esté registrado. Sin esto el modelo lo deducía del texto: el 10/09 Guillermo
+	// Pacheco escribió "Brito por favor 2 cilindros a la iglesia" y el bot lo saludó "¡Hola,
+	// Brito!" tres veces seguidas, con su nombre real llegando en el mismo mensaje.
+	if perfil, ok := a.store.GetProfile(from); ok && perfil.PerfilWhatsApp != "" {
+		fmt.Fprintf(&b, "\n\nNOMBRE DEL CLIENTE EN WHATSAPP: %s. Es el que él mismo puso en su "+
+			"perfil. Si lo saludas por su nombre, usa ESTE (o el nombre con el que se presente "+
+			"explícitamente). NUNCA deduzcas su nombre de otras palabras del mensaje: lo que "+
+			"escribe suele ser el pedido, un lugar o para quién es, no cómo se llama.",
+			perfil.PerfilWhatsApp)
+	}
+
 	// Si ya conocemos al cliente (pidió antes), inyectamos sus datos para que el bot NO se
 	// los vuelva a pedir. La IA los reutiliza directamente al registrar el pedido.
 	if perfil, ok := a.store.GetProfile(from); ok && perfil.Identificacion != "" {

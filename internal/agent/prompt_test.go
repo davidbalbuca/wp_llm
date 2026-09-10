@@ -184,3 +184,21 @@ func TestFechaEnEspanol(t *testing.T) {
 		t.Errorf("los extremos del mapa fallan: %q", got)
 	}
 }
+
+// El nombre de WhatsApp tiene que llegarle al modelo AUNQUE el cliente no esté registrado: es
+// justo el caso de Guillermo Pacheco (10/09), que aún no tenía cédula cuando el bot lo saludó
+// "Brito" tomando esa palabra del texto de su pedido.
+func TestPromptLlevaElNombreDeWhatsApp(t *testing.T) {
+	const from = "593963646872"
+	store := conversation.NewMemStore()
+	store.SetPerfilWhatsApp(from, "Guillermo Pacheco")
+	ag := agentDePrueba(nil, store)
+
+	_, vol := ag.construirSistema(from)
+	if !strings.Contains(vol, "Guillermo Pacheco") {
+		t.Errorf("el nombre de WhatsApp no llegó al prompt:\n%s", vol)
+	}
+	if !strings.Contains(vol, "NUNCA deduzcas su nombre") {
+		t.Errorf("falta la regla que impide deducir el nombre del mensaje:\n%s", vol)
+	}
+}
