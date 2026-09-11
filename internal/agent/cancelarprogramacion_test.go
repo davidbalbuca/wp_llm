@@ -86,7 +86,7 @@ func TestCancelarProgramacionReconoceLasFormasDelCliente(t *testing.T) {
 func TestCancelarProgramacionNoActuaSobreLoAmbiguo(t *testing.T) {
 	const from = "593999000820"
 	for _, texto := range []string{
-		"¿puedo cancelar mi programación?", // pregunta
+		"¿puedo cancelar mi programación?",  // pregunta
 		"¿me cancelas la entrega agendada?", // pregunta
 		"cancelar",                          // suelto: puede ser el pedido, el menú de espera...
 		"cancela mi pedido",                 // la OTRA herramienta
