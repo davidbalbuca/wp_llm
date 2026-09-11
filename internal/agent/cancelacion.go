@@ -122,3 +122,87 @@ func (a *Agent) ResponderCancelacion(from, texto string) (string, bool) {
 	a.store.AppendModel(from, msg)
 	return msg, true
 }
+
+// --- La ENTREGA AGENDADA: el mismo problema, el mismo remedio ---
+//
+// El inventario del 11/09 (herramientas contra protecciones) destapó que cancelar_programacion
+// era la ÚNICA acción que cambia estado sin interceptor NI candado de texto: el gemelo exacto
+// del bug de cancelar_pedido, pero sin nada. Y peor por dos razones. Una: pideCancelarPedido
+// manda a propósito "cancela la programación" al modelo —por ser otra herramienta—, así que se
+// le abrió la puerta justo a la habitación sin red. Dos: si falla, el cliente no se entera hoy;
+// se entera cuando le llega a la puerta, a la hora agendada, un pedido que creía cancelado.
+
+// pideCancelarProgramacion reconoce la orden de cancelar la ENTREGA AGENDADA. Es más estricto
+// que su gemelo: exige que el cliente NOMBRE la programación. Un "cancelar" suelto no entra —
+// puede ser el menú de espera, un pedido vivo o la conversación misma, y equivocarse aquí es
+// borrarle al cliente una entrega que sí quería. Lo ambiguo va al modelo, que para eso está.
+func pideCancelarProgramacion(texto string) bool {
+	if strings.ContainsAny(texto, "?¿") {
+		return false
+	}
+	normalizado := normalizarRespuesta(texto)
+
+	exactas := map[string]bool{
+		"cancelar programacion": true, "cancela la programacion": true,
+		"cancelar la programacion": true, "cancela mi programacion": true,
+		"cancelar mi programacion": true, "anular programacion": true,
+		"anula la programacion": true, "cancelar entrega programada": true,
+		"cancela la entrega programada": true, "cancelar entrega agendada": true,
+		"cancela la entrega agendada": true, "cancelar mi entrega agendada": true,
+		"cancelar agendamiento": true, "ya no quiero la entrega programada": true,
+		"ya no quiero la programacion": true, "cancelar el agendamiento": true,
+	}
+	if exactas[normalizado] {
+		return true
+	}
+
+	// Redacciones con palabras intercaladas. Toda secuencia ancla en la palabra que nombra la
+	// entrega agendada: sin esa ancla no se toca nada.
+	return afirmaSecuencia(texto, [][]string{
+		{"cancelar", "programacion"}, {"cancela", "programacion"},
+		{"cancelame", "programacion"}, {"anular", "programacion"}, {"anula", "programacion"},
+		{"cancelar", "entrega", "programada"}, {"cancela", "entrega", "programada"},
+		{"cancelar", "entrega", "agendada"}, {"cancela", "entrega", "agendada"},
+		{"cancelar", "agendamiento"}, {"cancela", "agendamiento"},
+		{"ya", "no", "quiero", "programacion"}, {"ya", "no", "quiero", "entrega", "programada"},
+		{"ya", "no", "quiero", "entrega", "agendada"},
+	}, 3)
+}
+
+// ResponderCancelarProgramacion cancela la entrega agendada EN CÓDIGO. Misma forma que
+// ResponderCancelacion: solo actúa si hay algo vivo que cancelar, ejecuta por runTool, y decide
+// si le confirma al cliente MIRANDO EL ESTADO — nunca el texto que devolvió la herramienta.
+func (a *Agent) ResponderCancelarProgramacion(from, texto string) (string, bool) {
+	if !pideCancelarProgramacion(texto) {
+		return "", false
+	}
+	if !a.store.TieneProgramacionViva(from) {
+		// Sin entrega agendada no hay nada que cancelar aquí. Puede referirse a un pedido
+		// inmediato o a una confusión: el modelo se lo explica mejor.
+		return "", false
+	}
+
+	log.Printf("[cancelacion] %s pidió cancelar su entrega agendada; se cancela en código", from)
+	t := &turno{}
+	salida := a.runTool(t, from, "cancelar_programacion", map[string]any{})
+	a.store.AppendUser(from, texto)
+
+	// La verdad es el ESTADO. Si la programación sigue viva, al cliente le llegaría el pedido a
+	// la hora agendada creyendo que lo canceló — el fallo más caro de los dos, porque no se
+	// descubre hoy sino en su puerta.
+	if a.store.TieneProgramacionViva(from) {
+		log.Printf("[cancelacion] %s: la entrega agendada NO se canceló; se avisa al equipo", from)
+		a.crearTicketSoporte(from, "No se pudo cancelar la entrega agendada",
+			"El cliente pidió cancelar su entrega programada y sigue viva. Hay que cancelarla a "+
+				"mano antes de la hora agendada. Detalle: "+salida)
+		msg := "Disculpa 🙏, tuve un problema al cancelar tu entrega programada. Ya avisé al equipo " +
+			"para que la cancele enseguida. Lamento la molestia."
+		a.store.AppendModel(from, msg)
+		return msg, true
+	}
+
+	msg := "Listo, cancelé tu entrega programada 🙏. Cuando necesites tu gas, aquí estoy para " +
+		"ayudarte 😊"
+	a.store.AppendModel(from, msg)
+	return msg, true
+}

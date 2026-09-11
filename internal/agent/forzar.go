@@ -177,6 +177,53 @@ func afirmaCancelado(texto string) bool {
 	}, 3)
 }
 
+// afirmaProgramacionCancelada detecta que el texto le dice al cliente que su ENTREGA AGENDADA
+// ya se canceló. Hermano de afirmaCancelado, para la otra herramienta: hasta el inventario del
+// 11/09 la programación no tenía ningún candado, así que si el modelo lo afirmaba sin llamar
+// cancelar_programacion, la entrega seguía viva y aparecía en la puerta del cliente a su hora.
+func afirmaProgramacionCancelada(texto string) bool {
+	if esOfrecimiento(normalizar(texto)) {
+		return false
+	}
+	return afirmaSecuencia(texto, [][]string{
+		{"programacion", "cancelada"}, {"cancelado", "programacion"},
+		{"cancelada", "programacion"}, {"cancele", "programacion"},
+		{"entrega", "programada", "cancelada"}, {"cancelado", "entrega", "programada"},
+		{"entrega", "agendada", "cancelada"}, {"cancelado", "entrega", "agendada"},
+		{"cancelamos", "programacion"}, {"agendamiento", "cancelado"},
+		// El verbo ANTES del objeto, que es como se redacta de hecho: "ya cancelé tu entrega
+		// programada". Sin estas dos, la forma más natural de decirlo no la veía nadie.
+		{"cancele", "entrega", "programada"}, {"cancele", "entrega", "agendada"},
+		{"cancelada", "entrega", "programada"}, {"cancelada", "entrega", "agendada"},
+	}, 3)
+}
+
+// forzarCancelacionProgramadaSiHaceFalta cancela de verdad cuando el modelo afirmó haber
+// cancelado la entrega agendada sin llamar la herramienta. Devuelve el texto para el cliente y
+// ok=true si se resolvió aquí.
+func (a *Agent) forzarCancelacionProgramadaSiHaceFalta(from string) (string, bool) {
+	if !a.store.TieneProgramacionViva(from) {
+		// No hay nada agendado: el modelo puede estar hablando de una entrega ya cumplida o de
+		// un pedido inmediato. Su texto pasa tal cual.
+		return "", false
+	}
+	log.Printf("[forzar] %s: el modelo dijo cancelada la programación sin llamar la herramienta; se cancela en código", from)
+	salida := a.cancelarProgramacion(from)
+
+	if a.store.TieneProgramacionViva(from) {
+		notify.Default.Fallo(from, a.nombreDe(from), "Entrega agendada fantasma — no se pudo cancelar",
+			"El modelo le dijo al cliente que su entrega programada estaba cancelada, pero SIGUE "+
+				"VIVA. Hay que cancelarla a mano antes de la hora agendada. Detalle: "+conversation.Recortar(salida, 200))
+		return "Disculpa 🙏, tuve un problema al cancelar tu entrega programada. Ya avisé al equipo " +
+			"para que la cancele enseguida. Lamento la molestia.", true
+	}
+
+	notify.Default.Fallo(from, a.nombreDe(from), "Entrega agendada cancelada por código",
+		"El modelo iba a decir cancelada sin cancelar; el código canceló la entrega programada de verdad.")
+	return "Listo, cancelé tu entrega programada 🙏. Cuando necesites tu gas, aquí estoy para " +
+		"ayudarte 😊", true
+}
+
 // esOfrecimiento dice si el texto OFRECE hacer algo en vez de afirmar que ya se hizo.
 // "¿Quieres que te la agende?" no es una programación hecha; "¿quieres que avise al equipo?"
 // no es un aviso enviado. Sin esta distinción los candados saltaban con una simple pregunta.
@@ -197,6 +244,13 @@ func esOfrecimiento(normalizado string) bool {
 // 07/09: specs/mapa-reglas-prompt.md daba la regla por cubierta y no lo estaba.
 func afirmaProgramado(texto string) bool {
 	if esOfrecimiento(normalizar(texto)) {
+		return false
+	}
+	// CANCELAR una entrega agendada no es HABERLA CREADO. Sin esto, "ya cancelé tu entrega
+	// programada" activaba {"entrega","programada"} y el candado del fantasma respondía
+	// registrando un pedido: exactamente lo contrario de lo que el cliente pidió. Lo destapó el
+	// inventario del 11/09, al probar el camino real con un modelo que afirma la cancelación.
+	if afirmaProgramacionCancelada(texto) {
 		return false
 	}
 	// La entrega YA agendada, en cualquier redacción: "quedó programada", "entrega está

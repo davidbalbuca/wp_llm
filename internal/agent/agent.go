@@ -468,6 +468,18 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 		}
 	}
 
+	// Y el mismo candado para la ENTREGA AGENDADA. Hasta el inventario del 11/09 esta acción no
+	// tenía ninguna protección: si el modelo decía "cancelé tu entrega programada" sin llamar la
+	// herramienta, la entrega seguía viva y al cliente le llegaba el pedido a su hora. No hay
+	// bandera de turno que mirar (cancelar_programacion no marca t), así que la condición es el
+	// ESTADO: si el modelo lo afirma y la programación sigue viva, no ocurrió.
+	if afirmaProgramacionCancelada(reply) && a.store.TieneProgramacionViva(from) {
+		log.Printf("[fantasma] %s: el modelo dijo cancelada la programación y sigue viva; se fuerza", from)
+		if forzado, ok := a.forzarCancelacionProgramadaSiHaceFalta(from); ok {
+			reply = forzado
+		}
+	}
+
 	// Candado del AVISO AL EQUIPO: si el modelo le prometió al cliente que alguien lo va a
 	// contactar pero no derivó, esa promesa no la cumple nadie. Se deriva en código para que
 	// el ticket exista. El texto del modelo se respeta: ahora además es verdad.

@@ -817,6 +817,15 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 			_ = replyClient(cfg, store, inc.From, reply)
 			return
 		}
+		// CANCELAR LA ENTREGA AGENDADA, también en código. Va junto a su gemelo porque es el
+		// mismo problema: el inventario del 11/09 destapó que cancelar_programacion era la única
+		// acción que cambia estado sin interceptor ni candado. Si falla, el cliente no lo nota
+		// hoy — lo nota cuando le llega el pedido a la puerta, a la hora que creyó cancelada.
+		if reply, manejado := ag.ResponderCancelarProgramacion(inc.From, inc.Text); manejado {
+			log.Printf("[webhook] cancelacion de entrega agendada resuelta en código para %s", inc.From)
+			_ = replyClient(cfg, store, inc.From, reply)
+			return
+		}
 		if reply, manejado := ag.ResponderMenuEspera(inc.From, inc.Text); manejado {
 			log.Printf("[webhook] respuesta al menu de espera resuelta para %s", inc.From)
 			_ = replyClient(cfg, store, inc.From, reply)
