@@ -200,3 +200,41 @@ func TestElPromptDistingueLugarDePersona(t *testing.T) {
 		t.Error("el prompt no le dice al modelo que pida la ubicación nueva si el cliente se movió")
 	}
 }
+
+// El rechazo por COORDENADAS deja constancia verificable. Es lo que permite al candado de
+// cobertura (internal/agent/cobertura.go) distinguir esta negativa —legítima, el sistema miró
+// el punto— de una que el modelo deduzca del nombre de un barrio, que sí hay que tapar.
+//
+// Sin esta marca, el cliente de Ambato volvería al bucle del 08/09: insiste ("¿de verdad no
+// llegan?"), el modelo repite la negativa correcta, el candado se la pisa y le pide la
+// ubicación otra vez para darle la misma respuesta.
+func TestElRechazoPorCoordenadasQuedaMarcado(t *testing.T) {
+	gr := backendCobertura(t, "fuera")
+	store := conversation.NewMemStore()
+	const from = "593999000075"
+
+	if store.FueraDeCoberturaVerificado(from) {
+		t.Fatal("un cliente nuevo no puede nacer marcado fuera de cobertura")
+	}
+	if !fueraDeCobertura(config.Config{}, store, gr, from, -1.2535, -78.6247) {
+		t.Fatal("Ambato debía quedar fuera de cobertura")
+	}
+	if !store.FueraDeCoberturaVerificado(from) {
+		t.Error("el rechazo verificado por coordenadas no quedó marcado: el candado de cobertura " +
+			"taparía la negativa correcta y el cliente volvería al bucle de \"mándame la ubicación\"")
+	}
+}
+
+// Y un cliente DENTRO de cobertura no queda marcado: la marca es del rechazo, no del chequeo.
+func TestElClienteConCoberturaNoQuedaMarcado(t *testing.T) {
+	gr := backendCobertura(t, "dentro")
+	store := conversation.NewMemStore()
+	const from = "593999000076"
+
+	if fueraDeCobertura(config.Config{}, store, gr, from, -2.9, -79.0) {
+		t.Fatal("este cliente SÍ tiene cobertura")
+	}
+	if store.FueraDeCoberturaVerificado(from) {
+		t.Error("un cliente con cobertura quedó marcado como fuera de zona")
+	}
+}

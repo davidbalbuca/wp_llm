@@ -38,6 +38,12 @@ func fueraDeCobertura(cfg config.Config, store conversation.Store, gr *georoutes
 	// registra con el teléfono); aquí se le responde al cliente y se avisa al grupo.
 	log.Printf("[cobertura] %s está FUERA de cobertura (%f, %f)", from, lat, lng)
 
+	// Queda constancia de que el rechazo se verificó POR COORDENADAS. Es lo que permite al
+	// candado de cobertura distinguir esta negativa —legítima— de una que el modelo deduzca
+	// del nombre de un barrio. Sin esta marca, el candado taparía también la buena y el
+	// cliente volvería al bucle de "mándame el pin" del caso Ambato (08/09).
+	store.MarcarFueraDeCobertura(from)
+
 	msg := "Uy 😔 revisé tu ubicación y por ahora no llegamos a esa zona."
 	if zonas := zonasParaTexto(store, gr); zonas != "" {
 		msg += " Atendemos en " + zonas + "."

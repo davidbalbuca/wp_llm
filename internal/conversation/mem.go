@@ -15,6 +15,7 @@ type memStore struct {
 	direccionTexto     map[string]string
 	esperandoDireccion map[string][]ItemPedido
 	seguimiento        map[string]string // enlace de seguimiento del pedido ACTIVO
+	fueraCobertura     map[string]bool   // su ubicación se verificó y cayó fuera de zona
 	data               map[string][]*genai.Content
 	locations          map[string]Location
 	accounts           map[string]Account
@@ -690,6 +691,27 @@ func (s *memStore) SetActivePedido(phone string, pedidoID int) {
 	}
 	s.activePedido[phone] = pedidoID
 	s.activePedidoAt[phone] = time.Now()
+}
+
+func (s *memStore) MarcarFueraDeCobertura(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.fueraCobertura == nil {
+		s.fueraCobertura = map[string]bool{}
+	}
+	s.fueraCobertura[phone] = true
+}
+
+func (s *memStore) FueraDeCoberturaVerificado(phone string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fueraCobertura[phone]
+}
+
+func (s *memStore) LimpiarFueraDeCobertura(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.fueraCobertura, phone)
 }
 
 func (s *memStore) SetSeguimientoActivo(phone, url string) {

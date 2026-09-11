@@ -666,6 +666,8 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		store.ClearOrderDraft(inc.From)
 		store.ClearPendingVerification(inc.From)
 		store.ClearPedidoEnCurso(inc.From)
+		// Conversación nueva: un rechazo de zona de ayer no puede seguir vigente hoy.
+		store.LimpiarFueraDeCobertura(inc.From)
 	}
 
 	// --- Control humano (takeover) ---
@@ -714,6 +716,9 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	if inc.HasLocation {
 		store.SetLocation(inc.From, inc.Latitude, inc.Longitude)
 		log.Printf("[webhook] ubicación de %s: %f, %f", inc.From, inc.Latitude, inc.Longitude)
+		// Ubicación NUEVA: el rechazo anterior ya no aplica (pudo moverse a nuestra zona).
+		// fueraDeCobertura la vuelve a marcar si esta también cae fuera.
+		store.LimpiarFueraDeCobertura(inc.From)
 		if fueraDeCobertura(cfg, store, gr, inc.From, inc.Latitude, inc.Longitude) {
 			return
 		}

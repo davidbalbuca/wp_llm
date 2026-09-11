@@ -149,13 +149,17 @@ func TestPromptSinFichaNoMuestraBloque(t *testing.T) {
 
 // El bloque COBERTURA sale de las zonas reales del backend. Sin zonas, el modelo tiene
 // PROHIBIDO afirmar o negar cobertura: pide la ubicación y el sistema verifica.
+//
+// Desde el 11/09 tampoco lleva la lista completa de parroquias: dársela lo hacía "buscar" ahí
+// el barrio del cliente y deducir que no había cobertura cuando no lo encontraba (caso Israel,
+// ver cobertura_test.go). Solo van la zona y un par de ejemplos.
 func TestRenderCobertura(t *testing.T) {
 	zonas := []georoutes.ZonaCobertura{{
 		Zona:       "AZUAY",
 		Parroquias: []string{"BANOS", "BELLAVISTA", "CAÑARIBAMBA", "SININCAY", "EL VALE"},
 	}}
 	texto := renderCobertura(zonas)
-	for _, quiero := range []string{"AZUAY", "BANOS", "SININCAY", "NO está en la lista"} {
+	for _, quiero := range []string{"AZUAY", "BANOS", "NUNCA respondas que NO llegamos"} {
 		if !strings.Contains(texto, quiero) {
 			t.Errorf("el bloque de cobertura no menciona %q:\n%s", quiero, texto)
 		}

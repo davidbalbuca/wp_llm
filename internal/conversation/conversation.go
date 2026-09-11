@@ -461,6 +461,17 @@ type Store interface {
 	// SetActivePedido guarda el id del pedido ACTIVO del cliente (el último creado), para poder
 	// cancelarlo si el cliente lo pide por WhatsApp ("cancelar mi pedido").
 	SetActivePedido(phone string, pedidoID int)
+	// MarcarFueraDeCobertura deja constancia de que la UBICACIÓN del cliente se verificó por
+	// coordenadas y cayó fuera de zona. Es la prueba de que una negativa de cobertura es
+	// legítima; sin ella, cualquier "no llegamos" del modelo es una deducción por el nombre
+	// de un lugar y no puede salir.
+	MarcarFueraDeCobertura(phone string)
+	// FueraDeCoberturaVerificado dice si a este cliente ya se le rechazó la zona por
+	// coordenadas en esta conversación. Se limpia al compartir una ubicación nueva (puede
+	// haberse movido) y al empezar una sesión nueva.
+	FueraDeCoberturaVerificado(phone string) bool
+	// LimpiarFueraDeCobertura olvida ese rechazo (ubicación nueva o sesión nueva).
+	LimpiarFueraDeCobertura(phone string)
 	// SetSeguimientoActivo guarda el enlace de seguimiento del pedido activo. Va junto al pedido
 	// y muere con él: al cancelarse o entregarse, ClearActivePedido lo borra.
 	SetSeguimientoActivo(phone, url string)

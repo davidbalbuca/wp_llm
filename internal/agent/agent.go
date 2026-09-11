@@ -481,6 +481,12 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// salir el enlace del pedido VIVO; ver seguimientolink.go.
 	reply = a.revisarEnlaceDeSeguimiento(from, reply)
 
+	// Candado de COBERTURA: el modelo no puede rechazar a un cliente por el NOMBRE de su
+	// barrio. El 11/09 le dijo a Israel que no llegábamos a La Gloria (un barrio de Cuenca,
+	// donde sí atendemos) y lo perdió. La cobertura se decide por coordenadas, y esa negativa
+	// la da fueraDeCobertura antes de que el modelo conteste; ver cobertura.go.
+	reply = a.revisarNegativaDeCobertura(from, reply)
+
 	// Turno del modelo para el HISTORIAL. Si en este turno se envió un menú interactivo,
 	// guardamos la PREGUNTA del menú (cuerpo + opciones), NO un texto vacío ni el fallback:
 	// así el modelo recuerda qué preguntó y no repite el menú. El historial solo guarda texto,

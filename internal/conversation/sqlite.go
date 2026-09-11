@@ -1295,6 +1295,24 @@ func (s *sqliteStore) GetActivePedido(phone string) (int, bool) {
 	return id, true
 }
 
+// El rechazo de cobertura VERIFICADO por coordenadas vive en memoria, como las otras marcas de
+// un solo turno (la oferta de color, la de guardar ubicación): dura lo que la conversación y si
+// el bot reinicia, lo peor que pasa es que se le vuelva a pedir la ubicación al cliente.
+var fueraCoberturaMem sync.Map // phone -> true
+
+func (s *sqliteStore) MarcarFueraDeCobertura(phone string) {
+	fueraCoberturaMem.Store(phone, true)
+}
+
+func (s *sqliteStore) FueraDeCoberturaVerificado(phone string) bool {
+	_, ok := fueraCoberturaMem.Load(phone)
+	return ok
+}
+
+func (s *sqliteStore) LimpiarFueraDeCobertura(phone string) {
+	fueraCoberturaMem.Delete(phone)
+}
+
 // El enlace de seguimiento vive junto al pedido activo (misma fila): así no hay forma de que
 // sobreviva a su pedido. Se guarda en la tabla existente por la columna `seguimiento`, que
 // entra por el ALTER idempotente.

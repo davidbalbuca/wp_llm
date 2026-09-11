@@ -182,6 +182,20 @@ func renderServiceInfo(contexto *catalog.Context, disponible bool) string {
 // renderCobertura arma el bloque COBERTURA con las zonas reales del backend. La lista
 // completa va al MODELO (para que no invente ni niegue de memoria); la instrucción de
 // mencionarle al cliente solo un par de parroquias vive en behavior.md.
+// renderCobertura arma el bloque COBERTURA con las zonas REALES del backend
+// (getCoverageZones): nada de nombres quemados, así que el día que se agregue otra provincia
+// el bot la nombra solo, sin tocar código ni prompt.
+//
+// NO se le da la lista completa de parroquias, a propósito. Antes sí, con la instrucción de
+// "busca el lugar del cliente en esta lista": eso convertía al modelo en un geocodificador de
+// texto, y falla siempre hacia el lado caro. El 11/09 Israel preguntó "¿al barrio La Gloria,
+// por el ex CREA, llegan?" — La Gloria es un BARRIO y la lista son PARROQUIAS, así que no lo
+// encontró y respondió "no está en nuestras zonas de cobertura". Diez minutos después el
+// cliente se despidió. Casi con seguridad SÍ había cobertura: el ex CREA está en Cuenca.
+//
+// Quién decide la cobertura es la geocerca del backend con COORDENADAS (checkCoverage), no una
+// comparación de nombres. Aquí solo se le da al modelo lo que puede afirmar sin riesgo: la
+// provincia/zona y un par de ejemplos.
 func renderCobertura(zonas []georoutes.ZonaCobertura) string {
 	if len(zonas) == 0 {
 		return "\nCOBERTURA: la información de zonas no está disponible en este momento. NO " +
@@ -197,13 +211,14 @@ func renderCobertura(zonas []georoutes.ZonaCobertura) string {
 		}
 		fmt.Fprintf(&b, "Zona %s (parroquias como %s, entre otras). ", z.Zona, strings.Join(ejemplos, ", "))
 	}
-	b.WriteString("\nLista COMPLETA de parroquias con cobertura, por zona (para consultar si " +
-		"un lugar concreto está cubierto; al cliente menciónale solo dos o tres):\n")
-	for _, z := range zonas {
-		fmt.Fprintf(&b, "- %s: %s\n", z.Zona, strings.Join(z.Parroquias, ", "))
-	}
-	b.WriteString("Si una parroquia NO está en la lista, aún no llegamos ahí: dilo con amabilidad " +
-		"y sin prometer. Para confirmar el caso exacto del cliente, pídele su ubicación 📎.\n")
+	b.WriteString("\nREGLA DURA: NO tienes forma de saber si un lugar CONCRETO (barrio, " +
+		"urbanización, calle, referencia como \"por el ex CREA\") está cubierto: solo conoces la " +
+		"zona general de arriba, y un barrio que no aparezca ahí puede estar perfectamente dentro. " +
+		"Así que cuando pregunten por un lugar, NUNCA respondas que NO llegamos, y tampoco " +
+		"prometas que sí. Di en positivo dónde atendemos (la zona de arriba) y pídele su " +
+		"ubicación 📎 para confirmárselo al instante: el sistema la verifica solo y es el ÚNICO " +
+		"que puede decidirlo. Negarle a un cliente por el nombre de su barrio nos hace perder " +
+		"una venta que sí podíamos atender.\n")
 	return b.String()
 }
 
