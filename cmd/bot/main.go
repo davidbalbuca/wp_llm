@@ -807,6 +807,16 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	// es un conjunto cerrado: no puede depender de que el modelo llame a la herramienta. Si el
 	// cliente contesta algo fuera de las opciones, estos devuelven false y sigue al modelo.
 	if inc.IsText {
+		// CANCELAR el pedido, en código. Va PRIMERO entre los menús: es la acción más urgente
+		// y la que más falló. En producción (11/09) el modelo llamó cancelar_pedido 0 veces de
+		// 6 cancelaciones reales — las seis las salvó el candado de frases, que se dispara
+		// leyendo el texto que el modelo redacta y falla si elige otras palabras (pasó el
+		// 09/09: el cliente insistió tres veces con su pedido todavía vivo). Ver cancelacion.go.
+		if reply, manejado := ag.ResponderCancelacion(inc.From, inc.Text); manejado {
+			log.Printf("[webhook] cancelacion resuelta en código para %s", inc.From)
+			_ = replyClient(cfg, store, inc.From, reply)
+			return
+		}
 		if reply, manejado := ag.ResponderMenuEspera(inc.From, inc.Text); manejado {
 			log.Printf("[webhook] respuesta al menu de espera resuelta para %s", inc.From)
 			_ = replyClient(cfg, store, inc.From, reply)
