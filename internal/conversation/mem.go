@@ -14,6 +14,7 @@ type memStore struct {
 	chatLeido          map[string]int64
 	direccionTexto     map[string]string
 	esperandoDireccion map[string][]ItemPedido
+	seguimiento        map[string]string // enlace de seguimiento del pedido ACTIVO
 	data               map[string][]*genai.Content
 	locations          map[string]Location
 	accounts           map[string]Account
@@ -681,8 +682,33 @@ func (s *memStore) GetOrderPhone(pedidoID int) (string, bool) {
 func (s *memStore) SetActivePedido(phone string, pedidoID int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Pedido NUEVO: el enlace del anterior deja de valer de inmediato. Si no se limpiara aquí,
+	// un camino que marca el pedido sin guardar enlace (la espera de conductor, que asigna
+	// minutos después) dejaría vigente el enlace del pedido viejo.
+	if anterior, hay := s.activePedido[phone]; !hay || anterior != pedidoID {
+		delete(s.seguimiento, phone)
+	}
 	s.activePedido[phone] = pedidoID
 	s.activePedidoAt[phone] = time.Now()
+}
+
+func (s *memStore) SetSeguimientoActivo(phone, url string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.seguimiento == nil {
+		s.seguimiento = map[string]string{}
+	}
+	s.seguimiento[phone] = url
+}
+
+func (s *memStore) GetSeguimientoActivo(phone string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// El enlace solo vale mientras el pedido viva: sin pedido activo no hay seguimiento que dar.
+	if _, hay := s.activePedido[phone]; !hay {
+		return ""
+	}
+	return s.seguimiento[phone]
 }
 
 func (s *memStore) GetActivePedido(phone string) (int, bool) {
@@ -707,6 +733,8 @@ func (s *memStore) ClearActivePedido(phone string) {
 	defer s.mu.Unlock()
 	delete(s.activePedido, phone)
 	delete(s.activePedidoAt, phone)
+	// El enlace de seguimiento muere con el pedido: uno cancelado o entregado no se puede seguir.
+	delete(s.seguimiento, phone)
 }
 
 func (s *memStore) SetPendingWait(phone string, w PendingWait) {

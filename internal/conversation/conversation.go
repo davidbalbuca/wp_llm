@@ -461,6 +461,13 @@ type Store interface {
 	// SetActivePedido guarda el id del pedido ACTIVO del cliente (el último creado), para poder
 	// cancelarlo si el cliente lo pide por WhatsApp ("cancelar mi pedido").
 	SetActivePedido(phone string, pedidoID int)
+	// SetSeguimientoActivo guarda el enlace de seguimiento del pedido activo. Va junto al pedido
+	// y muere con él: al cancelarse o entregarse, ClearActivePedido lo borra.
+	SetSeguimientoActivo(phone, url string)
+	// GetSeguimientoActivo devuelve el enlace VIGENTE del cliente ("" si su pedido ya no vive).
+	// Es la verdad contra la que se comprueba cualquier enlace que el modelo quiera enviar: uno
+	// que no coincida es de un pedido muerto y no puede salir.
+	GetSeguimientoActivo(phone string) string
 	// GetActivePedido devuelve el id del pedido activo del cliente (ok=false si no hay).
 	GetActivePedido(phone string) (int, bool)
 	// ActivePedidoDesde dice cuánto tiempo lleva marcado como activo el pedido del cliente

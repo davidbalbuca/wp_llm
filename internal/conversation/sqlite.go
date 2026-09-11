@@ -313,6 +313,11 @@ func agregarColumnasNuevas(db *sql.DB) error {
 			// Pedido multicolor completo en pausa por confirmación de dirección (C1), como JSON.
 			"items TEXT NOT NULL DEFAULT ''",
 		},
+		"active_pedido": {
+			// Enlace de seguimiento del pedido VIVO. Va en esta tabla a propósito: el DELETE de
+			// ClearActivePedido se lo lleva, así que un enlace nunca sobrevive a su pedido.
+			"seguimiento TEXT NOT NULL DEFAULT ''",
+		},
 	}
 	for tabla, columnas := range nuevas {
 		for _, col := range columnas {
@@ -1265,9 +1270,13 @@ func (s *sqliteStore) GetOrderPhone(pedidoID int) (string, bool) {
 }
 
 func (s *sqliteStore) SetActivePedido(phone string, pedidoID int) {
+	// Pedido NUEVO: el enlace del anterior se borra en el mismo UPSERT (seguimiento=''). Si no,
+	// un camino que marca el pedido sin guardar enlace —la espera de conductor, que asigna
+	// minutos después— dejaría vigente el enlace del pedido viejo.
 	if _, err := s.db.Exec(`
-        INSERT INTO active_pedido(phone, pedido_id, created_at) VALUES(?, ?, ?)
-        ON CONFLICT(phone) DO UPDATE SET pedido_id=excluded.pedido_id, created_at=excluded.created_at`,
+        INSERT INTO active_pedido(phone, pedido_id, created_at, seguimiento) VALUES(?, ?, ?, '')
+        ON CONFLICT(phone) DO UPDATE SET pedido_id=excluded.pedido_id, created_at=excluded.created_at,
+            seguimiento=CASE WHEN active_pedido.pedido_id = excluded.pedido_id THEN active_pedido.seguimiento ELSE '' END`,
 		phone, pedidoID, time.Now().Unix()); err != nil {
 		log.Printf("[sqlite] SetActivePedido %s: %v", phone, err)
 	}
@@ -1284,6 +1293,24 @@ func (s *sqliteStore) GetActivePedido(phone string) (int, bool) {
 		return 0, false
 	}
 	return id, true
+}
+
+// El enlace de seguimiento vive junto al pedido activo (misma fila): así no hay forma de que
+// sobreviva a su pedido. Se guarda en la tabla existente por la columna `seguimiento`, que
+// entra por el ALTER idempotente.
+func (s *sqliteStore) SetSeguimientoActivo(phone, url string) {
+	if _, err := s.db.Exec(`UPDATE active_pedido SET seguimiento = ? WHERE phone = ?`, url, phone); err != nil {
+		log.Printf("[sqlite] SetSeguimientoActivo %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) GetSeguimientoActivo(phone string) string {
+	var url string
+	// Sin fila en active_pedido (cancelado/entregado) no hay enlace: el DELETE se lo llevó.
+	if err := s.db.QueryRow(`SELECT COALESCE(seguimiento,'') FROM active_pedido WHERE phone = ?`, phone).Scan(&url); err != nil {
+		return ""
+	}
+	return url
 }
 
 func (s *sqliteStore) ActivePedidoDesde(phone string) time.Duration {

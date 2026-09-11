@@ -637,6 +637,10 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 	if resultado.IDPedido > 0 {
 		a.store.SetOrderPhone(resultado.IDPedido, from)
 		a.store.SetActivePedido(from, resultado.IDPedido)
+		// El enlace se guarda JUNTO al pedido activo: mientras ese pedido viva, este es el único
+		// enlace válido; cuando muere (cancelado/entregado), se va con él. Es lo que permite
+		// detectar después un enlace de otro pedido en la respuesta del modelo.
+		a.store.SetSeguimientoActivo(from, a.urlSeguimiento(resultado.SeguimientoToken))
 	}
 	// A dónde se entregó, para que "repetir lo mismo" diga "2 Blanco a Casa" y no solo
 	// "2 Blanco". Se reutiliza lo resuelto arriba (antes del pedido, para elegir la dirección)

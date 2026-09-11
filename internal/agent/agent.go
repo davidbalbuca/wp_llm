@@ -475,6 +475,12 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 		a.forzarAvisoAlEquipoSiHaceFalta(t, from)
 	}
 
+	// Candado del ENLACE DE SEGUIMIENTO: el enlace de un pedido anterior queda escrito en el
+	// historial y el modelo lo repite como si fuera del pedido de ahora. El 10/09 le mandó a
+	// David el enlace del #233 (que él ya había cancelado) al confirmarle el #234. Solo puede
+	// salir el enlace del pedido VIVO; ver seguimientolink.go.
+	reply = a.revisarEnlaceDeSeguimiento(from, reply)
+
 	// Turno del modelo para el HISTORIAL. Si en este turno se envió un menú interactivo,
 	// guardamos la PREGUNTA del menú (cuerpo + opciones), NO un texto vacío ni el fallback:
 	// así el modelo recuerda qué preguntó y no repite el menú. El historial solo guarda texto,
