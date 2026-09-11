@@ -15,14 +15,15 @@ import (
 	"strings"
 
 	"wp-llm-gas/internal/conversation"
+	"wp-llm-gas/internal/georoutes"
 )
 
 // marcaHoraria reconoce que el cliente está hablando de una HORA, no de una cantidad:
 // "18:30", "6h30", "7 pm", "a las 3", "seis y media", "y cuarto". Anclado a tokens a
 // propósito: cualquier heurística de substring convierte "hola" o un punto final en una hora.
 var marcaHoraria = regexp.MustCompile(`\d{1,2}\s*[:.]\s*\d{2}` + // 18:30, 18.30
-	`|\d{1,2}\s*h\s*\d{0,2}` + // 6h30, 6h
-	`|\d{1,2}\s*(am|pm|a\.m|p\.m)` + // 7pm, 7 am
+	`|\d{1,2}\s*h\s*\d{0,2}\b` + // 6h30, 6h (la frontera final evita que "8 hola" cuente)
+	`|\d{1,2}\s*(am|pm|a\.m|p\.m)\b` + // 7pm, 7 am — la frontera evita "1 AMarillo" = 1 AM
 	`|\b(a las|para las|a la|tipo)\s+\d{1,2}` + // a las 3, para las 18
 	`|\by (media|cuarto)\b`) // seis y media
 
@@ -40,11 +41,12 @@ func (a *Agent) anotarDelMensaje(from, texto string) {
 	p, _ := a.store.GetPedidoEnCurso(from)
 	antes := p
 
-	// 1. Color: se valida contra el catálogo, así que "el azul" solo cuenta si azul existe.
+	// 1. Color(es): se validan contra el catálogo, así que "el azul" solo cuenta si azul existe.
+	//    Con VARIOS colores en el mensaje ("blanco y amarillo") cada uno abre su línea: antes la
+	//    ficha tenía un solo Color y se quedaba con el último — así se perdió el BLANCO de David
+	//    (10/09) y el bot le confirmó dos colores habiendo registrado uno.
 	if contexto, ok := a.catalog.Get(); ok && contexto != nil {
-		if c := colorEnTexto(contexto.Products, texto); c != "" {
-			p.Color = c
-		}
+		p = anotarColores(p, contexto.Products, texto)
 	}
 
 	// 2. Hora: se mira ANTES que la cantidad. "a las 7 pm" y "6h30" llevan números que no son
@@ -62,9 +64,16 @@ func (a *Agent) anotarDelMensaje(from, texto string) {
 	//    larga con un número dentro no es una cantidad: "van 4 días con este problema" en un
 	//    reclamo dejaba una ficha de 4 cilindros lista para registrar, y el prompt le decía al
 	//    modelo "FALTA: nada, llama ya a la herramienta" (encontrado en la revisión del 07/09).
-	if !pareceHora && p.Color != "" && len(strings.Fields(texto)) <= 4 {
+	//
+	//    Con varias líneas abiertas, "1 de blanco" lleva la cantidad a la línea de ESE color;
+	//    un número solo ("2") va a la línea que se está eligiendo ahora.
+	if !pareceHora && len(strings.Fields(texto)) <= 4 {
 		if n := primerNumero(texto); n >= 1 && n <= 20 {
-			p.Cantidad = n
+			if colores := coloresDelMensaje(a, texto); len(colores) == 1 {
+				p = ponerCantidad(p, colores[0], n)
+			} else if len(colores) == 0 && p.Color != "" {
+				p.Cantidad = n
+			}
 		}
 	}
 
@@ -72,11 +81,120 @@ func (a *Agent) anotarDelMensaje(from, texto string) {
 		p.Flujo = conversation.FlujoInmediato
 	}
 	// 4. Solo se escribe si algo cambió: evita tocar el store en cada mensaje de charla.
-	if p.Color == antes.Color && p.Cantidad == antes.Cantidad && p.Hora == antes.Hora && p.Flujo == antes.Flujo {
+	if p.Color == antes.Color && p.Cantidad == antes.Cantidad && p.Hora == antes.Hora &&
+		p.Flujo == antes.Flujo && mismosItems(p.Items, antes.Items) {
 		return
 	}
-	log.Printf("[encurso] %s: color=%q cantidad=%d hora=%q flujo=%s", from, p.Color, p.Cantidad, p.Hora, p.Flujo)
+	log.Printf("[encurso] %s: color=%q cantidad=%d items=%v hora=%q flujo=%s", from, p.Color, p.Cantidad, p.Items, p.Hora, p.Flujo)
 	a.store.SetPedidoEnCurso(from, p)
+}
+
+// coloresDelMensaje devuelve los colores del catálogo mencionados en el texto (en su orden de
+// aparición, sin repetidos), o nada si el catálogo no está disponible.
+func coloresDelMensaje(a *Agent, texto string) []string {
+	contexto, ok := a.catalog.Get()
+	if !ok || contexto == nil {
+		return nil
+	}
+	return coloresEnTexto(contexto.Products, texto)
+}
+
+// marcasReemplazo delatan un CAMBIO de elección ("mejor amarillo", "cambia a azul"): el color
+// nuevo pisa la línea en curso, como siempre hizo la ficha de un solo color.
+var marcasReemplazo = []string{"mejor", "cambia", "cambio", "cambialo", "cambiar", "sino", "en vez", "ya no"}
+
+// marcasAdicion delatan una SUMA ("también un amarillo", "y otro azul"): la línea en curso, si
+// está completa, se cierra y el color nuevo abre otra.
+var marcasAdicion = []string{"tambien", "ademas", "otro", "otra", "aparte", "agrega", "agregame", "suma", "y"}
+
+func contieneMarca(normalizado string, marcas []string) bool {
+	campos := " " + normalizado + " "
+	for _, m := range marcas {
+		if strings.Contains(campos, " "+m+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+// anotarColores aplica al pedido en curso los colores del catálogo que trae el mensaje. Las
+// reglas, en orden:
+//
+//   - VARIOS colores en un mismo mensaje ("blanco y amarillo") son un pedido multicolor: cada
+//     color abre su línea. Antes la ficha tenía un solo Color y ganaba el último — así se
+//     perdió el BLANCO de David (10/09).
+//   - UN color con marca de adición ("también amarillo") y la línea en curso completa: la
+//     cierra y abre otra.
+//   - UN color en cualquier otro caso pisa la línea en curso (cambio de opinión, o primera
+//     elección): el comportamiento de siempre.
+//   - Un color que YA tiene línea no se duplica (el cliente repitiéndose, o "1 de blanco"
+//     respondiendo cuántos).
+//   - En una PREGUNTA ("¿y el amarillo cuánto cuesta?") no se abre ni cierra ninguna línea:
+//     preguntar por un color no es pedirlo.
+func anotarColores(p conversation.PedidoEnCurso, products []georoutes.Product, texto string) conversation.PedidoEnCurso {
+	colores := coloresEnTexto(products, texto)
+	if len(colores) == 0 || strings.ContainsAny(texto, "?¿") {
+		return p
+	}
+	normalizado := normalizar(texto)
+	reemplaza := contieneMarca(normalizado, marcasReemplazo)
+	aditivo := contieneMarca(normalizado, marcasAdicion)
+
+	nuevos := 0 // cuántos colores nuevos lleva ESTE mensaje (para distinguir el multicolor)
+	for _, c := range colores {
+		if c == p.Color || tieneLinea(p.Items, c) {
+			continue
+		}
+		nuevos++
+		switch {
+		case p.Color == "":
+			p.Color = c
+		case nuevos > 1 || (aditivo && !reemplaza && p.Cantidad >= 1):
+			// Multicolor en un mensaje, o una suma explícita con la línea en curso cerrada.
+			p.Items = append(p.Items, conversation.ItemPedido{Color: p.Color, Cantidad: p.Cantidad})
+			p.Color, p.Cantidad = c, 0
+		default:
+			p.Color = c // cambio de opinión: pisa la línea en curso
+		}
+	}
+	return p
+}
+
+// ponerCantidad asigna una cantidad a la línea del color dado, esté en curso o ya cerrada.
+// Si el color no tiene línea, no toca nada (anotarColores corre antes y la habría abierto).
+func ponerCantidad(p conversation.PedidoEnCurso, color string, n int) conversation.PedidoEnCurso {
+	if p.Color == color {
+		p.Cantidad = n
+		return p
+	}
+	for i := range p.Items {
+		if p.Items[i].Color == color {
+			p.Items[i].Cantidad = n
+			return p
+		}
+	}
+	return p
+}
+
+func tieneLinea(items []conversation.ItemPedido, color string) bool {
+	for _, it := range items {
+		if it.Color == color {
+			return true
+		}
+	}
+	return false
+}
+
+func mismosItems(a, b []conversation.ItemPedido) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // anotarDeTool guarda lo que el modelo mandó como argumentos de registrar_pedido o
@@ -91,11 +209,18 @@ func (a *Agent) anotarDeTool(from string, args map[string]any, flujo string) {
 	if flujo == conversation.FlujoInmediato {
 		p.Hora = ""
 	}
-	if c := strings.TrimSpace(str(args["color"])); c != "" {
-		p.Color = c
-	}
-	if n := toInt(args["cantidad"]); n >= 1 && n <= 20 {
-		p.Cantidad = n
+	// Los argumentos de la tool son el pedido COMPLETO según el modelo: pisan las líneas de la
+	// ficha (no se suman, para no duplicar lo que anotarDelMensaje ya recogió del chat).
+	if lineas := lineasDeArgs(args); len(lineas) > 0 {
+		ultima := lineas[len(lineas)-1]
+		p.Color, p.Cantidad = ultima.Color, 0
+		if ultima.Cantidad >= 1 && ultima.Cantidad <= 20 {
+			p.Cantidad = ultima.Cantidad
+		}
+		p.Items = nil
+		if len(lineas) > 1 {
+			p.Items = append(p.Items, lineas[:len(lineas)-1]...)
+		}
 	}
 	if h := strings.TrimSpace(str(args["hora"])); h != "" {
 		p.Hora = h

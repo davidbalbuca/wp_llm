@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -29,7 +30,7 @@ import (
 // cliente retomar, y avisa al grupo. Mejor pedir un dato de más que registrar un pedido con un
 // color equivocado.
 func (a *Agent) forzarRegistroSiHaceFalta(t *turno, from string) (string, bool) {
-	color, cantidad, ok := a.inferirPedido(from)
+	lineas, ok := a.inferirLineas(from)
 	if !ok {
 		// No sabemos qué pedir con certeza: honesto y sin inventar.
 		notify.Default.Fallo(from, a.nombreDe(from), "Pedido fantasma — no se pudo autorregistrar",
@@ -40,12 +41,12 @@ func (a *Agent) forzarRegistroSiHaceFalta(t *turno, from string) (string, bool) 
 			"te llegue tu gas.", true
 	}
 
-	log.Printf("[forzar] %s: el modelo confirmó sin registrar; se registra en código (%d x %s)", from, cantidad, color)
+	log.Printf("[forzar] %s: el modelo confirmó sin registrar; se registra en código (%s)", from, describeItems(lineas))
 	// Se entra por runTool y NO por registrarPedido directo: el TICKET de soporte lo crea ese
 	// envoltorio (ver el case "registrar_pedido"), no registrarPedido. Saltárselo dejaba al
 	// cliente oyendo "ya avisé al equipo" sin ticket ni aviso a nadie. Mismo camino que usan
 	// ConfirmarDireccion y confirmarYRegistrar. El resultado del pedido queda en t.ultimoPedido.
-	a.runTool(t, from, "registrar_pedido", map[string]any{"color": color, "cantidad": cantidad})
+	a.runTool(t, from, "registrar_pedido", argsDeLineas(lineas, nil))
 
 	// Si registrarPedido envió un MENÚ (p. ej. confirmar la dirección porque la ubicación no es de
 	// esta conversación), ese menú YA salió al cliente: no lo pisamos con texto.
@@ -58,7 +59,7 @@ func (a *Agent) forzarRegistroSiHaceFalta(t *turno, from string) (string, bool) 
 		notify.Default.Fallo(from, a.nombreDe(from), "Pedido rescatado por código",
 			"El modelo iba a confirmar sin registrar; el código lo registró de verdad. Pedido #"+
 				strconv.Itoa(t.ultimoPedido.IDPedido))
-		msg := "¡Listo! 🎉 Tu pedido de " + strconv.Itoa(cantidad) + " " + color + " quedó registrado."
+		msg := "¡Listo! 🎉 Tu pedido de " + describeItems(lineas) + " quedó registrado."
 		if t.ultimoPedido.Conductor != "" {
 			msg += " Tu repartidor es " + t.ultimoPedido.Conductor + " 🚚"
 			if t.ultimoPedido.Placa != "" {
@@ -77,7 +78,7 @@ func (a *Agent) forzarRegistroSiHaceFalta(t *turno, from string) (string, bool) 
 		return msg + "\n\nCualquier cosa, aquí estoy 😊", true
 	case t.ultimoPedido.enEspera:
 		// Sin repartidor: registrarPedido ya dejó el PendingWait. Ofrecemos esperar.
-		return "¡Anotado tu pedido de " + strconv.Itoa(cantidad) + " " + color + "! 🙌 En este momento " +
+		return "¡Anotado tu pedido de " + describeItems(lineas) + "! 🙌 En este momento " +
 			"los repartidores están un poco lejos. ¿Deseas que busque uno para ti? Puede tardar hasta " +
 			"5 minutos. Escríbeme \"sí\" para esperar o \"no\" si prefieres que lo dejemos.", true
 	default:
@@ -102,21 +103,44 @@ func (a *Agent) tienePedidoVivo(from string) bool {
 	return hay && id > 0 && a.store.ActivePedidoDesde(from) <= ventanaPedidoActivo
 }
 
-// inferirPedido dice qué color y cantidad pidió el cliente. Lee la FICHA del pedido en curso
-// (ver encurso.go), que se escribe en el momento en que el cliente elige cada dato.
+// inferirLineas dice qué pidió el cliente (todas las líneas color+cantidad). Lee la FICHA del
+// pedido en curso (ver encurso.go), que se escribe en el momento en que el cliente elige cada
+// dato. El caso "repite mi último pedido" con la ficha vacía (tras cancelar) NO se resuelve
+// aquí: lo intercepta ResponderRepetirPedido ANTES del modelo, que carga la ficha desde el
+// LastOrder — así este rescate siempre encuentra la ficha llena cuando corresponde.
 //
 // Antes esto barría 30 mensajes del historial buscando un color del catálogo y "el primer
 // número de 1 o 2 dígitos después del color". Adivinaba: si el cliente decía "somos 4 en casa"
 // tras elegir color, esa era la cantidad; si el historial se truncaba, no encontraba nada.
 //
-// Sigue siendo conservador: sin color o sin cantidad devuelve ok=false y el llamador PREGUNTA
-// en vez de inventar. Registrar un pedido con el color equivocado es peor que preguntar de más.
+// Sigue siendo conservador: cualquier línea sin color o sin cantidad devuelve ok=false y el
+// llamador PREGUNTA en vez de inventar. Registrar un pedido con el color equivocado es peor
+// que preguntar de más.
+func (a *Agent) inferirLineas(from string) ([]conversation.ItemPedido, bool) {
+	if p, hay := a.store.GetPedidoEnCurso(from); hay && p.Completo() {
+		return p.Lineas(), true
+	}
+	return nil, false
+}
+
+// inferirPedido es inferirLineas para los llamadores que solo manejan UN color (la
+// programación). Un pedido multicolor devuelve ok=false: mejor preguntar que agendar la mitad.
 func (a *Agent) inferirPedido(from string) (color string, cantidad int, ok bool) {
-	p, hay := a.store.GetPedidoEnCurso(from)
-	if !hay || p.Color == "" || p.Cantidad < 1 {
+	lineas, ok := a.inferirLineas(from)
+	if !ok || len(lineas) != 1 {
 		return "", 0, false
 	}
-	return p.Color, p.Cantidad, true
+	return lineas[0].Color, lineas[0].Cantidad, true
+}
+
+// describeItems arma el texto humano de las líneas: "1 BLANCO + 2 AMARILLO" (o "2 BLANCO" si
+// es una). Para los mensajes del rescate, que no tienen los nombres de producto a mano.
+func describeItems(items []conversation.ItemPedido) string {
+	partes := make([]string, len(items))
+	for i, it := range items {
+		partes[i] = strconv.Itoa(it.Cantidad) + " " + it.Color
+	}
+	return strings.Join(partes, " + ")
 }
 
 // primerNumero devuelve el primer entero que aparece en el texto, o -1. Sirve para leer la
@@ -252,20 +276,45 @@ func (a *Agent) forzarCancelacionSiHaceFalta(from string) (string, bool) {
 	return "Listo, cancelé tu pedido 🙏. Cuando necesites tu gas, aquí estoy para ayudarte 😊", true
 }
 
-// colorEnTexto devuelve el nombre de catálogo del color mencionado en el texto (como palabra
-// suelta), o "" si ninguno aparece. Usa normalizar para ignorar tildes/mayúsculas, y compara
-// contra las PALABRAS del mensaje para no matchear "azulejo" con "azul".
-func colorEnTexto(products []georoutes.Product, texto string) string {
-	palabras := map[string]bool{}
-	for _, p := range strings.Fields(normalizar(texto)) {
-		palabras[p] = true
+// coloresEnTexto devuelve los nombres de catálogo de TODOS los colores mencionados en el texto
+// (como palabras sueltas), en su orden de aparición y sin repetidos. Usa normalizar para
+// ignorar tildes/mayúsculas, y compara contra las PALABRAS del mensaje para no matchear
+// "azulejo" con "azul". "Blanco y amarillo" devuelve ambos: la base del pedido multicolor (C1).
+func coloresEnTexto(products []georoutes.Product, texto string) []string {
+	posiciones := map[string]int{} // palabra normalizada -> posición en el mensaje
+	for i, p := range strings.Fields(normalizar(texto)) {
+		if _, ya := posiciones[p]; !ya {
+			posiciones[p] = i
+		}
 	}
+	type hallazgo struct {
+		nombre string
+		pos    int
+	}
+	var hallados []hallazgo
+	vistos := map[string]bool{}
 	for _, prod := range products {
 		for _, col := range prod.Colores {
-			if palabras[normalizar(col.Nombre)] {
-				return col.Nombre
+			clave := normalizar(col.Nombre)
+			if pos, ok := posiciones[clave]; ok && !vistos[clave] {
+				vistos[clave] = true
+				hallados = append(hallados, hallazgo{col.Nombre, pos})
 			}
 		}
+	}
+	// En el orden en que el cliente los dijo: "blanco y amarillo" son líneas 1 y 2, no al azar.
+	sort.Slice(hallados, func(i, j int) bool { return hallados[i].pos < hallados[j].pos })
+	nombres := make([]string, len(hallados))
+	for i, h := range hallados {
+		nombres[i] = h.nombre
+	}
+	return nombres
+}
+
+// colorEnTexto devuelve el primer color del catálogo mencionado en el texto, o "" si ninguno.
+func colorEnTexto(products []georoutes.Product, texto string) string {
+	if colores := coloresEnTexto(products, texto); len(colores) > 0 {
+		return colores[0]
 	}
 	return ""
 }

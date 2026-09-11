@@ -62,7 +62,8 @@ func TestConstruirSistemaBloques(t *testing.T) {
 			"0105888887",
 			"María José",
 			"ÚLTIMO PEDIDO DEL CLIENTE",
-			"2 x GAS 15KG",
+			"2 BLANCO", // el resumen sale de describeItems (C1: soporta multicolor)
+			"GAS 15KG",
 			"YA compartio su ubicacion", // ya tiene ubicación guardada
 		} {
 			if !strings.Contains(vol, must) {

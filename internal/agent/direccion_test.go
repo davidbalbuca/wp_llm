@@ -13,7 +13,7 @@ import (
 func TestSoloElBotonExactoConfirmaLaDireccion(t *testing.T) {
 	store := conversation.NewMemStore()
 	a := &Agent{store: store}
-	store.SetPedidoEsperandoDireccion("593999", "BLANCO", 2)
+	store.SetPedidoEsperandoDireccion("593999", []conversation.ItemPedido{{Color: "BLANCO", Cantidad: 2}})
 
 	// Estas NO pueden contar como confirmación: llevan un "sí" pero dicen otra cosa.
 	for _, texto := range []string{
@@ -35,7 +35,7 @@ func TestElBotonDeOtraDireccionBorraLaUbicacionVieja(t *testing.T) {
 	a := &Agent{store: store}
 	store.SetLocation("593999", -2.9, -79.0)
 	store.SetDireccionTexto("593999", "Mariscal Sucre 1203")
-	store.SetPedidoEsperandoDireccion("593999", "BLANCO", 1)
+	store.SetPedidoEsperandoDireccion("593999", []conversation.ItemPedido{{Color: "BLANCO", Cantidad: 1}})
 
 	reply, manejado := a.ConfirmarDireccion("593999", BotonOtraDireccion)
 	if !manejado {
@@ -48,7 +48,7 @@ func TestElBotonDeOtraDireccionBorraLaUbicacionVieja(t *testing.T) {
 	if _, hay := store.GetLocation("593999"); hay {
 		t.Error("la ubicación vieja tenía que borrarse al pedir otra dirección")
 	}
-	if _, _, sigue := store.GetPedidoEsperandoDireccion("593999"); sigue {
+	if _, sigue := store.GetPedidoEsperandoDireccion("593999"); sigue {
 		t.Error("el pedido no podía quedar en pausa después de responder")
 	}
 }

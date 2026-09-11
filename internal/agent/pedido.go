@@ -26,6 +26,95 @@ type resultadoPedido struct {
 	Cantidad    int
 	TotalPagar  float64 // valor a pagar (incluye envio/instalacion/servicio)
 	Seguimiento string  // URL pública de seguimiento en vivo (vacía si el backend no la envió)
+	// Lineas es el pedido completo cuando tuvo varios colores (Fase C1). Con un solo color va
+	// vacía y valen Producto/Color/Cantidad, como siempre.
+	Lineas []lineaPedido
+}
+
+// lineaPedido es una línea ya resuelta contra el catálogo, con lo necesario para el backend
+// (IDs) y para hablarle al cliente (nombres).
+type lineaPedido struct {
+	Producto georoutes.Product
+	Color    georoutes.Color
+	Cantidad int
+}
+
+// Topes del pedido multicolor (spec C1.3): por encima de esto casi seguro es un mayorista y
+// merece una persona, no un bot.
+const (
+	maxColoresPorPedido   = 3
+	maxCilindrosPorPedido = 10
+)
+
+// describeLineas arma el texto humano de un pedido: "1 x GAS 15KG (BLANCO) + 2 x GAS 15KG
+// (AMARILLO)". Con una sola línea queda como el texto de siempre.
+func describeLineas(lineas []lineaPedido) string {
+	partes := make([]string, len(lineas))
+	for i, l := range lineas {
+		partes[i] = fmt.Sprintf("%d x %s (%s)", l.Cantidad, l.Producto.Nombre, l.Color.Nombre)
+	}
+	return strings.Join(partes, " + ")
+}
+
+// totalPagarDe suma el precio real (unitario + envío + instalación + servicio) de todas las
+// líneas. El total del backend en wppOrder viene incompleto (solo total_productos).
+func totalPagarDe(lineas []lineaPedido) float64 {
+	var total float64
+	for _, l := range lineas {
+		total += l.Producto.PrecioTotal() * float64(l.Cantidad)
+	}
+	return total
+}
+
+// argsDeLineas es el inverso de lineasDeArgs: arma los argumentos de registrar_pedido a partir
+// de líneas ya conocidas (los interceptores en código las tienen como []ItemPedido). Con una
+// sola línea produce el color+cantidad de siempre; con varias, la lista items. `extra` añade
+// argumentos adicionales (p. ej. direccion_confirmada).
+func argsDeLineas(items []conversation.ItemPedido, extra map[string]any) map[string]any {
+	args := map[string]any{}
+	for k, v := range extra {
+		args[k] = v
+	}
+	if len(items) == 1 {
+		args["color"] = items[0].Color
+		args["cantidad"] = items[0].Cantidad
+		return args
+	}
+	lista := make([]any, len(items))
+	for i, it := range items {
+		lista[i] = map[string]any{"color": it.Color, "cantidad": float64(it.Cantidad)}
+	}
+	args["items"] = lista
+	return args
+}
+
+// lineasDeArgs saca las líneas del pedido de los argumentos de registrar_pedido: la lista
+// "items" si vino (pedido multicolor), o el par color+cantidad de siempre. Devuelve las
+// líneas SIN resolver contra el catálogo (solo texto), en el orden en que llegaron.
+func lineasDeArgs(args map[string]any) []conversation.ItemPedido {
+	var lineas []conversation.ItemPedido
+	if raw, ok := args["items"].([]any); ok {
+		for _, v := range raw {
+			m, ok := v.(map[string]any)
+			if !ok {
+				continue
+			}
+			c := strings.TrimSpace(str(m["color"]))
+			n := toInt(m["cantidad"])
+			if c != "" {
+				lineas = append(lineas, conversation.ItemPedido{Color: c, Cantidad: n})
+			}
+		}
+	}
+	if len(lineas) > 0 {
+		return lineas
+	}
+	c := strings.TrimSpace(str(args["color"]))
+	n := toInt(args["cantidad"])
+	if c == "" && n <= 0 {
+		return nil
+	}
+	return []conversation.ItemPedido{{Color: c, Cantidad: n}}
 }
 
 // cancelarPedido cancela el pedido ACTIVO del cliente cuando lo pide por WhatsApp. Re-autentica
@@ -84,8 +173,25 @@ func (a *Agent) esperarConductor(from string) string {
 // producto y cantidad que NADIE va a atender salvo que una persona lo gestione. Antes solo
 // quedaba marcado en el panel, donde había que estar mirando: el 02/09 un cliente esperó los 5
 // minutos, se le dijo que no había repartidor y su pedido murió ahí sin que nadie se enterara.
+// orderProductsDeWait arma las líneas del backend desde una espera (todas si fue multicolor).
+func orderProductsDeWait(w conversation.PendingWait) []georoutes.OrderProduct {
+	lineas := w.Lineas()
+	productos := make([]georoutes.OrderProduct, len(lineas))
+	for i, l := range lineas {
+		productos[i] = georoutes.OrderProduct{
+			IDCategoria: l.IDCategoria, IDProducto: l.IDProducto,
+			IDColor: l.IDColor, Cantidad: l.Cantidad,
+		}
+	}
+	return productos
+}
+
 func (a *Agent) avisarSinRepartidor(from string, w conversation.PendingWait, motivo string) {
-	pedido := fmt.Sprintf("%d × %s %s", w.Cantidad, w.ProductoNombre, w.ColorNombre)
+	partes := make([]string, 0, 2)
+	for _, l := range w.Lineas() {
+		partes = append(partes, fmt.Sprintf("%d × %s %s", l.Cantidad, l.ProductoNombre, l.ColorNombre))
+	}
+	pedido := strings.Join(partes, " + ")
 	nombre := strings.TrimSpace(w.Nombres)
 	if nombre == "" {
 		if p, ok := a.store.GetProfile(from); ok {
@@ -135,7 +241,7 @@ func (a *Agent) registrarNoAsignado(from string) {
 		return
 	}
 	if err := a.gr.WppRegistrarPedidoNoAsignado(tokens.Access, loc.Latitude, loc.Longitude, w.IDTipoPago,
-		[]georoutes.OrderProduct{{IDCategoria: w.IDCategoria, IDProducto: w.IDProducto, IDColor: w.IDColor, Cantidad: w.Cantidad}}); err != nil {
+		orderProductsDeWait(w)); err != nil {
 		a.crearTicketSoporte(from, "Pedido sin conductor no quedó registrado",
 			fmt.Sprintf("El backend rechazó guardarlo como NO ASIGNADO: %v. El pedido no está en ninguna lista; hay que contactar al cliente.", err))
 	}
@@ -190,7 +296,7 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 			if okA && okL {
 				if tokens, err := gr.Login(account.Username, account.Password); err == nil {
 					res, err := gr.WppOrder(tokens.Access, loc.Latitude, loc.Longitude, w.IDTipoPago,
-						[]georoutes.OrderProduct{{IDCategoria: w.IDCategoria, IDProducto: w.IDProducto, IDColor: w.IDColor, Cantidad: w.Cantidad}})
+						orderProductsDeWait(w))
 					if err == nil {
 						// ¡Asignado! Guardar estado igual que un pedido normal y avisar al cliente.
 						store.SetProfile(from, conversation.Profile{Identificacion: w.Identificacion, Nombres: w.Nombres})
@@ -207,8 +313,16 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 							mismaUbicacion(anterior.Latitude, anterior.Longitude, loc.Latitude, loc.Longitude) {
 							nombre = anterior.Alias
 						}
+						var lastItems []conversation.ItemPedido
+						if lineas := w.Lineas(); len(lineas) > 1 {
+							lastItems = make([]conversation.ItemPedido, len(lineas))
+							for i, l := range lineas {
+								lastItems[i] = conversation.ItemPedido{Color: l.ColorNombre, Cantidad: l.Cantidad}
+							}
+						}
 						store.SetLastOrder(from, conversation.LastOrder{
 							Producto: w.ProductoNombre, Color: w.ColorNombre, Cantidad: w.Cantidad,
+							Items:     lastItems,
 							Fecha:     time.Now().Format("02/01/2006"),
 							Latitude:  loc.Latitude,
 							Longitude: loc.Longitude,
@@ -244,7 +358,7 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 			if loc, okL := store.GetLocation(from); okL {
 				if tokens, err := gr.Login(account.Username, account.Password); err == nil {
 					if err := gr.WppRegistrarPedidoNoAsignado(tokens.Access, loc.Latitude, loc.Longitude, w.IDTipoPago,
-						[]georoutes.OrderProduct{{IDCategoria: w.IDCategoria, IDProducto: w.IDProducto, IDColor: w.IDColor, Cantidad: w.Cantidad}}); err != nil {
+						orderProductsDeWait(w)); err != nil {
 						log.Printf("[no-asignado] registro (timeout) falló para %s: %v", from, err)
 					}
 				}
@@ -276,9 +390,28 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 			"el pedido porque a esta hora no hay conductores. Explícaselo al cliente con amabilidad y ofrécele " +
 			"PROGRAMAR la entrega con la herramienta programar_entrega."
 	}
-	cantidad := toInt(args["cantidad"])
-	if cantidad <= 0 {
-		return "Falta una cantidad válida de cilindros. Pregúntale al cliente cuántos desea."
+	// Líneas del pedido: varias si el cliente pidió más de un color (items), una si no. TODAS
+	// completas o no se registra nada: un pedido a medias es peor que preguntar (spec C1.3).
+	pedido := lineasDeArgs(args)
+	if len(pedido) == 0 {
+		return "Falta el color y la cantidad del pedido. Pregúntale al cliente qué cilindro desea."
+	}
+	for _, l := range pedido {
+		if l.Cantidad <= 0 {
+			return fmt.Sprintf("Falta la cantidad de cilindros %s. Pregúntale al cliente cuántos "+
+				"de ese color desea; NO registres nada hasta tenerla.", l.Color)
+		}
+	}
+	// Topes del multicolor: por encima casi seguro es un mayorista; lo atiende una persona.
+	totalCilindros := 0
+	for _, l := range pedido {
+		totalCilindros += l.Cantidad
+	}
+	if len(pedido) > maxColoresPorPedido || totalCilindros > maxCilindrosPorPedido {
+		t.escalado = true
+		return fmt.Sprintf("El pedido es muy grande (%d colores, %d cilindros) y merece atención "+
+			"personal. NO se registró. Dile al cliente con amabilidad que para pedidos grandes una "+
+			"persona del equipo lo contactará enseguida, y deriva al dueño.", len(pedido), totalCilindros)
 	}
 
 	// IDEMPOTENCIA: si el cliente ya tiene un pedido activo, no se le crea otro. Pasa cuando el
@@ -317,7 +450,6 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 
 	identificacion := strings.TrimSpace(str(args["identificacion"]))
 	nombres := strings.TrimSpace(str(args["nombres_completos"]))
-	colorNombre := strings.TrimSpace(str(args["color"]))
 	telefono := strings.TrimSpace(str(args["telefono"]))
 	if telefono == "" {
 		telefono = from
@@ -345,29 +477,37 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 		})
 	}
 
-	// Catálogo: mapear el color elegido a (producto, color) y elegir la forma de pago.
+	// Catálogo: mapear CADA color pedido a (producto, color) y elegir la forma de pago. Si UN
+	// color no existe, no se registra NADA: un pedido a medias es peor que preguntar (C1.3).
 	contexto, disponible := a.catalog.Get()
 	if !disponible || contexto == nil {
 		t.escalado = true // derivación REAL (señal explícita; ya no se adivina por texto)
 		return "No puedo consultar el catálogo en este momento. Discúlpate con el cliente y deriva al dueño."
 	}
-	producto, color, ok := findProductByColor(contexto.Products, colorNombre)
-	if !ok {
-		return fmt.Sprintf("El color/marca \"%s\" no está disponible. Colores disponibles: %s. "+
-			"Pregúntale al cliente cuál desea.", colorNombre, availableColors(contexto.Products))
+	lineas := make([]lineaPedido, 0, len(pedido))
+	for _, l := range pedido {
+		producto, color, ok := findProductByColor(contexto.Products, l.Color)
+		if !ok {
+			return fmt.Sprintf("El color/marca \"%s\" no está disponible: NO se registró nada del pedido. "+
+				"Colores disponibles: %s. Pregúntale al cliente cuál desea.", l.Color, availableColors(contexto.Products))
+		}
+		lineas = append(lineas, lineaPedido{Producto: producto, Color: color, Cantidad: l.Cantidad})
 	}
 	idtipopago, ok := defaultPaymentID(contexto.Payments)
 	if !ok {
 		t.escalado = true
 		return "No hay una forma de pago configurada en el sistema. Deriva al dueño."
 	}
+	// La primera línea encabeza los mensajes/estados que hablan de UN color (compat con el
+	// pedido de siempre); todo lo que puede ser multicolor usa `lineas` completo.
+	producto, color, cantidad := lineas[0].Producto, lineas[0].Color, lineas[0].Cantidad
 
 	// GUARDIA DE DIRECCION. Si la ubicacion guardada NO es de esta conversacion, no se registra
 	// nada hasta que el cliente confirme a donde va. Evita el peor error posible: que alguien
 	// pida en la mañana y en la tarde, desde otro lado, y el gas salga a la direccion vieja.
 	// El menu lo manda el codigo y la respuesta se resuelve en codigo (ver direccion.go).
 	if args["direccion_confirmada"] != true && !a.ubicacionEsDeAhora(from) {
-		if aviso, enPausa := a.pedirConfirmacionDireccion(t, from, colorNombre, cantidad); enPausa {
+		if aviso, enPausa := a.pedirConfirmacionDireccionLineas(t, from, pedido); enPausa {
 			return aviso
 		}
 		// Sin direccion legible que mostrar, lo correcto es pedirle el pin otra vez.
@@ -420,24 +560,46 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 
 	// Pedido: con alias, el backend usa la dirección con nombre del cliente; sin él, hace
 	// UPSERT de la dirección "WhatsApp" con esta ubicación. En ambos casos REUTILIZA el flujo
-	// real de pedido.
+	// real de pedido. UNA sola llamada con TODAS las líneas: el backend crea un PedidoCabecera
+	// con un PedidoDetalle por línea y exige un conductor con stock de todos los colores. Antes
+	// el multicolor obligaba al modelo a llamar la tool dos veces y la segunda chocaba con la
+	// idempotencia — así David (10/09) recibió "BLANCO y AMARILLO confirmados" con solo BLANCO.
+	orderProducts := make([]georoutes.OrderProduct, len(lineas))
+	for i, l := range lineas {
+		orderProducts[i] = georoutes.OrderProduct{
+			IDCategoria: l.Producto.IDCategoria,
+			IDProducto:  l.Producto.IDProducto,
+			IDColor:     l.Color.ID,
+			Cantidad:    l.Cantidad,
+		}
+	}
 	resultado, err := a.gr.WppOrderEnDireccion(tokens.Access, loc.Latitude, loc.Longitude, idtipopago,
-		[]georoutes.OrderProduct{{
-			IDCategoria: producto.IDCategoria,
-			IDProducto:  producto.IDProducto,
-			IDColor:     color.ID,
-			Cantidad:    cantidad,
-		}}, aliasDestino)
+		orderProducts, aliasDestino)
 	if err != nil {
 		// Sin repartidores / fuera de cobertura NO es error técnico: guardamos el pedido a la
 		// espera y le ofrecemos al cliente esperar hasta 5 min (reintento de asignación).
 		if esFalloDeCobertura(err.Error()) {
 			// ANTES de ofrecer esperar: ¿hay un color EQUIVALENTE con conductor y stock reales?
 			// (specs/cobertura-y-color-alterno.md). Si lo hay, se le ofrece el cambio; si la
-			// consulta falla o no hay, el flujo de espera sigue exactamente como hoy.
-			if menu, ok := a.ofrecerColorAlterno(t, from, loc.Latitude, loc.Longitude,
-				producto, color, cantidad); ok {
-				return menu
+			// consulta falla o no hay, el flujo de espera sigue exactamente como hoy. SOLO para
+			// pedidos de un color: la equivalencia está pensada línea a línea y ofrecer "¿te lo
+			// cambio a azul?" sobre un pedido de dos colores confundiría más de lo que ayuda.
+			if len(lineas) == 1 {
+				if menu, ok := a.ofrecerColorAlterno(t, from, loc.Latitude, loc.Longitude,
+					producto, color, cantidad); ok {
+					return menu
+				}
+			}
+			var waitItems []conversation.PendingWaitItem
+			if len(lineas) > 1 {
+				waitItems = make([]conversation.PendingWaitItem, len(lineas))
+				for i, l := range lineas {
+					waitItems[i] = conversation.PendingWaitItem{
+						IDCategoria: l.Producto.IDCategoria, IDProducto: l.Producto.IDProducto,
+						IDColor: l.Color.ID, Cantidad: l.Cantidad,
+						ProductoNombre: l.Producto.Nombre, ColorNombre: l.Color.Nombre,
+					}
+				}
 			}
 			a.store.SetPendingWait(from, conversation.PendingWait{
 				IDCategoria:    producto.IDCategoria,
@@ -449,12 +611,14 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 				ColorNombre:    color.Nombre,
 				Identificacion: identificacion,
 				Nombres:        nombres,
+				Items:          waitItems,
 			})
 			t.ultimoPedido = resultadoPedido{
 				enEspera: true,
 				Producto: producto.Nombre,
 				Color:    color.Nombre,
 				Cantidad: cantidad,
+				Lineas:   lineas,
 			}
 			return mensajeOfrecerEspera
 		}
@@ -481,10 +645,18 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 	// La calle NO se lee del store: ahí queda la de la ÚLTIMA ubicación conocida, que si el
 	// cliente se movió a un sitio sin dirección registrada sería la del pedido anterior — y
 	// "repetir" le ofrecería una calle a la que este pedido nunca fue.
+	var lastItems []conversation.ItemPedido
+	if len(lineas) > 1 {
+		lastItems = make([]conversation.ItemPedido, len(lineas))
+		for i, l := range lineas {
+			lastItems[i] = conversation.ItemPedido{Color: l.Color.Nombre, Cantidad: l.Cantidad}
+		}
+	}
 	a.store.SetLastOrder(from, conversation.LastOrder{
 		Producto:  producto.Nombre,
 		Color:     color.Nombre,
 		Cantidad:  cantidad,
+		Items:     lastItems,
 		Fecha:     time.Now().Format("02/01/2006"),
 		Latitude:  loc.Latitude,
 		Longitude: loc.Longitude,
@@ -500,6 +672,10 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 	}
 
 	seguimiento := a.urlSeguimiento(resultado.SeguimientoToken)
+	// El VALOR A PAGAR se calcula con el precio del catálogo (unitario + envío + instalación +
+	// servicio, ver Product.PrecioTotal) sumando TODAS las líneas, NO con resultado.Total: el
+	// backend en wppOrder devuelve solo total_productos (el cilindro suelto, sin los rubros).
+	totalPagar := totalPagarDe(lineas)
 	t.ultimoPedido = resultadoPedido{
 		ok:          true,
 		IDPedido:    resultado.IDPedido,
@@ -508,19 +684,16 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 		Producto:    producto.Nombre,
 		Color:       color.Nombre,
 		Cantidad:    cantidad,
-		TotalPagar:  producto.PrecioTotal() * float64(cantidad),
+		TotalPagar:  totalPagar,
 		Seguimiento: seguimiento,
+		Lineas:      lineas,
 	}
 
-	// El VALOR A PAGAR se calcula con el precio del catálogo (unitario + envío + instalación +
-	// servicio, ver Product.PrecioTotal), NO con resultado.Total: el backend en wppOrder devuelve
-	// solo total_productos (el cilindro suelto, sin los rubros), así que ese número está incompleto.
-	totalPagar := producto.PrecioTotal() * float64(cantidad)
-
 	// Confirmación COMPLETA para el modelo (conductor + placa + valor a pagar + seguimiento). Se le
-	// pasan los datos con etiquetas claras para que arme un mensaje amable; los valores van tal cual.
-	mensaje := fmt.Sprintf("Pedido registrado correctamente: %d x %s (%s). DATOS PARA CONFIRMARLE AL "+
-		"CLIENTE (dáselos todos, de forma amable y clara):", cantidad, producto.Nombre, color.Nombre)
+	// pasan los datos con etiquetas claras para que arme un mensaje amable; los valores van tal
+	// cual. Con varias líneas, el detalle completo ("1 x ... (BLANCO) + 1 x ... (AMARILLO)").
+	mensaje := fmt.Sprintf("Pedido registrado correctamente: %s. DATOS PARA CONFIRMARLE AL "+
+		"CLIENTE (dáselos todos, de forma amable y clara):", describeLineas(lineas))
 	if resultado.ConductorAsignado != "" {
 		mensaje += " Repartidor: " + resultado.ConductorAsignado + "."
 	}

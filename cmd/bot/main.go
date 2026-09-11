@@ -826,6 +826,16 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 			}
 			return
 		}
+		// Dirección GUARDADA elegida como destino ("Tienda", "a la casa", o el botón del menú).
+		// En código porque el destino del gas no puede depender de que el modelo interprete
+		// bien un nombre (Fase B.4; ver internal/agent/direcciones.go).
+		if reply, manejado := ag.ResponderDireccionGuardada(inc.From, inc.Text); manejado {
+			log.Printf("[webhook] direccion guardada resuelta para %s", inc.From)
+			if reply != "" {
+				_ = replyClient(cfg, store, inc.From, reply)
+			}
+			return
+		}
 		// El nombre de la ubicación va DESPUÉS de los demás: los otros menús resuelven cosas
 		// urgentes (el pedido, la espera, la calificación) y este es un extra. Si el cliente
 		// ignora la pregunta y sigue con su pedido, este devuelve false y el turno continúa.

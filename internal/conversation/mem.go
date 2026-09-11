@@ -13,7 +13,7 @@ type memStore struct {
 	mu                 sync.Mutex
 	chatLeido          map[string]int64
 	direccionTexto     map[string]string
-	esperandoDireccion map[string]OrderDraft
+	esperandoDireccion map[string][]ItemPedido
 	data               map[string][]*genai.Content
 	locations          map[string]Location
 	accounts           map[string]Account
@@ -263,20 +263,20 @@ func (s *memStore) GetDireccionTexto(phone string) (string, bool) {
 	return d, ok && d != ""
 }
 
-func (s *memStore) SetPedidoEsperandoDireccion(phone, color string, cantidad int) {
+func (s *memStore) SetPedidoEsperandoDireccion(phone string, items []ItemPedido) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.esperandoDireccion == nil {
-		s.esperandoDireccion = map[string]OrderDraft{}
+		s.esperandoDireccion = map[string][]ItemPedido{}
 	}
-	s.esperandoDireccion[phone] = OrderDraft{Color: color, Cantidad: cantidad}
+	s.esperandoDireccion[phone] = append([]ItemPedido(nil), items...)
 }
 
-func (s *memStore) GetPedidoEsperandoDireccion(phone string) (string, int, bool) {
+func (s *memStore) GetPedidoEsperandoDireccion(phone string) ([]ItemPedido, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d, ok := s.esperandoDireccion[phone]
-	return d.Color, d.Cantidad, ok
+	return append([]ItemPedido(nil), d...), ok
 }
 
 func (s *memStore) ClearPedidoEsperandoDireccion(phone string) {

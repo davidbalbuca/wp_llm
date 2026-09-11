@@ -298,9 +298,20 @@ func agregarColumnasNuevas(db *sql.DB) error {
 			"longitude REAL NOT NULL DEFAULT 0",
 			"alias TEXT NOT NULL DEFAULT ''",
 			"direccion TEXT NOT NULL DEFAULT ''",
+			// Líneas del pedido multicolor (Fase C1), como JSON. Vacío = un solo color (los
+			// campos clásicos producto/color/cantidad siguen siendo la verdad en ese caso).
+			"items TEXT NOT NULL DEFAULT ''",
 		},
 		"profiles": {
 			"perfil_whatsapp TEXT NOT NULL DEFAULT ''",
+		},
+		"pedido_en_curso": {
+			// Líneas ya cerradas de la ficha multicolor (Fase C1), como JSON.
+			"items TEXT NOT NULL DEFAULT ''",
+		},
+		"pending_address": {
+			// Pedido multicolor completo en pausa por confirmación de dirección (C1), como JSON.
+			"items TEXT NOT NULL DEFAULT ''",
 		},
 	}
 	for tabla, columnas := range nuevas {
@@ -815,24 +826,40 @@ func (s *sqliteStore) GetDireccionTexto(phone string) (string, bool) {
 	return d, strings.TrimSpace(d) != ""
 }
 
-func (s *sqliteStore) SetPedidoEsperandoDireccion(phone, color string, cantidad int) {
+func (s *sqliteStore) SetPedidoEsperandoDireccion(phone string, items []ItemPedido) {
+	// La primera línea va en las columnas clásicas (compat con filas viejas y con el panel);
+	// el pedido COMPLETO viaja en items como JSON. Con una sola línea, items queda vacío y la
+	// fila es idéntica a las de siempre.
+	var color string
+	var cantidad int
+	if len(items) > 0 {
+		color, cantidad = items[0].Color, items[0].Cantidad
+	}
+	extra := ""
+	if len(items) > 1 {
+		extra = itemsAJSON(items)
+	}
 	if _, err := s.db.Exec(`
-        INSERT INTO pending_address(phone, color, cantidad, created_at) VALUES(?, ?, ?, ?)
+        INSERT INTO pending_address(phone, color, cantidad, items, created_at) VALUES(?, ?, ?, ?, ?)
         ON CONFLICT(phone) DO UPDATE SET color=excluded.color, cantidad=excluded.cantidad,
-            created_at=excluded.created_at`,
-		phone, color, cantidad, time.Now().Unix()); err != nil {
+            items=excluded.items, created_at=excluded.created_at`,
+		phone, color, cantidad, extra, time.Now().Unix()); err != nil {
 		log.Printf("[sqlite] SetPedidoEsperandoDireccion %s: %v", phone, err)
 	}
 }
 
-func (s *sqliteStore) GetPedidoEsperandoDireccion(phone string) (string, int, bool) {
+func (s *sqliteStore) GetPedidoEsperandoDireccion(phone string) ([]ItemPedido, bool) {
 	var color string
 	var cantidad int
-	if err := s.db.QueryRow(`SELECT color, cantidad FROM pending_address WHERE phone = ?`,
-		phone).Scan(&color, &cantidad); err != nil {
-		return "", 0, false
+	var extra string
+	if err := s.db.QueryRow(`SELECT color, cantidad, COALESCE(items,'') FROM pending_address WHERE phone = ?`,
+		phone).Scan(&color, &cantidad, &extra); err != nil {
+		return nil, false
 	}
-	return color, cantidad, true
+	if items := itemsDeJSON(extra); len(items) > 0 {
+		return items, true
+	}
+	return []ItemPedido{{Color: color, Cantidad: cantidad}}, true
 }
 
 func (s *sqliteStore) ClearPedidoEsperandoDireccion(phone string) {
@@ -942,8 +969,8 @@ func (s *sqliteStore) GetProfile(phone string) (Profile, bool) {
 func (s *sqliteStore) SetLastOrder(phone string, order LastOrder) {
 	if _, err := s.db.Exec(`
         INSERT INTO last_orders(phone, producto, color, cantidad, fecha,
-                                latitude, longitude, alias, direccion, updated_at)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                latitude, longitude, alias, direccion, items, updated_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(phone) DO UPDATE SET
             producto=excluded.producto,
             color=excluded.color,
@@ -953,20 +980,24 @@ func (s *sqliteStore) SetLastOrder(phone string, order LastOrder) {
             longitude=excluded.longitude,
             alias=excluded.alias,
             direccion=excluded.direccion,
+            items=excluded.items,
             updated_at=excluded.updated_at`,
 		phone, order.Producto, order.Color, order.Cantidad, order.Fecha,
-		order.Latitude, order.Longitude, order.Alias, order.Direccion, time.Now().Unix()); err != nil {
+		order.Latitude, order.Longitude, order.Alias, order.Direccion,
+		itemsAJSON(order.Items), time.Now().Unix()); err != nil {
 		log.Printf("[sqlite] SetLastOrder %s: %v", phone, err)
 	}
 }
 
 func (s *sqliteStore) GetLastOrder(phone string) (LastOrder, bool) {
 	var order LastOrder
+	var items string
 	err := s.db.QueryRow(
-		`SELECT producto, color, cantidad, fecha, latitude, longitude, alias, direccion
+		`SELECT producto, color, cantidad, fecha, latitude, longitude, alias, direccion,
+                COALESCE(items,'')
          FROM last_orders WHERE phone = ?`, phone).
 		Scan(&order.Producto, &order.Color, &order.Cantidad, &order.Fecha,
-			&order.Latitude, &order.Longitude, &order.Alias, &order.Direccion)
+			&order.Latitude, &order.Longitude, &order.Alias, &order.Direccion, &items)
 	if err == sql.ErrNoRows {
 		return LastOrder{}, false
 	}
@@ -974,7 +1005,35 @@ func (s *sqliteStore) GetLastOrder(phone string) (LastOrder, bool) {
 		log.Printf("[sqlite] GetLastOrder %s: %v", phone, err)
 		return LastOrder{}, false
 	}
+	order.Items = itemsDeJSON(items)
 	return order, true
+}
+
+// itemsAJSON / itemsDeJSON serializan las líneas multicolor para SQLite. Vacío <-> "" para que
+// los pedidos de un solo color no arrastren un "[]" que nadie necesita, y para que las filas
+// anteriores a C1 (items = '') se lean como lo que son: sin lista.
+func itemsAJSON(items []ItemPedido) string {
+	if len(items) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(items)
+	if err != nil {
+		log.Printf("[sqlite] serializando items: %v", err)
+		return ""
+	}
+	return string(b)
+}
+
+func itemsDeJSON(s string) []ItemPedido {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	var items []ItemPedido
+	if err := json.Unmarshal([]byte(s), &items); err != nil {
+		log.Printf("[sqlite] leyendo items: %v", err)
+		return nil
+	}
+	return items
 }
 
 func (s *sqliteStore) LastActivity(phone string) (time.Time, bool) {
@@ -1108,11 +1167,11 @@ func (s *sqliteStore) ClearPendingGuardarUbicacion(phone string) {
 
 func (s *sqliteStore) SetPedidoEnCurso(phone string, p PedidoEnCurso) {
 	if _, err := s.db.Exec(`
-        INSERT INTO pedido_en_curso(phone, color, cantidad, hora, flujo, updated_at) VALUES(?, ?, ?, ?, ?, ?)
+        INSERT INTO pedido_en_curso(phone, color, cantidad, hora, flujo, items, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(phone) DO UPDATE SET
             color=excluded.color, cantidad=excluded.cantidad, hora=excluded.hora,
-            flujo=excluded.flujo, updated_at=excluded.updated_at`,
-		phone, p.Color, p.Cantidad, p.Hora, p.Flujo, time.Now().Unix()); err != nil {
+            flujo=excluded.flujo, items=excluded.items, updated_at=excluded.updated_at`,
+		phone, p.Color, p.Cantidad, p.Hora, p.Flujo, itemsAJSON(p.Items), time.Now().Unix()); err != nil {
 		log.Printf("[sqlite] SetPedidoEnCurso %s: %v", phone, err)
 	}
 }
@@ -1124,15 +1183,17 @@ func (s *sqliteStore) GetPedidoEnCurso(phone string) (PedidoEnCurso, bool) {
 		log.Printf("[sqlite] purga pedido_en_curso: %v", err)
 	}
 	var p PedidoEnCurso
+	var items string
 	var updated int64
-	err := s.db.QueryRow(`SELECT color, cantidad, hora, flujo, updated_at FROM pedido_en_curso WHERE phone = ?`, phone).
-		Scan(&p.Color, &p.Cantidad, &p.Hora, &p.Flujo, &updated)
+	err := s.db.QueryRow(`SELECT color, cantidad, hora, flujo, COALESCE(items,''), updated_at FROM pedido_en_curso WHERE phone = ?`, phone).
+		Scan(&p.Color, &p.Cantidad, &p.Hora, &p.Flujo, &items, &updated)
 	if err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("[sqlite] GetPedidoEnCurso %s: %v", phone, err)
 		}
 		return PedidoEnCurso{}, false
 	}
+	p.Items = itemsDeJSON(items)
 	p.UpdatedAt = time.Unix(updated, 0)
 	return p, true
 }

@@ -164,19 +164,31 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 	// necesita color + cantidad y, si es un cliente nuevo, su cédula + nombre.
 	registrar := &genai.FunctionDeclaration{
 		Name: "registrar_pedido",
-		Description: "Registra un pedido de gas en el sistema. Úsala solo cuando ya tienes el color/marca y la " +
-			"cantidad, el cliente compartió su ubicación de WhatsApp, y (si es un cliente NUEVO) su cédula y su " +
-			"nombre. No la uses para consultas; solo para concretar el pedido.",
+		Description: "Registra un pedido de gas en el sistema (UN solo pedido, aunque lleve varios colores). " +
+			"Úsala solo cuando ya tienes el color/marca y la cantidad de CADA cilindro, el cliente compartió su " +
+			"ubicación de WhatsApp, y (si es un cliente NUEVO) su cédula y su nombre. Si el cliente pide MÁS DE UN " +
+			"color, llámala UNA sola vez con 'items'; NUNCA la llames dos veces para un mismo pedido. " +
+			"No la uses para consultas; solo para concretar el pedido.",
 		Parameters: &genai.Schema{
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
 				"identificacion":    {Type: genai.TypeString, Description: "Cédula/identificación del cliente. Si ya está registrado (ver DATOS DEL CLIENTE), NO hace falta repetirla."},
 				"nombres_completos": {Type: genai.TypeString, Description: "Nombres y apellidos del cliente. Si ya está registrado, NO hace falta repetirlos."},
-				"color":             {Type: genai.TypeString, Description: "Color/marca del cilindro. Debe coincidir con uno de los colores de la INFORMACIÓN DEL SERVICIO."},
-				"cantidad":          {Type: genai.TypeInteger, Description: "Cantidad de cilindros solicitados."},
-				"telefono":          {Type: genai.TypeString, Description: "Teléfono del cliente. Si no lo indica, se usa su número de WhatsApp."},
+				"color":             {Type: genai.TypeString, Description: "Color/marca del cilindro. Debe coincidir con uno de los colores de la INFORMACIÓN DEL SERVICIO. Para varios colores usa 'items' en su lugar."},
+				"cantidad":          {Type: genai.TypeInteger, Description: "Cantidad de cilindros solicitados (del color de 'color')."},
+				"items": {Type: genai.TypeArray, Description: "SOLO cuando el cliente pide MÁS DE UN color en el mismo pedido: " +
+					"una línea por color, cada una con su color y su cantidad. Si el pedido es de un solo color, usa 'color' y 'cantidad' y NO envíes 'items'.",
+					Items: &genai.Schema{
+						Type: genai.TypeObject,
+						Properties: map[string]*genai.Schema{
+							"color":    {Type: genai.TypeString, Description: "Color/marca de esta línea (de la INFORMACIÓN DEL SERVICIO)."},
+							"cantidad": {Type: genai.TypeInteger, Description: "Cantidad de cilindros de este color."},
+						},
+						Required: []string{"color", "cantidad"},
+					}},
+				"telefono": {Type: genai.TypeString, Description: "Teléfono del cliente. Si no lo indica, se usa su número de WhatsApp."},
 			},
-			Required: []string{"color", "cantidad"},
+			Required: []string{},
 		},
 	}
 

@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"wp-llm-gas/internal/conversation"
 	"wp-llm-gas/internal/notify"
 	"wp-llm-gas/internal/whatsapp"
 )
@@ -44,9 +45,9 @@ func (a *Agent) ubicacionEsDeAhora(from string) bool {
 	return time.Since(time.Unix(loc.UpdatedAt, 0)) < VentanaUbicacionFresca
 }
 
-// pedirConfirmacionDireccion deja el pedido en pausa y le manda al cliente el menu con su
-// direccion. Devuelve el texto para el MODELO (no para el cliente) y si se hizo cargo.
-func (a *Agent) pedirConfirmacionDireccion(t *turno, from, color string, cantidad int) (string, bool) {
+// pedirConfirmacionDireccionLineas deja el pedido (todas sus lineas) en pausa y le manda al
+// cliente el menu con su direccion. Devuelve el texto para el MODELO y si se hizo cargo.
+func (a *Agent) pedirConfirmacionDireccionLineas(t *turno, from string, items []conversation.ItemPedido) (string, bool) {
 	direccion, hay := a.store.GetDireccionTexto(from)
 	if !hay || strings.TrimSpace(direccion) == "" {
 		// Sin una direccion legible no se puede preguntar nada util: mostrarle coordenadas o el
@@ -54,7 +55,7 @@ func (a *Agent) pedirConfirmacionDireccion(t *turno, from, color string, cantida
 		return "", false
 	}
 
-	a.store.SetPedidoEsperandoDireccion(from, color, cantidad)
+	a.store.SetPedidoEsperandoDireccion(from, items)
 	cuerpo := fmt.Sprintf("¿Te lo enviamos a %s?", direccion)
 	if err := whatsapp.SendMenu(a.cfg, from, cuerpo,
 		[]string{BotonMismaDireccion, BotonOtraDireccion}); err != nil {
@@ -73,8 +74,8 @@ func (a *Agent) pedirConfirmacionDireccion(t *turno, from, color string, cantida
 // ConfirmarDireccion resuelve, SIN pasar por el modelo, la respuesta del cliente al menu de
 // direccion. Devuelve el mensaje para el cliente y si se hizo cargo del turno.
 func (a *Agent) ConfirmarDireccion(from, texto string) (string, bool) {
-	color, cantidad, enPausa := a.store.GetPedidoEsperandoDireccion(from)
-	if !enPausa {
+	items, enPausa := a.store.GetPedidoEsperandoDireccion(from)
+	if !enPausa || len(items) == 0 {
 		return "", false
 	}
 	// Punto de entrada propio (lo llama cmd/bot, no HandleMessage): su turno nace aquí.
@@ -85,9 +86,9 @@ func (a *Agent) ConfirmarDireccion(from, texto string) (string, bool) {
 	case normalizarRespuesta(BotonMismaDireccion):
 		a.store.ClearPedidoEsperandoDireccion(from)
 		log.Printf("[direccion] %s confirmó su dirección; se registra el pedido", from)
-		a.runTool(t, from, "registrar_pedido", map[string]any{
-			"color": color, "cantidad": cantidad, "direccion_confirmada": true,
-		})
+		a.runTool(t, from, "registrar_pedido", argsDeLineas(items, map[string]any{
+			"direccion_confirmada": true,
+		}))
 		return a.mensajeDelPedido(t, from), true
 
 	case normalizarRespuesta(BotonOtraDireccion):

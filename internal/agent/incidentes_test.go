@@ -316,6 +316,34 @@ func TestIncidente_ReclamoNoArmaUnPedido(t *testing.T) {
 	}
 }
 
+// INCIDENTE 10/09 — "COMO EL ÚLTIMO PEDIDO" (David). Canceló su pedido (la cancelación limpia
+// la ficha), escribió "Como el último pedido" y el interceptor de repetir solo aceptaba el
+// texto exacto del botón: el mensaje fue al modelo, que afirmó el pedido sin registrarlo; el
+// rescate no encontró ficha y respondió "tuve un problema al registrar tu pedido" — cuatro
+// veces seguidas, sin que hubiera ningún problema. Ahora la intención escrita entra por el
+// mismo camino en código que el botón, y la ficha se carga desde el LastOrder.
+func TestIncidente_ComoElUltimoPedido(t *testing.T) {
+	const from = "593999100013"
+	store := conversation.NewMemStore()
+	store.SetLastOrder(from, conversation.LastOrder{
+		Producto: "GAS 15KG", Color: "BLANCO", Cantidad: 1, Fecha: "10/09/2026",
+	})
+	ag := agentIncidente(nil, store)
+
+	// Como quedó tras cancelar: sin pedido activo y sin ficha.
+	store.ClearActivePedido(from)
+	store.ClearPedidoEnCurso(from)
+
+	_, manejado := ag.ResponderRepetirPedido(from, "Como el último pedido")
+	if !manejado {
+		t.Fatal("\"Como el último pedido\" escrito no se resolvió en código: el turno iría al " +
+			"modelo y el rescate del fantasma no tendría ficha con qué registrar (el bug de David)")
+	}
+	if p, hay := store.GetPedidoEnCurso(from); !hay || p.Color != "BLANCO" || p.Cantidad != 1 {
+		t.Errorf("la ficha no se cargó desde el último pedido: %+v (hay=%v)", p, hay)
+	}
+}
+
 // INCIDENTE 27/08 — MENÚ REPETIDO. Un cliente escribió "¿por qué no me saludas?" y recibió el
 // mismo menú tres veces. El tope de un menú por turno lo impide en código.
 func TestIncidente_UnSoloMenuPorTurno(t *testing.T) {

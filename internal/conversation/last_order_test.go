@@ -162,3 +162,68 @@ func TestBaseDeProduccionSinPerfilWhatsAppSigueFuncionando(t *testing.T) {
 		t.Errorf("la migración le borró la cédula: %+v", p)
 	}
 }
+
+// Las LÍNEAS multicolor (Fase C1) sobreviven al viaje por los dos backends, y una base de
+// producción sin la columna items sigue leyéndose (fila vieja = pedido de un color).
+func TestLastOrderMulticolorEnLosDosBackends(t *testing.T) {
+	backends := map[string]func() Store{
+		"mem": func() Store { return NewMemStore() },
+		"sqlite": func() Store {
+			s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "bot.db"), 15)
+			if err != nil {
+				t.Fatalf("abrir sqlite: %v", err)
+			}
+			return s
+		},
+	}
+	for nombre, abrir := range backends {
+		t.Run(nombre, func(t *testing.T) {
+			store := abrir()
+			const from = "593999000082"
+			store.SetLastOrder(from, LastOrder{
+				Producto: "GAS 15KG", Color: "BLANCO", Cantidad: 1, Fecha: "10/09/2026",
+				Items: []ItemPedido{{Color: "BLANCO", Cantidad: 1}, {Color: "AMARILLO", Cantidad: 1}},
+			})
+			last, hay := store.GetLastOrder(from)
+			if !hay || len(last.Items) != 2 {
+				t.Fatalf("las líneas multicolor se perdieron: %+v (hay=%v)", last, hay)
+			}
+			if li := last.ItemsDelPedido(); len(li) != 2 || li[1].Color != "AMARILLO" {
+				t.Errorf("ItemsDelPedido no devuelve la lista completa: %+v", li)
+			}
+
+			// Un pedido de UN color después NO arrastra la lista del anterior.
+			store.SetLastOrder(from, LastOrder{Producto: "GAS 15KG", Color: "AZUL", Cantidad: 2, Fecha: "11/09/2026"})
+			last, _ = store.GetLastOrder(from)
+			if len(last.Items) != 0 {
+				t.Errorf("el pedido de un color arrastró las líneas del anterior: %+v", last.Items)
+			}
+			if li := last.ItemsDelPedido(); len(li) != 1 || li[0].Color != "AZUL" || li[0].Cantidad != 2 {
+				t.Errorf("la vista única del pedido de un color falla: %+v", li)
+			}
+		})
+	}
+}
+
+// La ficha del pedido en curso también persiste sus líneas en SQLite (mem las guarda tal cual).
+func TestPedidoEnCursoMulticolorEnSQLite(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "bot.db"), 15)
+	if err != nil {
+		t.Fatalf("abrir sqlite: %v", err)
+	}
+	const from = "593999000083"
+	store.SetPedidoEnCurso(from, PedidoEnCurso{
+		Color: "AMARILLO", Cantidad: 1, Flujo: FlujoInmediato,
+		Items: []ItemPedido{{Color: "BLANCO", Cantidad: 2}},
+	})
+	p, hay := store.GetPedidoEnCurso(from)
+	if !hay {
+		t.Fatal("la ficha no se recuperó")
+	}
+	if lineas := p.Lineas(); len(lineas) != 2 || lineas[0].Color != "BLANCO" || lineas[0].Cantidad != 2 {
+		t.Errorf("las líneas de la ficha se perdieron en SQLite: %+v", p.Lineas())
+	}
+	if !p.Completo() {
+		t.Errorf("una ficha con todas sus cantidades debía estar completa: %+v", p)
+	}
+}

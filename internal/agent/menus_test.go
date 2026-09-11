@@ -194,6 +194,71 @@ func TestRepetirPedidoDejaPasarLoQueNoEsLaOpcion(t *testing.T) {
 	}
 }
 
+// Pedir "lo de siempre" ESCRIBIENDO vale igual que tocar el botón: la ficha se carga con el
+// pedido anterior en código. Antes solo el texto exacto del botón entraba, y el mensaje escrito
+// iba al modelo — el caso de David (ver TestIncidente_ComoElUltimoPedido).
+func TestRepetirPedidoPorIntencionEscrita(t *testing.T) {
+	store := conversation.NewMemStore()
+	ag := agentDePrueba(nil, store)
+
+	for i, texto := range []string{
+		"Como el último pedido",
+		"como la ultima vez porfa",
+		"repite mi pedido",
+		"quiero lo mismo de siempre",
+		"lo de siempre",
+		"mándame lo mismo",
+	} {
+		from := fmt.Sprintf("59399900006%d", i)
+		store.SetLastOrder(from, conversation.LastOrder{Producto: "GAS 15KG", Color: "BLANCO", Cantidad: 2, Fecha: "01/09/2026"})
+		_, manejado := ag.ResponderRepetirPedido(from, texto)
+		if !manejado {
+			t.Errorf("%q no se resolvió en código: dependería de que el modelo registre el pedido", texto)
+			continue
+		}
+		if p, hay := store.GetPedidoEnCurso(from); !hay || p.Color != "BLANCO" || p.Cantidad != 2 {
+			t.Errorf("%q: la ficha no quedó cargada con el pedido anterior: %+v (hay=%v)", texto, p, hay)
+		}
+	}
+}
+
+// Lo que MENCIONA el pedido anterior sin ser la orden de repetirlo sigue al modelo: preguntas
+// por el estado, negaciones, cambios. Interceptarlas registraría un pedido que nadie pidió.
+func TestRepetirPorIntencionNoAtrapaPreguntasNiNegaciones(t *testing.T) {
+	const from = "593999000029"
+	store := conversation.NewMemStore()
+	store.SetLastOrder(from, conversation.LastOrder{Producto: "GAS 15KG", Color: "BLANCO", Cantidad: 2})
+	ag := agentDePrueba(nil, store)
+
+	for _, texto := range []string{
+		"¿cómo va mi último pedido?",
+		"¿me puedes repetir el precio del pedido?",
+		"ya no quiero lo mismo de siempre",
+		"no quiero lo mismo",
+		"el último pedido llegó tarde",
+		"quiero cambiar mi pedido",
+	} {
+		if _, manejado := ag.ResponderRepetirPedido(from, texto); manejado {
+			t.Errorf("%q se resolvió como repetir; debía ir al modelo", texto)
+		}
+	}
+}
+
+// Con un pedido VIVO, "repite mi pedido" NO se resuelve en código: registrar chocaría con la
+// idempotencia y el cliente recibiría un "inconveniente técnico" falso (con ticket incluido).
+// Puede estar preguntando por su pedido en curso: eso es conversación del modelo.
+func TestRepetirConPedidoActivoVaAlModelo(t *testing.T) {
+	const from = "593999000030"
+	store := conversation.NewMemStore()
+	store.SetLastOrder(from, conversation.LastOrder{Producto: "GAS 15KG", Color: "BLANCO", Cantidad: 2})
+	store.SetActivePedido(from, 640)
+	ag := agentDePrueba(nil, store)
+
+	if _, manejado := ag.ResponderRepetirPedido(from, "Repetir lo mismo"); manejado {
+		t.Error("se intentó repetir con un pedido activo: chocaría con la idempotencia y daría un error falso")
+	}
+}
+
 // El color que el cliente elige en el menú queda en la ficha sin pasar por el modelo (T0.5.4:
 // lo resuelve anotarDelMensaje, que corre en cada turno antes de llamar al modelo).
 func TestColorDelMenuQuedaEnLaFicha(t *testing.T) {

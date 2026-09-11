@@ -163,6 +163,13 @@ type Profile struct {
 	PerfilWhatsApp string `json:"perfil_whatsapp"`
 }
 
+// ItemPedido es una línea de un pedido: un color/marca y cuántos cilindros de ese color.
+// Cantidad 0 significa "color elegido, cantidad aún no dicha" (solo válido en la ficha).
+type ItemPedido struct {
+	Color    string `json:"color"`
+	Cantidad int    `json:"cantidad"`
+}
+
 // LastOrder es el resumen del último pedido exitoso de un cliente. Se guarda (durable) para
 // ofrecerle repetir lo mismo cuando vuelve, en lugar de preguntarle todo desde cero.
 //
@@ -174,12 +181,29 @@ type LastOrder struct {
 	Cantidad int    `json:"cantidad"` // cantidad de cilindros
 	Fecha    string `json:"fecha"`    // fecha del pedido, formato legible (dd/mm/aaaa)
 
+	// Items es el pedido COMPLETO cuando tuvo más de un color (Fase C1). Con un solo color va
+	// vacío y valen Producto/Color/Cantidad, que se conservan tal cual por compatibilidad: los
+	// pedidos guardados antes de C1 no tienen esta lista y todo lo que los lee sigue andando.
+	Items []ItemPedido `json:"items,omitempty"`
+
 	// Dónde se entregó. Alias es el nombre que el cliente le puso ("Casa", Fase B) y Direccion
 	// la calle que resolvió el backend; se prefiere Alias por ser lo que él reconoce.
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
 	Alias     string  `json:"alias"`
 	Direccion string  `json:"direccion"`
+}
+
+// ItemsDelPedido devuelve las líneas del pedido: la lista si la hay (multicolor), o la línea
+// única armada con los campos clásicos. Así quien lo consume no distingue épocas del dato.
+func (l LastOrder) ItemsDelPedido() []ItemPedido {
+	if len(l.Items) > 0 {
+		return l.Items
+	}
+	if l.Color == "" && l.Cantidad == 0 {
+		return nil
+	}
+	return []ItemPedido{{Color: l.Color, Cantidad: l.Cantidad}}
 }
 
 // Destino devuelve a dónde se entregó el pedido, en el texto que el cliente reconoce: su
@@ -210,6 +234,17 @@ type OrderDraft struct {
 	Cantidad int    `json:"cantidad"`
 }
 
+// PendingWaitItem es una línea (producto+color ya resueltos contra el catálogo) de un pedido
+// que quedó esperando conductor.
+type PendingWaitItem struct {
+	IDCategoria    int    `json:"idcategoria"`
+	IDProducto     int    `json:"idproducto"`
+	IDColor        int    `json:"idcolor"`
+	Cantidad       int    `json:"cantidad"`
+	ProductoNombre string `json:"producto_nombre"`
+	ColorNombre    string `json:"color_nombre"`
+}
+
 // PendingWait es un pedido que NO encontró conductor y quedó a la espera porque el cliente
 // eligió esperar (~5 min). Guarda lo necesario para REINTENTAR la asignación; la ubicación y la
 // cuenta se leen del store (ya están). Transitorio: se limpia al asignar, cancelar o expirar.
@@ -223,6 +258,26 @@ type PendingWait struct {
 	ColorNombre    string `json:"color_nombre"`
 	Identificacion string `json:"identificacion"`
 	Nombres        string `json:"nombres"`
+	// Items es el pedido completo cuando tuvo varios colores (Fase C1); vacío en el pedido de
+	// un color de siempre (valen los campos de arriba). En SQLite viaja dentro del mismo JSON,
+	// así que las esperas guardadas antes de C1 se leen igual.
+	Items []PendingWaitItem `json:"items,omitempty"`
+}
+
+// Lineas devuelve las líneas de la espera: la lista si la hay, o la única de los campos
+// clásicos. El reintento de asignación y el registro de no-asignados iteran esto sin saber si
+// el pedido fue de uno o de varios colores.
+func (w PendingWait) Lineas() []PendingWaitItem {
+	if len(w.Items) > 0 {
+		return w.Items
+	}
+	if w.IDProducto == 0 {
+		return nil
+	}
+	return []PendingWaitItem{{
+		IDCategoria: w.IDCategoria, IDProducto: w.IDProducto, IDColor: w.IDColor,
+		Cantidad: w.Cantidad, ProductoNombre: w.ProductoNombre, ColorNombre: w.ColorNombre,
+	}}
 }
 
 // PendingColorSwap es la oferta de cambio de color esperando el sí/no del cliente.
@@ -250,11 +305,17 @@ type PendingGuardarUbicacion struct {
 // adivinar y el prompt puede decirle al modelo "ya tienes color y cantidad, FALTA la ubicación"
 // en vez de esperar que lo deduzca del historial.
 type PedidoEnCurso struct {
-	Color     string    `json:"color"`    // vacío = aún no elegido
-	Cantidad  int       `json:"cantidad"` // 0 = aún no dicha
-	Hora      string    `json:"hora"`     // "HH:MM" 24h; vacío = entrega inmediata
-	Flujo     string    `json:"flujo"`    // FlujoInmediato | FlujoProgramacion
-	UpdatedAt time.Time `json:"updated_at"`
+	Color    string `json:"color"`    // vacío = aún no elegido (el item que se elige AHORA)
+	Cantidad int    `json:"cantidad"` // 0 = aún no dicha
+	Hora     string `json:"hora"`     // "HH:MM" 24h; vacío = entrega inmediata
+	Flujo    string `json:"flujo"`    // FlujoInmediato | FlujoProgramacion
+	// Items son las líneas YA CERRADAS de un pedido de varios colores (Fase C1): cuando el
+	// cliente, con un color y cantidad completos, nombra OTRO color, la línea en curso pasa
+	// aquí y Color/Cantidad quedan libres para la siguiente. Con un solo color va vacío y todo
+	// se comporta como siempre. Nació del caso de David (10/09): pidió "Blanco y amarillo" y la
+	// ficha, con un solo Color, se quedó únicamente con el último.
+	Items     []ItemPedido `json:"items,omitempty"`
+	UpdatedAt time.Time    `json:"updated_at"`
 }
 
 // Flujos posibles de un PedidoEnCurso.
@@ -265,7 +326,33 @@ const (
 
 // Vacio dice si la ficha no tiene ningún dato útil (no vale la pena guardarla ni mostrarla).
 func (p PedidoEnCurso) Vacio() bool {
-	return p.Color == "" && p.Cantidad == 0 && p.Hora == ""
+	return p.Color == "" && p.Cantidad == 0 && p.Hora == "" && len(p.Items) == 0
+}
+
+// Lineas devuelve TODAS las líneas del pedido en curso: las ya cerradas más la que se está
+// eligiendo (si tiene color). Es la vista única que consumen el prompt y los rescates: nadie
+// más tiene que saber que la ficha guarda el item en curso aparte.
+func (p PedidoEnCurso) Lineas() []ItemPedido {
+	lineas := append([]ItemPedido(nil), p.Items...)
+	if p.Color != "" {
+		lineas = append(lineas, ItemPedido{Color: p.Color, Cantidad: p.Cantidad})
+	}
+	return lineas
+}
+
+// Completo dice si el pedido está listo para registrarse: al menos una línea y TODAS con color
+// y cantidad. Una línea a medias ("amarillo" sin cuántos) significa que aún falta preguntar.
+func (p PedidoEnCurso) Completo() bool {
+	lineas := p.Lineas()
+	if len(lineas) == 0 {
+		return false
+	}
+	for _, l := range lineas {
+		if l.Color == "" || l.Cantidad < 1 {
+			return false
+		}
+	}
+	return true
 }
 
 // Store es el almacén de estado conversacional por número de teléfono.
@@ -290,10 +377,10 @@ type Store interface {
 	// GetDireccionTexto devuelve esa direccion (ok=false si no se conoce).
 	GetDireccionTexto(phone string) (string, bool)
 	// SetPedidoEsperandoDireccion deja el pedido en pausa hasta que el cliente confirme a que
-	// direccion se le envia.
-	SetPedidoEsperandoDireccion(phone, color string, cantidad int)
-	// GetPedidoEsperandoDireccion devuelve el pedido en pausa (ok=false si no hay).
-	GetPedidoEsperandoDireccion(phone string) (string, int, bool)
+	// direccion se le envia. Recibe TODAS las lineas del pedido (una si es de un solo color).
+	SetPedidoEsperandoDireccion(phone string, items []ItemPedido)
+	// GetPedidoEsperandoDireccion devuelve las lineas del pedido en pausa (ok=false si no hay).
+	GetPedidoEsperandoDireccion(phone string) ([]ItemPedido, bool)
 	// ClearPedidoEsperandoDireccion quita la pausa.
 	ClearPedidoEsperandoDireccion(phone string)
 	// SetAccount guarda las credenciales georoutes del cliente (durables).

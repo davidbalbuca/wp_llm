@@ -91,14 +91,45 @@ func (a *Agent) ResponderCalificacion(from, texto string) (string, bool) {
 	return "¡Gracias por tu calificación! 🙌 Cuando necesites tu gas, aquí estoy 😊", true
 }
 
+// pideRepetirPedido detecta que el cliente pide su pedido de siempre ESCRIBIENDO, sin tocar el
+// botón: "como el último pedido", "lo de siempre", "repite mi pedido". Nació del caso de David
+// (10/09): canceló, escribió "Como el último pedido" tres veces, y como el interceptor solo
+// aceptaba el texto exacto del botón, el mensaje fue al modelo — que afirmó el pedido sin
+// registrarlo, y el rescate no tenía ficha (la cancelación la limpia) ni miraba el LastOrder.
+// Resultado: cuatro "tuve un problema al registrar tu pedido" falsos seguidos.
+//
+// La intención de repetir es un conjunto casi cerrado, como un botón dicho con palabras: por
+// eso se resuelve aquí y no en el modelo. Lo que NO es inequívoco sigue al modelo.
+func pideRepetirPedido(texto string) bool {
+	// Una PREGUNTA nunca es la orden de repetir: "¿cómo va mi último pedido?" consulta el
+	// estado, y "¿me repites el precio?" pide información. Interceptarlas registraría un pedido
+	// que nadie hizo.
+	if strings.ContainsAny(texto, "?¿") {
+		return false
+	}
+	// afirmaSecuencia tolera palabras intercaladas ("repíteme por favor el pedido") y descarta
+	// negaciones ("ya no quiero lo mismo de siempre").
+	return afirmaSecuencia(texto, [][]string{
+		{"repetir", "pedido"}, {"repite", "pedido"}, {"repiteme", "pedido"},
+		{"repetir", "lo", "mismo"}, {"repite", "lo", "mismo"},
+		{"como", "el", "ultimo", "pedido"}, {"como", "mi", "ultimo", "pedido"},
+		{"como", "la", "ultima", "vez"}, {"igual", "que", "la", "ultima", "vez"},
+		{"lo", "mismo", "de", "la", "ultima"}, {"lo", "mismo", "que", "la", "ultima"},
+		{"lo", "mismo", "de", "siempre"}, {"lo", "de", "siempre"},
+		{"pedido", "de", "siempre"}, {"quiero", "lo", "mismo"},
+		{"mandame", "lo", "mismo"}, {"enviame", "lo", "mismo"},
+	}, 2)
+}
+
 // ResponderRepetirPedido resuelve el menú "¿Deseas lo mismo de la última vez?". Si el cliente
-// acepta, el pedido anterior se carga en la ficha EN CÓDIGO y solo se le pide la ubicación: no
-// depende de que el modelo recuerde qué pidió la última vez ni de que lo transcriba bien.
+// acepta —tocando el botón O pidiéndolo con palabras (ver pideRepetirPedido)—, el pedido
+// anterior se carga en la ficha EN CÓDIGO y solo se le pide la ubicación: no depende de que el
+// modelo recuerde qué pidió la última vez ni de que lo transcriba bien.
 //
 // "Cambiar el pedido" NO se resuelve aquí: a partir de ahí es una conversación normal (qué
 // color, cuántos) y le toca al modelo.
 func (a *Agent) ResponderRepetirPedido(from, texto string) (string, bool) {
-	if normalizarRespuesta(texto) != normalizarRespuesta(BotonRepetirPedido) {
+	if normalizarRespuesta(texto) != normalizarRespuesta(BotonRepetirPedido) && !pideRepetirPedido(texto) {
 		return "", false
 	}
 	last, hay := a.store.GetLastOrder(from)
@@ -106,17 +137,29 @@ func (a *Agent) ResponderRepetirPedido(from, texto string) (string, bool) {
 		// No hay nada que repetir: que el modelo lo lleve por el flujo normal.
 		return "", false
 	}
+	// Con un pedido VIVO no se repite nada en código: registrar chocaría con la idempotencia y
+	// acabaría en un "inconveniente técnico" falso con ticket. Puede ser el cliente preguntando
+	// por su pedido en curso o queriendo agregarle algo: eso es conversación y le toca al modelo.
+	if a.tienePedidoVivo(from) {
+		return "", false
+	}
+
+	// TODAS las líneas del pedido anterior, no solo la primera: un último pedido multicolor
+	// (C1) se repite completo. La última línea queda como "en curso" y el resto en Items,
+	// igual que si el cliente las hubiera dicho.
+	lineas := last.ItemsDelPedido()
+	ficha := conversation.PedidoEnCurso{Flujo: conversation.FlujoInmediato}
+	ficha.Color, ficha.Cantidad = lineas[len(lineas)-1].Color, lineas[len(lineas)-1].Cantidad
+	ficha.Items = append(ficha.Items, lineas[:len(lineas)-1]...)
 
 	log.Printf("[menu-repetir] %s repite su último pedido en código: %s", from, describirPedido(last))
-	a.store.SetPedidoEnCurso(from, conversation.PedidoEnCurso{
-		Color: last.Color, Cantidad: last.Cantidad, Flujo: conversation.FlujoInmediato,
-	})
+	a.store.SetPedidoEnCurso(from, ficha)
 
 	if _, hayUbicacion := a.store.GetLocation(from); !hayUbicacion {
 		// Sin ubicación en curso hay que pedírsela igual, aunque sepamos a dónde fue la última
 		// vez: la guardada puede ser vieja y el cliente estar en otro lado. Se nombra el destino
 		// anterior para que entienda por qué se la pedimos otra vez.
-		texto := fmt.Sprintf("¡Listo! %d %s como la última vez 🙌 ", last.Cantidad, last.Color)
+		texto := fmt.Sprintf("¡Listo! %s como la última vez 🙌 ", describeItems(lineas))
 		if destino := last.Destino(); destino != "" {
 			texto += fmt.Sprintf("La última vez te lo entregamos en %s. Compárteme tu ubicación "+
 				"por WhatsApp 📎 y te lo envío enseguida.", destino)
@@ -131,9 +174,7 @@ func (a *Agent) ResponderRepetirPedido(from, texto string) (string, bool) {
 	// esperando un pedido que nadie creó: es el error que este refactor viene a eliminar.
 	// Se entra por runTool, igual que ConfirmarDireccion: es quien crea el ticket si falla.
 	t := &turno{}
-	salida := a.runTool(t, from, "registrar_pedido", map[string]any{
-		"color": last.Color, "cantidad": last.Cantidad,
-	})
+	salida := a.runTool(t, from, "registrar_pedido", argsDeLineas(lineas, nil))
 	// El turno queda en el HISTORIAL (igual que ConfirmarProgramado): sin esto el modelo no se
 	// entera de que el cliente pidió repetir ni de qué pasó, y en el siguiente mensaje contesta
 	// como si no hubiera pasado nada.
