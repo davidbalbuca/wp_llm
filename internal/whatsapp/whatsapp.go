@@ -43,14 +43,76 @@ func ParseCoordsFromText(text string) (lat, lng float64, ok bool) {
 // más el host a propósito: buscar el host como substring suelto hacía que cualquier URL que lo
 // llevara en un parámetro —"https://otrositio.com/x?ref=maps.app.goo.gl"— pasara el filtro, y el
 // bot terminaba haciéndole una petición HTTP a un servidor ajeno elegido por quien escribe.
-var linkCortoRe = regexp.MustCompile(`(?i)\bhttps?://(?:maps\.app\.goo\.gl|goo\.gl/maps)(?:/[^\s]*)?`)
+// El host va precedido por INICIO o ESPACIO (grupo 1) y seguido por "/", "?" o fin: así el
+// esquema puede faltar —el cliente pega "maps.app.goo.gl/abc" sin https— sin que el host cuele
+// dentro de otra URL, y "maps.app.goo.gl.atacante.net" no casa porque después del host viene un
+// punto y no un separador de ruta.
+var linkCortoRe = regexp.MustCompile(`(?i)(?:^|\s)((?:https?://)?(?:maps\.app\.goo\.gl|goo\.gl/maps)(?:[/?][^\s]*)?)(?:\s|$)`)
+
+// esHostDeGoogle dice si el host pertenece a Google (dominio exacto o subdominio). Se compara
+// por SUFIJO con el punto delante —".google.com", no "google.com" suelto— para que un host como
+// "google.com.atacante.net" no cuele.
+func esHostDeGoogle(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	// La etiqueta final tiene que ser de Google. Un HasPrefix("google.") dejaba entrar
+	// "google.com.atacante.net", que es justo el truco que este filtro debe parar: lo que manda
+	// es cómo TERMINA el host, no cómo empieza.
+	for _, d := range []string{"google.com", "goo.gl", "google"} {
+		if host == d || strings.HasSuffix(host, "."+d) {
+			return true
+		}
+	}
+	// Dominios de país: google.es, google.com.mx, google.com.ec… Se acepta solo si el host
+	// EMPIEZA por "google." (o ".google.") y su TLD es corto, sin etiquetas extra detrás.
+	partes := strings.Split(host, ".")
+	for i, p := range partes {
+		if p != "google" {
+			continue
+		}
+		// Tras "google" solo pueden quedar 1 o 2 etiquetas (com, com.ec, es…).
+		if n := len(partes) - i - 1; n >= 1 && n <= 2 {
+			return true
+		}
+	}
+	return false
+}
+
+// clienteDeMaps es el cliente HTTP con el que se resuelven los acortadores. Vive aparte para que
+// la prueba del filtro de redirect use EXACTAMENTE el mismo, y no una copia que podría divergir.
+func clienteDeMaps() *http.Client {
+	return &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return http.ErrUseLastResponse
+			}
+			// El destino del redirect también lo elige quien escribe: un acortador puede apuntar
+			// a donde sea. Sin este filtro, un link con forma de Maps llevaba al bot a pedirle una
+			// página a un host cualquiera —incluida la red interna del server—. Solo se sigue a
+			// dominios de Google, que es lo único a lo que resuelve un link de Maps legítimo.
+			if !esHostDeGoogle(req.URL.Hostname()) {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		},
+	}
+}
 
 // ExtraerLinkCortoDeMaps devuelve la URL acortada de Maps que haya en el texto, o "" si no hay.
 // Se EXTRAE en vez de usar el mensaje entero porque el cliente casi nunca manda el link solo:
 // escribe "mira, aquí estoy: <link>". Pasarle esa frase completa al cliente HTTP no resolvía nada
 // —la petición fallaba— y el bot le pedía el pin nativo como si el link no sirviera.
 func ExtraerLinkCortoDeMaps(text string) string {
-	return linkCortoRe.FindString(strings.TrimSpace(text))
+	m := linkCortoRe.FindStringSubmatch(strings.TrimSpace(text))
+	if len(m) < 2 {
+		return ""
+	}
+	link := m[1]
+	// El esquema es opcional en lo que escribe el cliente, pero obligatorio para pedirlo.
+	if !strings.HasPrefix(strings.ToLower(link), "http") {
+		link = "https://" + link
+	}
+	return link
 }
 
 // EsLinkCortoDeMaps dice si el texto TRAE un link acortado de Google Maps
@@ -73,16 +135,7 @@ func ResolverLinkCortoDeMaps(texto string) (lat, lng float64, ok bool) {
 	if link == "" {
 		return 0, 0, false
 	}
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return http.ErrUseLastResponse
-			}
-			return nil
-		},
-	}
-	resp, err := client.Get(link)
+	resp, err := clienteDeMaps().Get(link)
 	if err != nil {
 		return 0, 0, false
 	}

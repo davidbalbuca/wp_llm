@@ -31,37 +31,26 @@ func TestEsLinkCortoDeMaps(t *testing.T) {
 	}
 }
 
-// ResolverLinkCortoDeMaps sigue el redirect y saca las coordenadas de la URL final. Se prueba con
-// un servidor local que redirige a una URL con ?q=lat,lng, como hace el acortador real.
-func TestResolverLinkCortoDeMaps(t *testing.T) {
-	destino := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer destino.Close()
-
-	corto := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, destino.URL+"/maps/place/@-2.898289,-79.003578,17z", http.StatusFound)
-	}))
-	defer corto.Close()
-
-	lat, lng, ok := ResolverLinkCortoDeMaps(corto.URL)
-	if !ok {
-		t.Fatal("no se resolvieron coordenadas del redirect")
-	}
-	if lat < -2.9 || lat > -2.89 || lng < -79.01 || lng > -79.0 {
-		t.Errorf("coordenadas fuera de lo esperado: %f, %f", lat, lng)
-	}
-}
-
-// Un redirect que no lleva coordenadas en ningún lado devuelve ok=false: el llamador pide el pin.
-func TestResolverLinkCortoDeMaps_SinCoordenadas(t *testing.T) {
+// SOLO SE RESUELVEN LINKS DE MAPS. Este test pedía antes un servidor local (127.0.0.1) y
+// esperaba coordenadas: eso era justo el agujero. La URL la elige quien escribe por WhatsApp, así
+// que si se acepta cualquier host, un mensaje puede hacer que el bot le pida una página a la red
+// interna del server de producción. Ahora una URL que no es de Maps no se toca.
+func TestResolverLinkCortoDeMaps_SoloHostsDeMaps(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("<html>sin nada util</html>"))
+		http.Redirect(w, r, "/maps/place/@-2.898289,-79.003578,17z", http.StatusFound)
 	}))
 	defer srv.Close()
 
 	if _, _, ok := ResolverLinkCortoDeMaps(srv.URL); ok {
-		t.Error("no debía resolver coordenadas de una página sin ellas")
+		t.Errorf("se resolvió un host que no es de Maps (%s): el bot haría peticiones a donde le digan", srv.URL)
+	}
+}
+
+// Un link CON forma de Maps que no resuelve a nada devuelve ok=false: el llamador pide el pin
+// nativo en vez de dar por buena una ubicación que no existe.
+func TestResolverLinkCortoDeMaps_SinCoordenadas(t *testing.T) {
+	// Dominio de Maps inexistente: la petición falla y no hay coordenadas que sacar.
+	if _, _, ok := ResolverLinkCortoDeMaps("https://maps.app.goo.gl/noexiste-" + t.Name()); ok {
+		t.Error("no debía resolver coordenadas de un link que no lleva a ninguna parte")
 	}
 }
