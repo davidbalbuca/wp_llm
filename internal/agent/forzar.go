@@ -268,7 +268,9 @@ func afirmaProgramado(texto string) bool {
 // afirmaAvisoAlEquipo detecta que el texto le promete al cliente que una persona lo va a
 // contactar. Es el mismo pecado que el pedido fantasma, pero más silencioso: el cliente se
 // queda esperando una llamada que nadie va a hacer, porque nunca se creó el ticket. No había
-// candado para esto (lo detectó la auditoría del 07/09).
+// candado para esto (lo detectó la auditoría del 07/09). Desde el 12/09 también cubre el
+// "ya avisé al repartidor" / "le paso al repartidor" que el modelo inventó cuando el cliente
+// mandó una nueva ubicación con pedido en ruta y no había herramienta alguna detrás.
 func afirmaAvisoAlEquipo(texto string) bool {
 	if esOfrecimiento(normalizar(texto)) {
 		return false
@@ -282,6 +284,12 @@ func afirmaAvisoAlEquipo(texto string) bool {
 		{"te", "van", "a", "contactar"}, {"te", "contactara"}, {"te", "contactaran"},
 		{"alguien", "te", "contactara"}, {"alguien", "te", "escribira"},
 		{"asesor", "se", "comunicara"},
+		// Aviso al repartidor / cambio de dirección inventado (caso 593959499118, 12/09).
+		{"avise", "repartidor"}, {"aviso", "repartidor"}, {"notifique", "repartidor"},
+		{"le", "aviso", "repartidor"}, {"le", "avise", "repartidor"},
+		{"le", "paso", "repartidor"}, {"le", "pasare", "repartidor"},
+		{"repartidor", "va", "nueva", "direccion"}, {"repartidor", "ira", "nueva", "direccion"},
+		{"repartidor", "vaya", "nueva", "direccion"},
 	}, 3)
 }
 

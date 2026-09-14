@@ -722,20 +722,61 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		if fueraDeCobertura(cfg, store, gr, inc.From, inc.Latitude, inc.Longitude) {
 			return
 		}
+		// Con pedido vivo, la nueva ubicación es un CAMBIO de dirección: se
+		// resuelve en código (cancela el anterior y re-registra en la nueva).
+		if reply, manejado := ag.CambiarDireccionPorUbicacion(inc.From, inc.Latitude, inc.Longitude); manejado {
+			log.Printf("[webhook] cambio de dirección resuelto en código para %s", inc.From)
+			if reply != "" {
+				_ = replyClient(cfg, store, inc.From, reply)
+			}
+			return
+		}
 		ubicacionNueva, ubicLat, ubicLng = true, inc.Latitude, inc.Longitude
 		messageForAgent = "He compartido mi ubicación actual."
 	} else if inc.IsText {
 		// Muchos clientes pegan la ubicación como enlace de Google Maps o texto con
 		// coordenadas en vez de usar el adjunto nativo de WhatsApp. Si el texto contiene
 		// un par de coordenadas plausible, lo tratamos igual que una ubicación.
+		// Los links cortos (maps.app.goo.gl) NO traen coordenadas: se resuelve el
+		// redirect y se extraen de la URL final (caso 593959499118).
 		if lat, lng, ok := whatsapp.ParseCoordsFromText(inc.Text); ok {
 			store.SetLocation(inc.From, lat, lng)
 			log.Printf("[webhook] ubicación (de texto) de %s: %f, %f", inc.From, lat, lng)
 			if fueraDeCobertura(cfg, store, gr, inc.From, lat, lng) {
 				return
 			}
+			// Con pedido vivo, la nueva ubicación es un CAMBIO de dirección: se
+			// resuelve en código (cancela el anterior y re-registra en la nueva).
+			if reply, manejado := ag.CambiarDireccionPorUbicacion(inc.From, lat, lng); manejado {
+				log.Printf("[webhook] cambio de dirección resuelto en código para %s", inc.From)
+				if reply != "" {
+					_ = replyClient(cfg, store, inc.From, reply)
+				}
+				return
+			}
 			ubicacionNueva, ubicLat, ubicLng = true, lat, lng
 			messageForAgent = "He compartido mi ubicación actual."
+		} else if whatsapp.EsLinkCortoDeMaps(inc.Text) {
+			if lat, lng, ok := whatsapp.ResolverLinkCortoDeMaps(inc.Text); ok {
+				store.SetLocation(inc.From, lat, lng)
+				log.Printf("[webhook] ubicación (link corto resuelto) de %s: %f, %f", inc.From, lat, lng)
+				if fueraDeCobertura(cfg, store, gr, inc.From, lat, lng) {
+					return
+				}
+				if reply, manejado := ag.CambiarDireccionPorUbicacion(inc.From, lat, lng); manejado {
+					log.Printf("[webhook] cambio de dirección (link corto) resuelto en código para %s", inc.From)
+					if reply != "" {
+						_ = replyClient(cfg, store, inc.From, reply)
+					}
+					return
+				}
+				ubicacionNueva, ubicLat, ubicLng = true, lat, lng
+				messageForAgent = "He compartido mi ubicación actual."
+			} else {
+				log.Printf("[webhook] link corto de Maps sin coordenadas para %s: %q", inc.From, inc.Text)
+				_ = replyClient(cfg, store, inc.From, "No pude abrir tu enlace de Google Maps 🙏. Por favor, compárteme tu ubicación con el pin nativo de WhatsApp: adjuntar 📎 → Ubicación → Enviar ubicación actual.")
+				return
+			}
 		} else {
 			log.Printf("[webhook] mensaje de %s: %q", inc.From, inc.Text)
 		}

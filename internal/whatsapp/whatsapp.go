@@ -39,6 +39,65 @@ func ParseCoordsFromText(text string) (lat, lng float64, ok bool) {
 	return lat, lng, true
 }
 
+// linkCortoRe captura la URL acortada de Google Maps DENTRO de un texto. Va anclada al ESQUEMA
+// más el host a propósito: buscar el host como substring suelto hacía que cualquier URL que lo
+// llevara en un parámetro —"https://otrositio.com/x?ref=maps.app.goo.gl"— pasara el filtro, y el
+// bot terminaba haciéndole una petición HTTP a un servidor ajeno elegido por quien escribe.
+var linkCortoRe = regexp.MustCompile(`(?i)\bhttps?://(?:maps\.app\.goo\.gl|goo\.gl/maps)(?:/[^\s]*)?`)
+
+// ExtraerLinkCortoDeMaps devuelve la URL acortada de Maps que haya en el texto, o "" si no hay.
+// Se EXTRAE en vez de usar el mensaje entero porque el cliente casi nunca manda el link solo:
+// escribe "mira, aquí estoy: <link>". Pasarle esa frase completa al cliente HTTP no resolvía nada
+// —la petición fallaba— y el bot le pedía el pin nativo como si el link no sirviera.
+func ExtraerLinkCortoDeMaps(text string) string {
+	return linkCortoRe.FindString(strings.TrimSpace(text))
+}
+
+// EsLinkCortoDeMaps dice si el texto TRAE un link acortado de Google Maps
+// (maps.app.goo.gl, goo.gl/maps). Estos NO traen coordenadas en la URL y hay
+// que resolver el redirect para obtenerlas; si no, entran como texto y el
+// modelo los ignora (caso 593959499118: mandó maps.app.goo.gl y el bot dijo
+// "ya avisé al repartidor" sin ubicación).
+func EsLinkCortoDeMaps(text string) bool {
+	return ExtraerLinkCortoDeMaps(text) != ""
+}
+
+// ResolverLinkCortoDeMaps sigue el redirect de un link acortado de Maps y
+// extrae las coordenadas de la URL final (que sí las trae como ?q= o @lat,lng).
+// Timeout corto: si no resuelve, el llamador pide el pin nativo.
+//
+// Recibe el TEXTO del cliente, no una URL limpia, y se queda solo con el link de Maps que
+// contenga: el resto del mensaje no llega nunca al cliente HTTP.
+func ResolverLinkCortoDeMaps(texto string) (lat, lng float64, ok bool) {
+	link := ExtraerLinkCortoDeMaps(texto)
+	if link == "" {
+		return 0, 0, false
+	}
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		},
+	}
+	resp, err := client.Get(link)
+	if err != nil {
+		return 0, 0, false
+	}
+	defer resp.Body.Close()
+	finalURL := resp.Request.URL.String()
+	if lat, lng, ok := ParseCoordsFromText(finalURL); ok {
+		return lat, lng, true
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 32*1024))
+	if lat, lng, ok := ParseCoordsFromText(string(body)); ok {
+		return lat, lng, true
+	}
+	return 0, 0, false
+}
+
 // sendPayload envía un payload ya armado a la Graph API de Meta (POST /messages).
 func sendPayload(cfg config.Config, payload map[string]any) error {
 	url := fmt.Sprintf("https://graph.facebook.com/%s/%s/messages",
