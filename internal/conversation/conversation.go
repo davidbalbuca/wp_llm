@@ -262,6 +262,10 @@ type PendingWait struct {
 	// un color de siempre (valen los campos de arriba). En SQLite viaja dentro del mismo JSON,
 	// así que las esperas guardadas antes de C1 se leen igual.
 	Items []PendingWaitItem `json:"items,omitempty"`
+	// IDBusqueda es la busqueda abierta en el BACKEND (con BOT_USAR_BUSQUEDA encendido). Sirve
+	// para consultar su estado y para cerrarla si el cliente se arrepiente. Cero cuando la
+	// espera la maneja el bot como antes.
+	IDBusqueda int `json:"idbusqueda,omitempty"`
 }
 
 // Lineas devuelve las líneas de la espera: la lista si la hay, o la única de los campos

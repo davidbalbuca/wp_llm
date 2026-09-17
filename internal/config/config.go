@@ -60,6 +60,12 @@ type Config struct {
 	// CierreInactividad: silencio tras el cual el bot se despide de una conversación a medias.
 	// CierreVentanaMax es el techo (evita despedirse de chats viejos al reiniciar el servicio).
 	CierreInactividad time.Duration
+	// UsarBusquedaBackend enciende la espera manejada por el BACKEND (buscarConductor y
+	// compania). Apagado, el bot hace exactamente lo de antes: reintenta el pedido cada 30 s
+	// durante 5 minutos. Es un interruptor a proposito: por el bot entra la mayoria de los
+	// pedidos y no hay forma de probarlo sin clientes reales, asi que esto se enciende
+	// mirando los logs y se apaga en segundos si hace falta.
+	UsarBusquedaBackend bool
 	CierreVentanaMax  time.Duration
 	// Telegram: alertas de operación (test productivo). Sin token o chat queda APAGADO y el bot
 	// sigue igual. TelegramAvisarInicio permite dejar solo errores (los verdes son ruidosos).
@@ -137,6 +143,7 @@ func Load() Config {
 		AuditLogDays:         optionalInt("AUDIT_LOG_DAYS", 15),
 		HumanTakeoverTimeout: time.Duration(optionalInt("HUMAN_TAKEOVER_TIMEOUT_MIN", 15)) * time.Minute,
 		CierreInactividad:    time.Duration(optionalInt("BOT_CIERRE_INACTIVIDAD_MIN", 7)) * time.Minute,
+		UsarBusquedaBackend:  optionalBool("BOT_USAR_BUSQUEDA", false),
 		CierreVentanaMax:     time.Duration(optionalInt("BOT_CIERRE_VENTANA_MAX_MIN", 60)) * time.Minute,
 		BotHorarioInicio:     optional("BOT_HORARIO_INICIO", "07:00"),
 		BotHorarioFin:        optional("BOT_HORARIO_FIN", "19:00"),

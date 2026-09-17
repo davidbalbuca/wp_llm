@@ -1,6 +1,9 @@
 // Flujo de PEDIDO del agente: registrar el pedido por georoutes (cuenta, login, geocerca,
 // startOrder), cancelarlo, y la espera de conductor cuando no hay uno disponible (reintento
 // de 5 min en segundo plano). Es el corazón del negocio; agent.go solo lo despacha.
+//
+// Con BOT_USAR_BUSQUEDA encendido la espera la maneja el backend y este archivo solo la
+// dispara; ver espera_busqueda.go. Los mensajes al cliente son los mismos en los dos caminos.
 package agent
 
 import (
@@ -11,7 +14,6 @@ import (
 	"wp-llm-gas/internal/conversation"
 	"wp-llm-gas/internal/georoutes"
 	"wp-llm-gas/internal/notify"
-	"wp-llm-gas/internal/whatsapp"
 )
 
 // resultadoPedido es el desenlace de un registrar_pedido, para quien lo llame desde codigo.
@@ -208,10 +210,17 @@ func (a *Agent) avisarSinRepartidor(from string, w conversation.PendingWait, mot
 // cancelarEspera descarta el pedido en espera cuando el cliente NO quiere esperar. Antes de
 // descartarlo lo registra como NO ASIGNADO en el backend, para gestión manual.
 func (a *Agent) cancelarEspera(from string) string {
-	if w, ok := a.store.GetPendingWait(from); ok {
+	w, hayEspera := a.store.GetPendingWait(from)
+	if hayEspera {
 		a.avisarSinRepartidor(from, w, "El cliente NO quiso esperar. Quedó en No asignados.")
 	}
-	a.registrarNoAsignado(from)
+	// Con la busqueda en el backend, el "no quiero esperar" se le dice a el: deja el pedido en
+	// no asignados y abre el ticket. Registrarlo tambien desde aqui lo duplicaria.
+	if hayEspera && w.IDBusqueda > 0 {
+		a.decidirEsperaBackend(from, w.IDBusqueda, false)
+	} else {
+		a.registrarNoAsignado(from)
+	}
 	a.store.ClearPendingWait(from)
 	a.store.ClearPedidoEnCurso(from) // el pedido ya quedó en gestión manual: la ficha no aplica
 	// El historial NO se borra: la memoria del chat dura la ventana de 24h.
@@ -268,6 +277,12 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 	// así que sin esto un test no puede distinguir "se arrancó la búsqueda" de "solo se le dijo
 	// al cliente que se arrancó" —que es justo el bug que los interceptores previenen—.
 	a.esperasArrancadas.Add(1)
+	if a.cfg.UsarBusquedaBackend {
+		// La espera la lleva el backend y el bot solo pregunta el estado (espera_busqueda.go).
+		// Libera el candado al terminar, igual que el camino de siempre.
+		go a.esperaBackend(from, w)
+		return
+	}
 	cfg := a.cfg
 	gr := a.gr
 	store := a.store
@@ -298,52 +313,8 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 					res, err := gr.WppOrder(tokens.Access, loc.Latitude, loc.Longitude, w.IDTipoPago,
 						orderProductsDeWait(w))
 					if err == nil {
-						// ¡Asignado! Guardar estado igual que un pedido normal y avisar al cliente.
-						store.SetProfile(from, conversation.Profile{Identificacion: w.Identificacion, Nombres: w.Nombres})
-						if res.IDPedido > 0 {
-							store.SetOrderPhone(res.IDPedido, from)
-							store.SetActivePedido(from, res.IDPedido)
-						}
-						// Se guarda TAMBIÉN a dónde va, para que "repetir lo mismo" pueda decirlo.
-						// Aquí no se consultan las direcciones del backend (esto corre en una
-						// goroutine, minutos después): se usa lo que ya se sabe del cliente.
-						calle, _ := store.GetDireccionTexto(from)
-						nombre := ""
-						if anterior, hay := store.GetLastOrder(from); hay &&
-							mismaUbicacion(anterior.Latitude, anterior.Longitude, loc.Latitude, loc.Longitude) {
-							nombre = anterior.Alias
-						}
-						var lastItems []conversation.ItemPedido
-						if lineas := w.Lineas(); len(lineas) > 1 {
-							lastItems = make([]conversation.ItemPedido, len(lineas))
-							for i, l := range lineas {
-								lastItems[i] = conversation.ItemPedido{Color: l.ColorNombre, Cantidad: l.Cantidad}
-							}
-						}
-						store.SetLastOrder(from, conversation.LastOrder{
-							Producto: w.ProductoNombre, Color: w.ColorNombre, Cantidad: w.Cantidad,
-							Items:     lastItems,
-							Fecha:     time.Now().Format("02/01/2006"),
-							Latitude:  loc.Latitude,
-							Longitude: loc.Longitude,
-							Alias:     nombre,
-							Direccion: calle,
-						})
-						store.ClearPendingWait(from)
-						// El historial NO se borra (memoria de 24h). El mensaje queda AUDITADO.
-						msg := "🎉 ¡Listo! Ya tienes un repartidor asignado"
-						if res.ConductorAsignado != "" {
-							msg += ": " + res.ConductorAsignado
-						}
-						msg += ". Sale con tu pedido en breve. ¡Gracias por tu espera!"
-						// Si venia de una entrega agendada, deja de estar "buscando repartidor".
-						store.CerrarProgramadoEnEspera(from, true)
-						if err := whatsapp.SendText(cfg, from, msg); err == nil {
-							store.LogMessage(from, "system", msg)
-							// Tambien a la memoria del modelo: si el cliente responde a este aviso,
-							// la IA tiene que saber que se lo mandamos.
-							store.AppendModel(from, msg)
-						}
+						// El cierre es el mismo que usa la busqueda del backend.
+						a.avisarRepartidorAsignado(from, w, res)
 						return
 					}
 				}
@@ -364,21 +335,7 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 				}
 			}
 		}
-		// Al grupo ANTES de limpiar el estado: es cuando todavía se tiene el pedido completo.
-		a.avisarSinRepartidor(from, w, "El cliente esperó los 5 minutos y no se le asignó nadie.")
-		store.ClearPendingWait(from)
-		// El historial NO se borra (memoria de 24h). El mensaje queda AUDITADO.
-		msgTimeout := "Te pedimos disculpas 🙏. Por ahora no hay ningún repartidor disponible " +
-			"para asignar tu pedido. Intenta más tarde, con gusto te ayudamos."
-		// Se acabaron los 5 minutos sin nadie: el pedido queda en No asignados y la entrega
-		// agendada lo refleja, en vez de quedarse en "buscando" para siempre.
-		store.CerrarProgramadoEnEspera(from, false)
-		if err := whatsapp.SendText(cfg, from, msgTimeout); err == nil {
-			store.LogMessage(from, "system", msgTimeout)
-			// Tambien a la memoria del modelo: si el cliente responde a este aviso,
-			// la IA tiene que saber que se lo mandamos.
-			store.AppendModel(from, msgTimeout)
-		}
+		a.avisarEsperaVencida(from, w, "El cliente esperó los 5 minutos y no se le asignó nadie.")
 	}()
 }
 
