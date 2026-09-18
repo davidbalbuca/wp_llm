@@ -94,6 +94,39 @@ func notificadorDePrueba(t *testing.T, tg *telegramFalso, phone string) (*Notifi
 	}, store
 }
 
+// esperarCondicion espera a que algo sea cierto (los avisos son asíncronos).
+//
+// Se prefiere a contar llamadas cuando lo que importa es el EFECTO: contar es frágil porque
+// cualquier llamada nueva —el renombrado del hilo, sin ir más lejos— desplaza el número y el test
+// sigue adelante antes de tiempo. Pasó el 18/09 con TestTrasCerrarElCiclo.
+func esperarCondicion(t *testing.T, que string, cumple func() bool) {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		if cumple() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("no se cumplió a tiempo: %s", que)
+}
+
+// olvidarNombrado borra la marca de "a este hilo ya se le puso el nombre".
+//
+// Hace falta porque hilosYaNombrados es global y SOBREVIVE entre tests (y entre repeticiones con
+// -count=N): sin esto, el segundo pase daría por nombrado un hilo que en ese pase nunca se tocó.
+// Lo destapó correr la suite con -count=3.
+func olvidarNombrado(phone string) { hilosYaNombrados.Delete(phone) }
+
+// esperarTexto espera a que el ÚLTIMO mensaje enviado contenga un fragmento. Es la forma robusta
+// de sincronizar: mide el efecto que importa (lo que el grupo acaba viendo) y no se rompe porque
+// aparezca una llamada nueva en el camino.
+func esperarTexto(t *testing.T, tg *telegramFalso, fragmento string) {
+	t.Helper()
+	esperarCondicion(t, "el mensaje contiene "+fragmento, func() bool {
+		return strings.Contains(tg.ultimoTexto(), fragmento)
+	})
+}
+
 // esperarLlamadas espera a que se hayan hecho al menos n llamadas (los avisos son asíncronos).
 func esperarLlamadas(t *testing.T, tg *telegramFalso, n int) {
 	t.Helper()
@@ -115,14 +148,16 @@ func TestElCicloCompletoDejaUnSoloMensajeEnElGrupo(t *testing.T) {
 	tg := nuevoTelegramFalso(t)
 	n, _ := notificadorDePrueba(t, tg, phone)
 
+	// Se espera el EFECTO de cada paso, no un número de llamadas: contar es frágil (una llamada
+	// nueva en cualquier sitio desplaza el número y el test sigue antes de tiempo).
 	n.EstadoCliente(phone, "María Pérez", conversation.EtapaEscribio, "", 0)
-	esperarLlamadas(t, tg, 1)
+	esperarTexto(t, tg, "Escribió")
 	n.EstadoCliente(phone, "María Pérez", conversation.EtapaPidioGas, "2 x GAS 15KG (BLANCO)", 0)
-	esperarLlamadas(t, tg, 2)
+	esperarTexto(t, tg, "GAS 15KG")
 	n.EstadoCliente(phone, "María Pérez", conversation.EtapaRegistrado, "", 942)
-	esperarLlamadas(t, tg, 3)
+	esperarTexto(t, tg, "942")
 	n.CerrarTarjeta(phone, "María Pérez", false)
-	esperarLlamadas(t, tg, 4)
+	esperarTexto(t, tg, "✅ Entregado")
 
 	if creados := tg.cuenta("sendMessage"); creados != 1 {
 		t.Errorf("se crearon %d mensajes; debía ser 1 que se va editando. Cuatro avisos por cliente "+
@@ -173,9 +208,9 @@ func TestElDetalleDelPedidoSeConservaEntreEtapas(t *testing.T) {
 	n, _ := notificadorDePrueba(t, tg, phone)
 
 	n.EstadoCliente(phone, "Ana", conversation.EtapaPidioGas, "3 x GAS 23KG (NARANJA)", 0)
-	esperarLlamadas(t, tg, 1)
+	esperarTexto(t, tg, "GAS 23KG")
 	n.EstadoCliente(phone, "Ana", conversation.EtapaRegistrado, "", 801) // sin detalle
-	esperarLlamadas(t, tg, 2)
+	esperarTexto(t, tg, "801")
 
 	if final := tg.ultimoTexto(); !strings.Contains(final, "GAS 23KG") {
 		t.Errorf("se perdió el detalle del pedido al avanzar de etapa: %q", final)
@@ -190,9 +225,9 @@ func TestUnErrorNoBorraElAvanceDelPedido(t *testing.T) {
 	n, _ := notificadorDePrueba(t, tg, phone)
 
 	n.EstadoCliente(phone, "Luis", conversation.EtapaRegistrado, "1 x GAS 15KG", 900)
-	esperarLlamadas(t, tg, 1)
+	esperarTexto(t, tg, "900")
 	n.ErrorCliente(phone, "Luis", "No se pudo avisar la entrega")
-	esperarLlamadas(t, tg, 2)
+	esperarTexto(t, tg, "No se pudo avisar la entrega")
 
 	final := tg.ultimoTexto()
 	if !strings.Contains(final, "No se pudo avisar la entrega") {
@@ -211,9 +246,9 @@ func TestElPedidoCanceladoNoAparentaSeguirEnCamino(t *testing.T) {
 	n, _ := notificadorDePrueba(t, tg, phone)
 
 	n.EstadoCliente(phone, "Rosa", conversation.EtapaRegistrado, "1 x GAS 15KG", 950)
-	esperarLlamadas(t, tg, 1)
+	esperarTexto(t, tg, "950")
 	n.CerrarTarjeta(phone, "Rosa", true)
-	esperarLlamadas(t, tg, 2)
+	esperarTexto(t, tg, "Cancelado")
 
 	final := tg.ultimoTexto()
 	if !strings.Contains(final, "Cancelado") {
@@ -234,17 +269,17 @@ func TestTrasCerrarElCicloElProximoPedidoAbreTarjetaNueva(t *testing.T) {
 	n.EstadoCliente(phone, "Pedro", conversation.EtapaRegistrado, "1 x GAS 15KG", 960)
 	esperarLlamadas(t, tg, 1)
 	n.CerrarTarjeta(phone, "Pedro", false)
-	esperarLlamadas(t, tg, 2)
+	// Se espera el EFECTO (que la tarjeta se olvide), no un número de llamadas.
+	esperarCondicion(t, "la tarjeta se olvida al cerrar el ciclo", func() bool {
+		_, hay := store.GetTarjetaEstado(phone)
+		return !hay
+	})
 
-	if _, hay := store.GetTarjetaEstado(phone); hay {
-		t.Fatal("la tarjeta sigue viva tras cerrar el ciclo: el próximo pedido reescribiría el anterior")
-	}
 	// Pedido nuevo: tiene que CREAR otro mensaje, no editar el cerrado.
 	n.EstadoCliente(phone, "Pedro", conversation.EtapaEscribio, "", 0)
-	esperarLlamadas(t, tg, 3)
-	if creados := tg.cuenta("sendMessage"); creados != 2 {
-		t.Errorf("el pedido nuevo no abrió su propia tarjeta (%d mensajes creados)", creados)
-	}
+	esperarCondicion(t, "el pedido nuevo abre su propia tarjeta", func() bool {
+		return tg.cuenta("sendMessage") == 2
+	})
 }
 
 // AVISOS SIMULTÁNEOS DEL MISMO CLIENTE NO DUPLICAN LA TARJETA. Es un caso real: el webhook y el
@@ -275,4 +310,55 @@ func TestSinTelegramConfiguradoNoPasaNada(t *testing.T) {
 	n.EstadoCliente("593999400008", "X", conversation.EtapaPidioGas, "1 x GAS", 0)
 	n.ErrorCliente("593999400008", "X", "algo")
 	n.CerrarTarjeta("593999400008", "X", false)
+}
+
+// EL HILO SE RENOMBRA CUANDO SE APRENDE EL NOMBRE.
+//
+// Un hilo nace en el instante del primer mensaje. Si en ese momento no se sabía el nombre, el
+// título queda como "+593994582191" y Telegram NO lo actualiza solo: en el grupo se ven decenas
+// así y no se distingue quién es quién (captura del dueño, 18/09).
+func TestElHiloSeRenombraCuandoSeAprendeElNombre(t *testing.T) {
+	const phone = "593994582191"
+	olvidarNombrado(phone)
+	tg := nuevoTelegramFalso(t)
+	n, _ := notificadorDePrueba(t, tg, phone) // el hilo YA existe, creado sin nombre
+
+	n.EstadoCliente(phone, "María Pérez", conversation.EtapaEscribio, "", 0)
+	esperarLlamadas(t, tg, 2) // el renombrado + la tarjeta
+
+	if tg.cuenta("editForumTopic") != 1 {
+		t.Errorf("no se renombró el hilo: seguiría mostrando solo el número. Llamadas: %v", tg.metodos)
+	}
+}
+
+// Pero NO se renombra en cada mensaje: sería una llamada a Telegram por cada cosa que escriba el
+// cliente, para cambiar un título que ya está bien.
+func TestElHiloNoSeRenombraEnCadaMensaje(t *testing.T) {
+	const phone = "593994582194"
+	olvidarNombrado(phone)
+	tg := nuevoTelegramFalso(t)
+	n, _ := notificadorDePrueba(t, tg, phone)
+
+	n.EstadoCliente(phone, "Juan Pérez", conversation.EtapaEscribio, "", 0)
+	esperarLlamadas(t, tg, 2)
+	n.EstadoCliente(phone, "Juan Pérez", conversation.EtapaPidioGas, "1 x GAS", 0)
+	esperarLlamadas(t, tg, 3)
+
+	if veces := tg.cuenta("editForumTopic"); veces != 1 {
+		t.Errorf("se renombró %d veces el mismo hilo; basta una", veces)
+	}
+}
+
+// Sin nombre no se renombra nada: no hay con qué mejorar el título.
+func TestSinNombreNoSeTocaElTituloDelHilo(t *testing.T) {
+	const phone = "593994582195"
+	tg := nuevoTelegramFalso(t)
+	n, _ := notificadorDePrueba(t, tg, phone)
+
+	n.EstadoCliente(phone, "", conversation.EtapaEscribio, "", 0)
+	esperarLlamadas(t, tg, 1)
+
+	if tg.cuenta("editForumTopic") != 0 {
+		t.Error("se intentó renombrar un hilo sin saber el nombre del cliente")
+	}
 }

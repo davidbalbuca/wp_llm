@@ -170,3 +170,45 @@ func TestPerfilWhatsAppNoPisaLosDatosDelCliente(t *testing.T) {
 		})
 	}
 }
+
+// EL NOMBRE DEL CLIENTE SE CONOCE DESDE EL PRIMER MENSAJE.
+//
+// Caso real (18/09, captura del grupo): los hilos de Telegram salían como "+593994582191" a
+// secas, aunque WhatsApp nos dice el nombre de la persona en el primer mensaje que manda.
+//
+// El dato YA se guardaba (SetPerfilWhatsApp en cmd/bot), pero NombreDe solo miraba el nombre
+// LEGAL —el que el cliente da junto con su cédula, casi al final del pedido—. Así que en el
+// momento del aviso casi nunca había nombre, aunque lo tuviéramos delante.
+func TestNombreDeUsaElPerfilDeWhatsAppCuandoNoHayNombreLegal(t *testing.T) {
+	s := NewMemStore()
+	const phone = "593994582191"
+
+	// Primer mensaje: solo sabemos cómo se llama en WhatsApp.
+	s.SetPerfilWhatsApp(phone, "María Pérez")
+
+	if n := NombreDe(s, phone); n != "María Pérez" {
+		t.Errorf("no se usó el nombre de WhatsApp: %q. El aviso saldría con el número a secas, "+
+			"que no le dice nada a nadie en el grupo", n)
+	}
+}
+
+// El nombre LEGAL manda cuando existe: es el que el cliente confirmó para su cuenta y el que ve
+// el repartidor. El de WhatsApp es el respaldo.
+func TestElNombreLegalTienePrioridadSobreElDeWhatsApp(t *testing.T) {
+	s := NewMemStore()
+	const phone = "593994582192"
+
+	s.SetPerfilWhatsApp(phone, "Mari 💕")
+	s.SetProfile(phone, Profile{Identificacion: "0105566777", Nombres: "María Pérez Solano"})
+
+	if n := NombreDe(s, phone); n != "María Pérez Solano" {
+		t.Errorf("se prefirió el apodo de WhatsApp sobre el nombre registrado: %q", n)
+	}
+}
+
+// Y si de verdad no se sabe nada, devuelve vacío: los avisos ya saben decir "cliente nuevo".
+func TestSinNingunNombreDevuelveVacio(t *testing.T) {
+	if n := NombreDe(NewMemStore(), "593994582193"); n != "" {
+		t.Errorf("se inventó un nombre para un cliente desconocido: %q", n)
+	}
+}

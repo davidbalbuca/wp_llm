@@ -241,6 +241,10 @@ func (n *Notifier) permitido(motivo string) bool {
 // temas/permiso): el mensaje cae en el general, degradado aceptable (se pierde el orden, no el aviso).
 func (n *Notifier) hiloDe(phone, nombre string) int64 {
 	if id, ok := n.store.GetTelegramThread(phone); ok {
+		// El hilo pudo nacer SIN nombre (el primer mensaje llegó antes de saber quién era) y el
+		// título de Telegram no se actualiza solo. Si ahora ya sabemos el nombre, se renombra:
+		// en el grupo se ven decenas de hilos y "+593994582191" no le dice nada a nadie.
+		n.renombrarHiloSiHaceFalta(phone, id, nombre)
 		return id
 	}
 	titulo := "+" + phone
@@ -254,6 +258,48 @@ func (n *Notifier) hiloDe(phone, nombre string) int64 {
 	}
 	n.store.SetTelegramThread(phone, id)
 	return id
+}
+
+// hilosYaNombrados recuerda a qué clientes ya se les puso el nombre en el título del hilo, para
+// no llamar a Telegram en cada mensaje. Solo en memoria: tras un reinicio se renombra una vez más
+// por cliente, que es inofensivo (Telegram acepta el mismo título) y mucho más barato que otra
+// tabla para algo cosmético.
+var hilosYaNombrados sync.Map // phone -> true
+
+// renombrarHiloSiHaceFalta le pone el nombre al título de un hilo que nació solo con el número.
+//
+// Pasa siempre que el cliente escribe por primera vez: el hilo se crea en ese instante y, si el
+// nombre no se conocía aún, el título queda como "+593994582191" PARA SIEMPRE — Telegram no lo
+// actualiza solo. En el grupo se ven decenas así y no se distingue quién es quién.
+//
+// Best-effort y silencioso: si falla, el hilo se queda con el número. Es cosmético, nunca puede
+// interferir con el aviso en sí.
+func (n *Notifier) renombrarHiloSiHaceFalta(phone string, hilo int64, nombre string) {
+	nombre = strings.TrimSpace(nombre)
+	if nombre == "" || hilo == 0 {
+		return
+	}
+	if _, ya := hilosYaNombrados.LoadOrStore(phone, true); ya {
+		return
+	}
+	titulo := conversation.Recortar("+"+phone+" — "+nombre, 128)
+	var resp struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if err := n.llamar("editForumTopic", map[string]any{
+		"chat_id":           n.chatID,
+		"message_thread_id": hilo,
+		"name":              titulo,
+	}, &resp); err != nil {
+		log.Printf("[telegram] no se pudo renombrar el hilo de %s: %v", phone, err)
+		return
+	}
+	if !resp.OK {
+		log.Printf("[telegram] renombrado rechazado para %s: %s", phone, resp.Description)
+		return
+	}
+	log.Printf("[telegram] hilo de %s renombrado a %q", phone, titulo)
 }
 
 // Claves para PERSISTIR los hilos fijos en la misma tabla que los de cliente. El prefijo "#"
