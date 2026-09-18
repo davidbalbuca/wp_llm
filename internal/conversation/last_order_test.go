@@ -38,8 +38,12 @@ func TestLastOrderGuardaElDestino(t *testing.T) {
 			if last.Latitude != -2.898 || last.Longitude != -79.002 {
 				t.Errorf("se perdieron las coordenadas: %f, %f", last.Latitude, last.Longitude)
 			}
-			if last.Destino() != "Casa" {
-				t.Errorf("el destino mostrado debía ser el nombre del cliente: %q", last.Destino())
+			// El destino lleva el NOMBRE que puso el cliente Y la calle. Antes bastaba con el
+			// alias ("Casa"), pero así el cliente confirmaba "a Casa" sin poder ver si esa Casa
+			// apunta a donde él cree: si la guardó mal, no hay forma de que lo note hasta que el
+			// repartidor no llega (pedido del dueño, 18/09).
+			if last.Destino() != "Casa (Av. Solano 123)" {
+				t.Errorf("el destino debía llevar el nombre del cliente Y la calle: %q", last.Destino())
 			}
 		})
 	}

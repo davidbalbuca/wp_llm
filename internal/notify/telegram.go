@@ -45,6 +45,11 @@ type Notifier struct {
 	store        conversation.Store
 	cliente      *http.Client
 
+	// base sustituye la URL de la API de Telegram. Vacío en producción (se usa la real); los
+	// tests apuntan a un httptest para comprobar QUÉ se manda al grupo, que es lo que el equipo
+	// acaba leyendo. Sin esto solo se podía probar la lógica alrededor del envío, no el envío.
+	base string
+
 	mu sync.Mutex
 	// Hilos fijos del grupo: se resuelven una sola vez (el primer aviso los crea).
 	hiloErrores       int64
@@ -354,12 +359,81 @@ func (n *Notifier) enviar(hilo int64, texto string, silencioso bool) {
 	log.Printf("[telegram] enviado a hilo=%d (silencioso=%v)", hilo, silencioso)
 }
 
+// enviarConID manda un mensaje y devuelve su message_id, para poder EDITARLO después (la tarjeta
+// de estado del cliente). Siempre silencioso: el avance normal de un pedido no tiene que vibrar
+// ningún teléfono; lo que hay que atender ya va por Fallo con sonido.
+func (n *Notifier) enviarConID(hilo int64, texto string) (int64, error) {
+	cuerpo := map[string]any{
+		"chat_id":              n.chatID,
+		"text":                 texto,
+		"parse_mode":           "HTML",
+		"disable_notification": true,
+	}
+	if hilo != 0 {
+		cuerpo["message_thread_id"] = hilo
+	}
+	var resp struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+		Result      struct {
+			MessageID int64 `json:"message_id"`
+		} `json:"result"`
+	}
+	if err := n.llamar("sendMessage", cuerpo, &resp); err != nil {
+		log.Printf("[telegram] error creando la tarjeta: %v", err)
+		return 0, err
+	}
+	if !resp.OK {
+		log.Printf("[telegram] tarjeta rechazada: %s", resp.Description)
+		return 0, fmt.Errorf("telegram: %s", resp.Description)
+	}
+	return resp.Result.MessageID, nil
+}
+
+// editar reescribe un mensaje ya enviado (la tarjeta de estado que avanza).
+//
+// "message is not modified" se trata como ÉXITO: significa que el texto ya era ese, o sea que el
+// mensaje está como queremos. Devolverlo como error haría que se descartara el message_id y se
+// abriera una tarjeta nueva idéntica.
+func (n *Notifier) editar(messageID int64, texto string) error {
+	var resp struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	err := n.llamar("editMessageText", map[string]any{
+		"chat_id":    n.chatID,
+		"message_id": messageID,
+		"text":       texto,
+		"parse_mode": "HTML",
+	}, &resp)
+	if err != nil {
+		log.Printf("[telegram] error editando la tarjeta %d: %v", messageID, err)
+		return err
+	}
+	if !resp.OK {
+		if strings.Contains(strings.ToLower(resp.Description), "not modified") {
+			return nil
+		}
+		log.Printf("[telegram] edición rechazada (%d): %s", messageID, resp.Description)
+		return fmt.Errorf("telegram: %s", resp.Description)
+	}
+	return nil
+}
+
+// apiBase devuelve la raíz de la API de Telegram (la real, salvo en tests).
+func (n *Notifier) apiBase() string {
+	if n.base != "" {
+		return n.base
+	}
+	return "https://api.telegram.org"
+}
+
 func (n *Notifier) llamar(metodo string, cuerpo map[string]any, salida any) error {
 	b, err := json.Marshal(cuerpo)
 	if err != nil {
 		return err
 	}
-	url := "https://api.telegram.org/bot" + n.token + "/" + metodo
+	url := n.apiBase() + "/bot" + n.token + "/" + metodo
 	resp, err := n.cliente.Post(url, "application/json", bytes.NewReader(b))
 	if err != nil {
 		return err

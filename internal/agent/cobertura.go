@@ -12,8 +12,13 @@
 // a esa decisión con una negativa basada en un nombre. Misma filosofía que el resto: no se le
 // pide al modelo que se acuerde de una regla, se comprueba el resultado.
 //
-// Solo se vigila la NEGATIVA, no el "sí": afirmar cobertura de más no pierde al cliente y el
-// pedido igual se valida por coordenadas antes de registrarse (fueraDeCobertura corta ahí).
+// Se vigilan LAS DOS CARAS. Al principio solo la negativa, con esta justificación: "afirmar
+// cobertura de más no pierde al cliente y el pedido igual se valida por coordenadas antes de
+// registrarse". Era falso. El 15/09 QA preguntó por nombre, sin mandar ubicación, y el bot
+// confirmó cobertura en Paute, Sígsig, Gualaceo y Santa Isabel — cuatro cantones de Azuay donde
+// no se opera. La geocerca efectivamente no despacha a nadie fuera de zona, pero para entonces
+// el cliente ya eligió color, dio su cédula y compartió su ubicación: el rechazo llega al final,
+// que es donde más cuesta. Un "no" honesto al principio es más barato que un "sí" que se cae.
 package agent
 
 import (
@@ -37,6 +42,95 @@ func niegaCobertura(texto string) bool {
 		{"lamentablemente", "no", "llegamos"},
 		{"aun", "no", "llegamos"}, {"todavia", "no", "llegamos"},
 	}, 3)
+}
+
+// afirmaCobertura detecta que el texto le está PROMETIENDO al cliente que sí llegamos a su
+// zona. Hermano de niegaCobertura, para la otra cara.
+//
+// Las secuencias son deliberadamente estrechas: tienen que nombrar la cobertura, no un "sí"
+// cualquiera. "Sí, tenemos gas blanco" o "sí, te lo agendo" no son promesas de cobertura, y
+// taparlas rompería la conversación normal. afirmaSecuencia ya descarta las negaciones, así que
+// "no está cubierto" no cae aquí.
+func afirmaCobertura(texto string) bool {
+	// Ofrecer verificar no es prometer ("¿quieres que revise si llegamos?").
+	if esOfrecimiento(normalizar(texto)) {
+		return false
+	}
+	// Pedir la ubicación YA es la respuesta correcta: si el texto la pide, no está prometiendo
+	// nada aunque diga "llegamos" ("para confirmarte si llegamos justo a tu dirección,
+	// compárteme tu ubicación"). Sin esta salida el candado se comía su propio reemplazo.
+	if pideLaUbicacion(texto) {
+		return false
+	}
+	return afirmaSecuencia(texto, [][]string{
+		{"esta", "cubierto"}, {"esta", "cubierta"},
+		{"si", "llegamos"}, {"si", "atendemos"},
+		{"esta", "dentro", "de", "nuestra", "cobertura"},
+		{"esta", "dentro", "de", "cobertura"},
+		{"esta", "en", "nuestra", "cobertura"},
+		{"si", "tenemos", "cobertura"}, {"tenemos", "cobertura", "en"},
+		{"si", "cubrimos"}, {"cubrimos", "esa", "zona"},
+		{"si", "hay", "cobertura"},
+	}, 3)
+}
+
+// pideLaUbicacion dice si el texto le está pidiendo al cliente que comparta su ubicación. Es la
+// señal de que el modelo NO está decidiendo la cobertura: la está mandando a verificar.
+func pideLaUbicacion(texto string) bool {
+	return afirmaSecuencia(texto, [][]string{
+		{"comparteme", "tu", "ubicacion"}, {"compartirme", "tu", "ubicacion"},
+		{"comparte", "tu", "ubicacion"}, {"me", "compartes", "tu", "ubicacion"},
+		{"envíame", "tu", "ubicacion"}, {"enviame", "tu", "ubicacion"},
+		{"mandame", "tu", "ubicacion"}, {"necesito", "tu", "ubicacion"},
+	}, 3)
+}
+
+// revisarPedidoDeUbicacionRedundante corrige al modelo cuando pide una ubicación que el cliente
+// ACABA de compartir.
+//
+// Caso del 15/09 (H-02): tres pines en el mismo minuto y al segundo le contestó "compárteme tu
+// ubicación". QA lo leyó como un pin perdido por mensajes simultáneos; el webhook ya serializa
+// por teléfono (lockCliente), así que el pin sí se guardó — lo que falló fue la redacción. Con
+// varios mensajes seguidos el modelo arrastra el turno anterior y vuelve a pedir lo que ya tiene.
+//
+// Pedirle dos veces lo mismo al cliente lo hace dudar de si el bot lo está escuchando, y pasa
+// justo cuando está a punto de pedir. Solo se corrige con ubicación FRESCA: si es de otra
+// conversación, volver a pedirla es lo correcto (ver la guardia de dirección en pedido.go).
+func (a *Agent) revisarPedidoDeUbicacionRedundante(from, reply string) string {
+	if !pideLaUbicacion(reply) {
+		return reply
+	}
+	if !a.ubicacionEsDeAhora(from) {
+		return reply
+	}
+	log.Printf("[ubicacion] %s: el modelo pidió una ubicación que ya tenía de esta conversación; "+
+		"se reemplaza para no hacerle repetir el pin", from)
+	return "¡Ya tengo tu ubicación, gracias! 😊 Cuéntame qué cilindro necesitas y cuántos, y te " +
+		"lo despacho enseguida."
+}
+
+// revisarCoberturaAfirmada reemplaza la respuesta del modelo cuando PROMETE cobertura sin que
+// el sistema la haya verificado por coordenadas.
+//
+// La afirmación legítima sí pasa: si el cliente compartió su ubicación en esta conversación, la
+// geocerca ya decidió (fueraDeCobertura habría cortado el turno antes de llegar al modelo), así
+// que un "sí llegamos" en ese momento es verdad y debe poder decirse.
+func (a *Agent) revisarCoberturaAfirmada(from, reply string) string {
+	if !afirmaCobertura(reply) {
+		return reply
+	}
+	// Ubicación de esta conversación = geocerca ya consultada y superada. El "sí" es cierto.
+	if a.ubicacionEsDeAhora(from) {
+		return reply
+	}
+	contexto, ok := a.catalog.Get()
+	if !ok || contexto == nil {
+		log.Printf("[cobertura] %s: el modelo prometió cobertura sin verificar y no hay catálogo; se pide la ubicación", from)
+		return mensajeCoberturaEnPositivo(nil)
+	}
+	log.Printf("[cobertura] %s: el modelo prometió cobertura por el NOMBRE de un lugar, sin verificar "+
+		"coordenadas; se reemplaza por pedir la ubicación", from)
+	return mensajeCoberturaEnPositivo(contexto.Zonas)
 }
 
 // mensajeCoberturaEnPositivo redacta la respuesta correcta: dice dónde SÍ atendemos (con las

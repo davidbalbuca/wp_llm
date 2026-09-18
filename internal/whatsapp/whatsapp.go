@@ -153,6 +153,13 @@ func ResolverLinkCortoDeMaps(texto string) (lat, lng float64, ok bool) {
 
 // sendPayload envía un payload ya armado a la Graph API de Meta (POST /messages).
 func sendPayload(cfg config.Config, payload map[string]any) error {
+	// Sin credenciales no se sale a internet. En producción nunca faltan (config las exige al
+	// arrancar), así que esto solo se cumple en los TESTS: sin el corte, cada prueba que ejerce
+	// un menú dispara un POST real a la API de Meta —que no puede funcionar sin token, y que no
+	// tiene nada que hacer saliendo de una prueba unitaria—.
+	if cfg.WhatsAppToken == "" || cfg.PhoneNumberID == "" {
+		return fmt.Errorf("WhatsApp no está configurado (falta el token o el phone number id)")
+	}
 	url := fmt.Sprintf("https://graph.facebook.com/%s/%s/messages",
 		cfg.GraphAPIVersion, cfg.PhoneNumberID)
 	b, _ := json.Marshal(payload)

@@ -27,6 +27,10 @@ type memStore struct {
 	pedidoEnCurso      map[string]PedidoEnCurso           // ficha del pedido que se está armando
 	pendingColorSwap   map[string]PendingColorSwap        // oferta de cambio de color sin responder
 	pendingGuardarUbic map[string]PendingGuardarUbicacion // oferta de nombrar la ubicación
+	consentimiento     map[string]Consentimiento          // respuesta a las políticas de datos
+	consentPendiente   map[string]bool                    // se le mandó el menú y no ha respondido
+	tarjetaEstado      map[string]TarjetaEstado           // tarjeta de Telegram que se va editando
+	eligiendoHora      map[string]bool                    // se le mandó el menú de horas y no ha elegido
 	pendingRating      map[string]PendingRating           // pedidos entregados por calificar
 	pendingRatingAt    map[string]time.Time               // cuándo se creó cada pendiente (para RatingTTL)
 	orderPhone         map[int]string                     // pedido_id -> teléfono de WhatsApp con el que se hizo
@@ -58,6 +62,10 @@ func NewMemStore() Store {
 		pedidoEnCurso:      make(map[string]PedidoEnCurso),
 		pendingColorSwap:   make(map[string]PendingColorSwap),
 		pendingGuardarUbic: make(map[string]PendingGuardarUbicacion),
+		consentimiento:     make(map[string]Consentimiento),
+		consentPendiente:   make(map[string]bool),
+		tarjetaEstado:      make(map[string]TarjetaEstado),
+		eligiendoHora:      make(map[string]bool),
 		pendingRating:      make(map[string]PendingRating),
 		pendingRatingAt:    make(map[string]time.Time),
 		orderPhone:         make(map[int]string),
@@ -229,6 +237,15 @@ func (s *memStore) SetScheduledEstado(id int64, estado string) {
 			s.scheduled[i].Estado = estado
 		}
 	}
+}
+
+// ForzarUltimaActividad envejece el último mensaje del cliente. Solo lo usan las pruebas, para
+// simular al que vuelve horas después sin tener que esperarlas (mismo criterio y mismo patrón que
+// ForzarFechaUbicacion).
+func (s *memStore) ForzarUltimaActividad(phone string, cuando time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastActivity[phone] = cuando
 }
 
 // ForzarFechaUbicacion envejece una ubicacion. Solo lo usan las pruebas, para poder simular
@@ -610,6 +627,83 @@ func (s *memStore) ClearPendingGuardarUbicacion(phone string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.pendingGuardarUbic, phone)
+}
+
+// --- Consentimiento de protección de datos ---
+
+func (s *memStore) SetConsentimiento(phone string, c Consentimiento) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c.Fecha.IsZero() {
+		c.Fecha = time.Now()
+	}
+	s.consentimiento[phone] = c
+}
+
+func (s *memStore) GetConsentimiento(phone string) (Consentimiento, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.consentimiento[phone]
+	return c, ok
+}
+
+func (s *memStore) SetConsentimientoPendiente(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.consentPendiente[phone] = true
+}
+
+func (s *memStore) ConsentimientoPendiente(phone string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.consentPendiente[phone]
+}
+
+func (s *memStore) ClearConsentimientoPendiente(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.consentPendiente, phone)
+}
+
+// --- Tarjeta de estado en Telegram ---
+
+func (s *memStore) GetTarjetaEstado(phone string) (TarjetaEstado, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tarjetaEstado[phone]
+	return t, ok
+}
+
+func (s *memStore) SetTarjetaEstado(phone string, t TarjetaEstado) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tarjetaEstado[phone] = t
+}
+
+func (s *memStore) ClearTarjetaEstado(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.tarjetaEstado, phone)
+}
+
+// --- Menú de horas para programar ---
+
+func (s *memStore) SetEligiendoHora(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.eligiendoHora[phone] = true
+}
+
+func (s *memStore) EligiendoHora(phone string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.eligiendoHora[phone]
+}
+
+func (s *memStore) ClearEligiendoHora(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.eligiendoHora, phone)
 }
 
 // --- Pedido en curso (ficha de lo que el cliente va eligiendo) ---

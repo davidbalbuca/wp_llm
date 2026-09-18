@@ -67,6 +67,16 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 		return "Para programar necesito la cédula y el nombre completo del cliente. Pídeselos."
 	}
 
+	// COMPUERTA de protección de datos, igual que en registrar_pedido: agendar también guarda los
+	// datos del cliente, así que sin autorización tampoco se puede. Ver consentimiento.go.
+	if a.consentimientoNiega(from) {
+		log.Printf("[consentimiento] %s: se bloquea programar_entrega, el cliente negó el permiso", from)
+		return "El cliente NO autorizó el tratamiento de sus datos: NO se agendó nada y NO se guardó " +
+			"ningún dato suyo. Explícale con amabilidad que sin esa autorización no puedes tomarle el " +
+			"pedido por aquí."
+	}
+	a.sincronizarConsentimiento(from, identificacion)
+
 	// CANDADO DURO: la hora tiene que haberla dicho EL CLIENTE, no el modelo. El prompt ya pedía
 	// "deja que el cliente escriba la hora", y aun así el 02/09 un cliente compartió su ubicación
 	// a las 22:49 y el bot le agendó una entrega para las 06:00 que él nunca pidió: como era

@@ -1,0 +1,278 @@
+package notify
+
+import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"wp-llm-gas/internal/conversation"
+)
+
+// LA TARJETA DE ESTADO ES UN MENSAJE QUE AVANZA, NO CUATRO MENSAJES SUELTOS.
+//
+// Pedido del dueño (18/09): estados por cliente en Telegram —pidió gas, pedido registrado,
+// entregado, y si hay algún error— además de los avisos que ya existen.
+//
+// Lo que se protege aquí no es el texto: es que el grupo siga siendo LEGIBLE. Cuatro avisos por
+// cliente, por todos los clientes del día, vuelven el grupo un muro que nadie lee — y un grupo que
+// nadie lee es peor que no tener avisos, porque da falsa sensación de vigilancia.
+
+// telegramFalso registra cada llamada que recibe la "API de Telegram".
+type telegramFalso struct {
+	mu        sync.Mutex
+	metodos   []string // en orden: "sendMessage", "editMessageText"...
+	textos    []string // el texto de cada llamada
+	servidor  *httptest.Server
+	siguiente int64 // message_id que se devuelve al crear
+}
+
+func nuevoTelegramFalso(t *testing.T) *telegramFalso {
+	t.Helper()
+	tg := &telegramFalso{siguiente: 500}
+	tg.servidor = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cuerpo, _ := io.ReadAll(r.Body)
+		var payload struct {
+			Text string `json:"text"`
+		}
+		_ = json.Unmarshal(cuerpo, &payload)
+
+		tg.mu.Lock()
+		metodo := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+		tg.metodos = append(tg.metodos, metodo)
+		tg.textos = append(tg.textos, payload.Text)
+		id := tg.siguiente
+		tg.siguiente++
+		tg.mu.Unlock()
+
+		w.Write([]byte(`{"ok":true,"result":{"message_id":` + strconv.FormatInt(id, 10) + `,"message_thread_id":9}}`))
+	}))
+	t.Cleanup(tg.servidor.Close)
+	return tg
+}
+
+// cuenta cuántas veces se llamó a un método.
+func (tg *telegramFalso) cuenta(metodo string) int {
+	tg.mu.Lock()
+	defer tg.mu.Unlock()
+	n := 0
+	for _, m := range tg.metodos {
+		if m == metodo {
+			n++
+		}
+	}
+	return n
+}
+
+// ultimoTexto devuelve el texto de la última llamada ("" si no hubo).
+func (tg *telegramFalso) ultimoTexto() string {
+	tg.mu.Lock()
+	defer tg.mu.Unlock()
+	if len(tg.textos) == 0 {
+		return ""
+	}
+	return tg.textos[len(tg.textos)-1]
+}
+
+// notificadorDePrueba arma un Notifier apuntado al Telegram falso, con el hilo del cliente ya
+// resuelto para que no haya que crear temas.
+func notificadorDePrueba(t *testing.T, tg *telegramFalso, phone string) (*Notifier, conversation.Store) {
+	t.Helper()
+	store := conversation.NewMemStore()
+	store.SetTelegramThread(phone, 9) // hilo ya existente: evita el createForumTopic
+	return &Notifier{
+		token:   "t",
+		chatID:  "c",
+		store:   store,
+		cliente: tg.servidor.Client(),
+		base:    tg.servidor.URL,
+	}, store
+}
+
+// esperarLlamadas espera a que se hayan hecho al menos n llamadas (los avisos son asíncronos).
+func esperarLlamadas(t *testing.T, tg *telegramFalso, n int) {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		tg.mu.Lock()
+		hechas := len(tg.metodos)
+		tg.mu.Unlock()
+		if hechas >= n {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("no llegaron %d llamadas a Telegram", n)
+}
+
+// LA PRUEBA CENTRAL: cuatro etapas generan UN mensaje y tres ediciones, no cuatro mensajes.
+func TestElCicloCompletoDejaUnSoloMensajeEnElGrupo(t *testing.T) {
+	const phone = "593999400001"
+	tg := nuevoTelegramFalso(t)
+	n, _ := notificadorDePrueba(t, tg, phone)
+
+	n.EstadoCliente(phone, "María Pérez", conversation.EtapaEscribio, "", 0)
+	esperarLlamadas(t, tg, 1)
+	n.EstadoCliente(phone, "María Pérez", conversation.EtapaPidioGas, "2 x GAS 15KG (BLANCO)", 0)
+	esperarLlamadas(t, tg, 2)
+	n.EstadoCliente(phone, "María Pérez", conversation.EtapaRegistrado, "", 942)
+	esperarLlamadas(t, tg, 3)
+	n.CerrarTarjeta(phone, "María Pérez", false)
+	esperarLlamadas(t, tg, 4)
+
+	if creados := tg.cuenta("sendMessage"); creados != 1 {
+		t.Errorf("se crearon %d mensajes; debía ser 1 que se va editando. Cuatro avisos por cliente "+
+			"vuelven el grupo ilegible, y un grupo que nadie lee es peor que no tener avisos", creados)
+	}
+	if ediciones := tg.cuenta("editMessageText"); ediciones != 3 {
+		t.Errorf("hubo %d ediciones; debían ser 3 (pidió gas, registrado, entregado)", ediciones)
+	}
+	// Y el mensaje final cuenta la historia completa.
+	final := tg.ultimoTexto()
+	for _, esperado := range []string{"María Pérez", "Entregado", "942", "GAS 15KG"} {
+		if !strings.Contains(final, esperado) {
+			t.Errorf("la tarjeta final no menciona %q: %q", esperado, final)
+		}
+	}
+}
+
+// LA TARJETA NO RETROCEDE. Los avisos llegan de goroutines distintas (el webhook, el reintento de
+// repartidor a los 5 min, el aviso de entrega del backend) y pueden desordenarse. Una tarjeta que
+// vuelve de "Entregado" a "Pidió gas" hace que el grupo desconfíe de todas las demás.
+func TestLaTarjetaNoRetrocede(t *testing.T) {
+	const phone = "593999400002"
+	tg := nuevoTelegramFalso(t)
+	n, store := notificadorDePrueba(t, tg, phone)
+
+	n.EstadoCliente(phone, "Juan", conversation.EtapaRegistrado, "1 x GAS 15KG", 700)
+	esperarLlamadas(t, tg, 1)
+	// Llega tarde un aviso de una etapa ANTERIOR.
+	n.EstadoCliente(phone, "Juan", conversation.EtapaPidioGas, "", 0)
+	// No hay forma de esperar algo que no debe pasar: se da margen y se comprueba el estado.
+	time.Sleep(60 * time.Millisecond)
+
+	tarjeta, _ := store.GetTarjetaEstado(phone)
+	if tarjeta.Etapa != conversation.EtapaRegistrado {
+		t.Errorf("la tarjeta retrocedió a la etapa %d: el grupo vería un pedido registrado volver "+
+			"a 'pidió gas'", tarjeta.Etapa)
+	}
+	if llamadas := tg.cuenta("sendMessage") + tg.cuenta("editMessageText"); llamadas != 1 {
+		t.Errorf("un aviso atrasado generó %d llamadas; no debía generar ninguna extra", llamadas)
+	}
+}
+
+// El detalle del pedido SE CONSERVA entre etapas: pasar "" no lo borra. Si se perdiera, la tarjeta
+// final diría "Entregado" sin decir qué se entregó.
+func TestElDetalleDelPedidoSeConservaEntreEtapas(t *testing.T) {
+	const phone = "593999400003"
+	tg := nuevoTelegramFalso(t)
+	n, _ := notificadorDePrueba(t, tg, phone)
+
+	n.EstadoCliente(phone, "Ana", conversation.EtapaPidioGas, "3 x GAS 23KG (NARANJA)", 0)
+	esperarLlamadas(t, tg, 1)
+	n.EstadoCliente(phone, "Ana", conversation.EtapaRegistrado, "", 801) // sin detalle
+	esperarLlamadas(t, tg, 2)
+
+	if final := tg.ultimoTexto(); !strings.Contains(final, "GAS 23KG") {
+		t.Errorf("se perdió el detalle del pedido al avanzar de etapa: %q", final)
+	}
+}
+
+// Un ERROR no borra la etapa: un pedido puede estar registrado Y haber tenido un problema que
+// alguien debe mirar. Las dos cosas tienen que verse a la vez.
+func TestUnErrorNoBorraElAvanceDelPedido(t *testing.T) {
+	const phone = "593999400004"
+	tg := nuevoTelegramFalso(t)
+	n, _ := notificadorDePrueba(t, tg, phone)
+
+	n.EstadoCliente(phone, "Luis", conversation.EtapaRegistrado, "1 x GAS 15KG", 900)
+	esperarLlamadas(t, tg, 1)
+	n.ErrorCliente(phone, "Luis", "No se pudo avisar la entrega")
+	esperarLlamadas(t, tg, 2)
+
+	final := tg.ultimoTexto()
+	if !strings.Contains(final, "No se pudo avisar la entrega") {
+		t.Errorf("el error no aparece en la tarjeta: %q", final)
+	}
+	if !strings.Contains(final, "Registrado") || !strings.Contains(final, "900") {
+		t.Errorf("el error borró el avance del pedido: %q", final)
+	}
+}
+
+// Cancelar es un final ALTERNATIVO, no un paso más: mostrar "Entregado" en gris al lado sugeriría
+// que el gas todavía puede llegar.
+func TestElPedidoCanceladoNoAparentaSeguirEnCamino(t *testing.T) {
+	const phone = "593999400005"
+	tg := nuevoTelegramFalso(t)
+	n, _ := notificadorDePrueba(t, tg, phone)
+
+	n.EstadoCliente(phone, "Rosa", conversation.EtapaRegistrado, "1 x GAS 15KG", 950)
+	esperarLlamadas(t, tg, 1)
+	n.CerrarTarjeta(phone, "Rosa", true)
+	esperarLlamadas(t, tg, 2)
+
+	final := tg.ultimoTexto()
+	if !strings.Contains(final, "Cancelado") {
+		t.Errorf("la tarjeta no dice que se canceló: %q", final)
+	}
+	if strings.Contains(final, "Entregado") {
+		t.Errorf("un pedido cancelado sigue mostrando 'Entregado': parece que el gas va en camino. %q", final)
+	}
+}
+
+// Al cerrar el ciclo se OLVIDA la tarjeta: el próximo pedido del cliente abre una nueva en vez de
+// reescribir la historia del anterior.
+func TestTrasCerrarElCicloElProximoPedidoAbreTarjetaNueva(t *testing.T) {
+	const phone = "593999400006"
+	tg := nuevoTelegramFalso(t)
+	n, store := notificadorDePrueba(t, tg, phone)
+
+	n.EstadoCliente(phone, "Pedro", conversation.EtapaRegistrado, "1 x GAS 15KG", 960)
+	esperarLlamadas(t, tg, 1)
+	n.CerrarTarjeta(phone, "Pedro", false)
+	esperarLlamadas(t, tg, 2)
+
+	if _, hay := store.GetTarjetaEstado(phone); hay {
+		t.Fatal("la tarjeta sigue viva tras cerrar el ciclo: el próximo pedido reescribiría el anterior")
+	}
+	// Pedido nuevo: tiene que CREAR otro mensaje, no editar el cerrado.
+	n.EstadoCliente(phone, "Pedro", conversation.EtapaEscribio, "", 0)
+	esperarLlamadas(t, tg, 3)
+	if creados := tg.cuenta("sendMessage"); creados != 2 {
+		t.Errorf("el pedido nuevo no abrió su propia tarjeta (%d mensajes creados)", creados)
+	}
+}
+
+// AVISOS SIMULTÁNEOS DEL MISMO CLIENTE NO DUPLICAN LA TARJETA. Es un caso real: el webhook y el
+// reintento de repartidor corren en goroutines distintas y pueden coincidir.
+func TestAvisosSimultaneosNoDuplicanLaTarjeta(t *testing.T) {
+	const phone = "593999400007"
+	tg := nuevoTelegramFalso(t)
+	n, _ := notificadorDePrueba(t, tg, phone)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); n.EstadoCliente(phone, "Carmen", conversation.EtapaPidioGas, "1 x GAS", 0) }()
+	}
+	wg.Wait()
+	esperarLlamadas(t, tg, 1)
+	time.Sleep(80 * time.Millisecond) // margen para que lleguen las que fueran a llegar
+
+	if creados := tg.cuenta("sendMessage"); creados != 1 {
+		t.Errorf("ocho avisos a la vez crearon %d tarjetas; debía ser 1", creados)
+	}
+}
+
+// Y un Notifier nil (Telegram sin configurar) no hace nada ni revienta: es la regla del paquete,
+// un observador nunca puede tumbar el proceso que atiende a los clientes.
+func TestSinTelegramConfiguradoNoPasaNada(t *testing.T) {
+	var n *Notifier
+	n.EstadoCliente("593999400008", "X", conversation.EtapaPidioGas, "1 x GAS", 0)
+	n.ErrorCliente("593999400008", "X", "algo")
+	n.CerrarTarjeta("593999400008", "X", false)
+}

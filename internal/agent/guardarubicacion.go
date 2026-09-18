@@ -14,7 +14,6 @@ import (
 
 	"wp-llm-gas/internal/conversation"
 	"wp-llm-gas/internal/georoutes"
-	"wp-llm-gas/internal/whatsapp"
 )
 
 // Botones del menú de guardar ubicación. WhatsApp corta los títulos en 20 caracteres.
@@ -59,7 +58,7 @@ func (a *Agent) OfrecerGuardarUbicacion(from string, lat, lng float64) bool {
 	cuerpo := "¿Quieres que guarde esta ubicación con un nombre? Así la próxima vez te lo " +
 		"envío sin pedírtela de nuevo 😊"
 	opciones := []string{BotonGuardarCasa, BotonGuardarTrabajo, BotonNoGuardar}
-	if err := whatsapp.SendMenu(a.cfg, from, cuerpo, opciones); err != nil {
+	if err := a.mandarMenu(from, cuerpo, opciones); err != nil {
 		log.Printf("[guardar-ubic] %s: el menú falló (%v); el pedido sigue igual", from, err)
 		return false
 	}

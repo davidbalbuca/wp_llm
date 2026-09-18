@@ -15,7 +15,6 @@ import (
 
 	"wp-llm-gas/internal/conversation"
 	"wp-llm-gas/internal/georoutes"
-	"wp-llm-gas/internal/whatsapp"
 )
 
 // ofrecerColorAlterno consulta las alternativas y, si hay, manda el menú de cambio. Devuelve
@@ -43,7 +42,7 @@ func (a *Agent) ofrecerColorAlterno(t *turno, from string, lat, lng float64,
 	cuerpo := fmt.Sprintf("No tengo cilindros %s disponibles cerca 😔, pero sí %s, que es el "+
 		"mismo gas. ¿Te lo envío en %s?", color.Nombre, alt.Color, alt.Color)
 	opciones := []string{botonSiAlterno(alt.Color), BotonNoCambioColor}
-	if err := whatsapp.SendMenu(a.cfg, from, cuerpo, opciones); err != nil {
+	if err := a.mandarMenu(from, cuerpo, opciones); err != nil {
 		log.Printf("[color-alterno] %s: el menú de cambio falló (%v); sigue la espera", from, err)
 		return "", false
 	}

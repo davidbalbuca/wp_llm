@@ -670,6 +670,15 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		store.LimpiarFueraDeCobertura(inc.From)
 	}
 
+	// Y además, por ESTADO: si el cliente vuelve tras un buen rato y no tiene NADA pendiente, su
+	// conversación arranca limpia aunque no hayan pasado las 24 h.
+	//
+	// Cubre el hueco que dejaba el reloj: el pedido que muere sin pasar por ninguno de los finales
+	// (esperó repartidor y se fue, preguntó el precio y desapareció, le entregaron y nunca
+	// calificó). Ese rastro sobrevivía el día entero y el próximo "hola" lo arrastraba.
+	// Ver internal/agent/sesionnueva.go.
+	ag.EmpezarConversacionSiCorresponde(inc.From)
+
 	// --- Control humano (takeover) ---
 	// Si el chat está tomado por un humano pero lleva más de HumanTakeoverTimeout inactivo, vuelve
 	// SOLO al bot (para que un pedido NUEVO lo atienda el bot y no quede colgado esperando a alguien).
@@ -694,6 +703,12 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	// mensaje y antes de responder, para que el equipo pueda seguir la conversación desde el
 	// principio durante el test. El propio notificador se encarga de mandar uno solo por sesión.
 	avisos.AvisarInicio(inc.From, conversation.NombreDe(store, inc.From), inboundAudit)
+
+	// Y se abre (o reutiliza) la TARJETA DE ESTADO del cliente: el mensaje único que el grupo ve
+	// avanzar "Escribió → Pidió gas → Registrado → Entregado". A diferencia del aviso verde, esta
+	// no es un mensaje nuevo cada vez: si ya existe, no se toca. Ver internal/notify/tarjeta.go.
+	avisos.EstadoCliente(inc.From, conversation.NombreDe(store, inc.From),
+		conversation.EtapaEscribio, "", 0)
 
 	// En control HUMANO el bot NO responde: solo deja registrado el mensaje para que un humano
 	// conteste desde la web. (Las notificaciones de pedido llegó/entregado siguen igual.)
@@ -820,6 +835,36 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		}
 	}
 
+	// COMANDOS de herramienta (/clear, /compact, /model...). Van ANTES que todo lo demás: no son
+	// conversación, así que no tienen por qué pasar por ningún interceptor ni por el modelo.
+	//
+	// El 18/09 alguien del equipo tecleó comandos de Claude Code en un chat real y el bot los
+	// contestó como si fueran mensajes de un cliente, incluidos los que escribió mal. Ver
+	// internal/agent/comandos.go.
+	if inc.IsText {
+		if reply, manejado := ag.ResponderComando(inc.From, inc.Text); manejado {
+			log.Printf("[webhook] comando resuelto en código para %s", inc.From)
+			_ = replyClient(cfg, store, inc.From, reply)
+			return
+		}
+	}
+
+	// CONSENTIMIENTO de protección de datos: el cliente está respondiendo al menú "¿aceptas
+	// nuestras políticas?". Va PRIMERO de todos los menús, antes que cualquier otra cosa: hasta
+	// que no responda esto, el bot no puede pedirle ni tratar un solo dato personal, así que
+	// ningún otro flujo tiene sentido todavía.
+	//
+	// Se resuelve en código y no por el modelo porque de este sí/no depende que la cédula de una
+	// persona entre o no entre a la base. Una interpretación equivocada aquí no es una respuesta
+	// torpe: es tratar los datos de alguien que dijo que no. Ver internal/agent/consentimiento.go.
+	if inc.IsText {
+		if reply, manejado := ag.ResponderConsentimiento(inc.From, inc.Text); manejado {
+			log.Printf("[webhook] consentimiento de datos resuelto en código para %s", inc.From)
+			_ = replyClient(cfg, store, inc.From, reply)
+			return
+		}
+	}
+
 	// Confirmacion de DIRECCION: el cliente esta respondiendo a "¿te lo enviamos a X?". Se
 	// resuelve en codigo, no por el modelo: una direccion mal interpretada manda el gas a otra
 	// casa (ver internal/agent/direccion.go).
@@ -864,6 +909,13 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		// hoy — lo nota cuando le llega el pedido a la puerta, a la hora que creyó cancelada.
 		if reply, manejado := ag.ResponderCancelarProgramacion(inc.From, inc.Text); manejado {
 			log.Printf("[webhook] cancelacion de entrega agendada resuelta en código para %s", inc.From)
+			_ = replyClient(cfg, store, inc.From, reply)
+			return
+		}
+		// La HORA de una entrega agendada, tocando un botón. Va antes del menú de espera porque
+		// es su continuación: quien eligió "Programar" está eligiendo hora ahora mismo.
+		if reply, manejado := ag.ResponderHoraProgramada(inc.From, inc.Text); manejado {
+			log.Printf("[webhook] hora de entrega resuelta en código para %s", inc.From)
 			_ = replyClient(cfg, store, inc.From, reply)
 			return
 		}
@@ -993,14 +1045,27 @@ func notifyOrderFinished(cfg config.Config, store conversation.Store, pedidoID i
 	store.ClearActivePedido(phone)
 	store.SetPendingRating(phone, conversation.PendingRating{PedidoID: pedidoID, Conductor: conductor})
 
+	// La tarjeta del grupo llega a su último paso y se cierra: el mensaje queda con "Entregado ✅"
+	// y la próxima conversación del cliente abre una tarjeta nueva, en vez de reescribir la
+	// historia del pedido que ya terminó.
+	avisos.CerrarTarjeta(phone, conversation.NombreDe(store, phone), false)
+
+	// La calificación va con BOTONES de estrellas, no pidiéndole que escriba un número.
+	//
+	// Es el mensaje que más clientes reciben —uno por cada entrega— y el dato que se le pide es
+	// un conjunto cerrado de cinco valores: el caso de libro para un menú. Hacerle escribir "5"
+	// es pedirle que abra el teclado para algo que se resuelve con un toque, y cada paso de más
+	// es gente que no califica.
 	msg := "¡Tu pedido fue entregado! 🎉 Gracias por preferirnos. 🙌\n\n"
 	if conductor != "" {
-		msg += fmt.Sprintf("¿Cómo calificarías a tu repartidor %s? Responde con un número del 1 al 5 ⭐ "+
-			"(y si quieres, un breve comentario).", conductor)
+		msg += fmt.Sprintf("¿Cómo calificarías a tu repartidor %s?", conductor)
 	} else {
-		msg += "¿Cómo calificarías a tu repartidor? Responde con un número del 1 al 5 ⭐ (y si quieres, un breve comentario)."
+		msg += "¿Cómo calificarías a tu repartidor?"
 	}
-	if err := avisarCliente(cfg, store, phone, msg); err != nil {
+	// El respaldo conserva la instrucción de escribir: si el menú no sale, el cliente tiene que
+	// saber qué hacer. ResponderCalificacion acepta las dos formas.
+	respaldo := msg + " Responde con un número del 1 al 5 ⭐ (y si quieres, un breve comentario)."
+	if err := avisarClienteMenu(cfg, store, phone, msg, agent.BotonesCalificacion(), respaldo); err != nil {
 		reportarFallo(cfg, store, phone, "No se pudo avisar la ENTREGA ni pedir la calificación",
 			fmt.Sprintf("Pedido #%d. El mensaje no salió: %v", pedidoID, err))
 	}

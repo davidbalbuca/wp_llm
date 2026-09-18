@@ -44,6 +44,13 @@ func ReportarFallo(cfg config.Config, store conversation.Store, phone, motivo, d
 	go escalation.SendSupportEmail(cfg, tid, phone, motivo, detalle)
 
 	// Default nil (Telegram sin configurar) = Fallo no hace nada.
-	Default.Fallo(phone, conversation.NombreDe(store, phone), motivo, detalle)
+	nombre := conversation.NombreDe(store, phone)
+	Default.Fallo(phone, nombre, motivo, detalle)
+	// Y el problema queda marcado en la TARJETA del cliente, para que se vea en su línea de
+	// tiempo y no solo en el hilo de errores: ahí se entiende en qué punto del pedido pasó.
+	// No sustituye a Fallo (que suena y lleva el detalle); solo da el contexto.
+	if phone != "" {
+		Default.ErrorCliente(phone, nombre, motivo)
+	}
 	return tid
 }

@@ -370,3 +370,67 @@ func TestPedidoActivoHuerfanoNoBloqueaAlCliente(t *testing.T) {
 			"quedaría bloqueado casi un día", ventanaPedidoActivo)
 	}
 }
+
+// LA CALIFICACIÓN SE TOCA, NO SE ESCRIBE.
+//
+// Pedido del dueño (18/09): sugerir opciones para que el cliente solo dé click.
+//
+// Es el mensaje que más clientes reciben —uno por cada entrega— y pedía ESCRIBIR un número del 1
+// al 5: abrir el teclado para elegir entre cinco valores fijos. Cada paso de más son
+// calificaciones que no llegan.
+func TestLaCalificacionSeEntiendeTocadaYEscrita(t *testing.T) {
+	casos := []struct {
+		respuesta string
+		esperado  int
+	}{
+		// Botones (lo que devuelve WhatsApp es el título EXACTO).
+		{"⭐⭐⭐⭐⭐ 5", 5}, {"⭐⭐⭐⭐ 4", 4}, {"⭐ 1", 1},
+		// Escrito: el respaldo se lo pide así si el menú no sale, y tiene que seguir valiendo.
+		{"5", 5}, {"3", 3}, {" 2 ", 2},
+	}
+	for _, c := range casos {
+		if n := estrellasDeRespuesta(c.respuesta); n != c.esperado {
+			t.Errorf("%q se leyó como %d; se esperaba %d", c.respuesta, n, c.esperado)
+		}
+	}
+}
+
+// Y lo que NO es una calificación no se interpreta como tal: un "0" o un "7" no son notas, y una
+// frase con un número dentro tampoco.
+func TestLoQueNoEsUnaCalificacionNoSeInterpreta(t *testing.T) {
+	for _, texto := range []string{"0", "7", "-1", "hola", "5 muy amable", "", "⭐⭐ dos"} {
+		if n := estrellasDeRespuesta(texto); n != 0 {
+			t.Errorf("%q se tomó como la calificación %d", texto, n)
+		}
+	}
+}
+
+// Los botones cubren las cinco notas y caben en WhatsApp (una lista admite 10 filas).
+func TestLosBotonesDeCalificacionCubrenLasCincoNotas(t *testing.T) {
+	botones := BotonesCalificacion()
+	if len(botones) != 5 {
+		t.Fatalf("hay %d botones de calificación; deben ser 5", len(botones))
+	}
+	vistas := map[int]bool{}
+	for _, b := range botones {
+		n := estrellasDeRespuesta(b)
+		if n == 0 {
+			t.Errorf("el botón %q no se puede leer de vuelta: el cliente lo toca y no pasa nada", b)
+			continue
+		}
+		vistas[n] = true
+	}
+	for n := 1; n <= 5; n++ {
+		if !vistas[n] {
+			t.Errorf("falta el botón de %d estrellas", n)
+		}
+	}
+}
+
+// Y está CABLEADO: la entrega manda el menú, no un texto pidiendo que escriba.
+func TestLaCalificacionSePideConBotones(t *testing.T) {
+	if !archivoContiene(t, "../../cmd/bot/main.go", "agent.BotonesCalificacion()") {
+		t.Error("la calificación se sigue pidiendo por texto: el cliente tiene que abrir el " +
+			"teclado para elegir entre cinco valores fijos")
+	}
+}

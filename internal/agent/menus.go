@@ -32,8 +32,9 @@ const (
 // modelo no llama a esperar_conductor, el cliente que contestó "Esperar" se queda sin búsqueda
 // de repartidor y sin gas, creyendo que lo están atendiendo.
 //
-// "Programar" NO se resuelve aquí a propósito: necesita que el cliente diga una hora, así que
-// es una conversación y le toca al modelo.
+// "Programar" antes NO se resolvía aquí porque hacía falta que el cliente ESCRIBIERA una hora, y
+// eso era una conversación. Ahora se le ofrecen horas como botones (ver horasmenu.go), así que
+// también se resuelve en código: el cliente toca y listo.
 func (a *Agent) ResponderMenuEspera(from, texto string) (string, bool) {
 	if _, hayEspera := a.store.GetPendingWait(from); !hayEspera {
 		return "", false
@@ -44,31 +45,99 @@ func (a *Agent) ResponderMenuEspera(from, texto string) (string, bool) {
 	case respuesta == "esperar" || respuestasAfirmativas[respuesta]:
 		log.Printf("[menu-espera] %s aceptó esperar; se arranca la búsqueda en código", from)
 		a.esperarConductor(from) // arranca startWaitForDriver; su texto es para el modelo
-		return "¡Perfecto! 🚚 Ya estoy buscando un repartidor para ti. Te aviso por aquí apenas " +
-			"se asigne (o si en unos minutos no hay ninguno disponible). Quédate atento 😊", true
+		respuesta := "¡Perfecto! 🚚 Ya estoy buscando un repartidor para ti. Te aviso por aquí apenas " +
+			"se asigne (o si en unos minutos no hay ninguno disponible). Quédate atento 😊"
+		// Al historial, por lo mismo que la rama de cancelar: si el cliente escribe mientras
+		// espera, el modelo tiene que saber que ya aceptó esperar y no volver a ofrecerle el menú.
+		a.store.AppendUser(from, texto)
+		a.store.AppendModel(from, respuesta)
+		return respuesta, true
 
 	case respuesta == "cancelar" || respuestasNegativas[respuesta]:
 		log.Printf("[menu-espera] %s no quiso esperar; se cancela la espera en código", from)
+		// ANTES DE NADA: ¿tiene un pedido de VERDAD en camino? Un cliente puede estar esperando
+		// repartidor para un pedido nuevo y tener otro ya asignado de antes (o hecho desde la
+		// app). Si lo hay, "Cancelar" tiene que cancelar ESE, que es lo que él entiende por
+		// cancelar; cortar solo la espera lo dejaría con gas en camino que creía haber parado.
+		if msg, hubo := a.cancelarPedidoVivoSiLoHay(from); hubo {
+			a.cancelarEspera(from) // y además se corta la espera del pedido nuevo
+			a.store.AppendUser(from, texto)
+			a.store.AppendModel(from, msg)
+			return msg, true
+		}
 		a.cancelarEspera(from) // deja el pedido como NO ASIGNADO y avisa al grupo
-		return fmt.Sprintf("Entendido 🙏. Si prefieres, puedo agendarte la entrega para más tarde: "+
-			"atendemos de %s a %s, dime a qué hora te viene bien y la dejo lista. "+
-			"Y si no, aquí estoy cuando me necesites 😊", a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin), true
+		// EL MENSAJE DICE LO QUE DE VERDAD PASÓ. El 15/09 QA pulsó "Cancelar" y el bot contestó
+		// "Entendido 🙏" a secas: sonaba a cancelado, pero el pedido había quedado en la cola de
+		// No asignados, donde el equipo lo llama para ofrecérselo. Dos horas y media después
+		// seguía ahí. Llamar a alguien que cree haber cancelado es peor que no llamarlo.
+		respuesta := fmt.Sprintf("Listo, ya no te busco repartidor 🙏. Dejé tu pedido anotado por si "+
+			"quieres retomarlo, y si prefieres puedo agendarte la entrega para más tarde: atendemos "+
+			"de %s a %s, dime a qué hora te viene bien. Y si ya no lo necesitas, aquí estoy cuando "+
+			"me busques 😊", a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
+		// El turno queda en el HISTORIAL. Sin esto el modelo no se entera de que el cliente
+		// canceló la espera: el 15/09, dos horas después, le volvió a ofrecer esperar o programar
+		// un pedido que ya no estaba en curso, porque para él ese turno nunca ocurrió.
+		a.store.AppendUser(from, texto)
+		a.store.AppendModel(from, respuesta)
+		return respuesta, true
+
+	case respuesta == "programar" || respuesta == "programar entrega":
+		// Antes esto se dejaba al modelo porque hacía falta que el cliente ESCRIBIERA una hora.
+		// Ahora se le ofrecen las horas disponibles como botones (calculadas en código, ver
+		// horasmenu.go), así que el cliente solo toca. Si no hay horas que ofrecer, cae al
+		// modelo como siempre.
+		log.Printf("[menu-espera] %s eligió programar; se le ofrecen horas", from)
+		if reply, manejado := a.OfrecerHorasParaProgramar(from); manejado {
+			return reply, true
+		}
+		return "", false
 	}
 
-	// "Programar", una pregunta, o cualquier otra cosa: la atiende el modelo.
+	// Una pregunta, o cualquier otra cosa: la atiende el modelo.
 	return "", false
 }
 
-// ResponderCalificacion registra la calificación del repartidor cuando el cliente responde con
-// un número del 1 al 5 y nada más. Si escribe algo más ("5 muy amable", "le pongo 4 pero llegó
-// tarde"), se deja al modelo: ahí hay un comentario que vale la pena guardar.
+// BotonesCalificacion son las cinco notas como botones tappables.
+//
+// Se le pedía al cliente ESCRIBIR un número del 1 al 5: abrir el teclado para elegir entre cinco
+// valores fijos, que es el caso de libro para un menú. Y es el mensaje que más clientes reciben
+// —uno por cada entrega—, así que cada paso de más son calificaciones que no llegan.
+//
+// El texto incluye el número además de las estrellas: WhatsApp devuelve el título EXACTO del
+// botón, así que el número es lo que hace la respuesta inequívoca al interpretarla.
+func BotonesCalificacion() []string {
+	return []string{"⭐⭐⭐⭐⭐ 5", "⭐⭐⭐⭐ 4", "⭐⭐⭐ 3", "⭐⭐ 2", "⭐ 1"}
+}
+
+// estrellasDeRespuesta saca la nota (1-5) de lo que respondió el cliente, sea el número escrito
+// ("4") o el título del botón ("⭐⭐⭐⭐ 4"). Devuelve 0 si no es una calificación.
+//
+// Se acepta escrito Y tappado a propósito: el menú puede no salir (WhatsApp falla, el cliente usa
+// un cliente viejo) y en ese caso el respaldo le pide escribir el número. Las dos formas tienen
+// que funcionar siempre.
+func estrellasDeRespuesta(texto string) int {
+	t := strings.TrimSpace(texto)
+	// Botón: el título termina en el número, tras las estrellas.
+	if strings.HasPrefix(t, "⭐") {
+		t = strings.TrimSpace(strings.ReplaceAll(t, "⭐", ""))
+	}
+	n, err := strconv.Atoi(t)
+	if err != nil || n < 1 || n > 5 {
+		return 0
+	}
+	return n
+}
+
+// ResponderCalificacion registra la calificación del repartidor cuando el cliente toca un botón de
+// estrellas o responde con un número del 1 al 5 y nada más. Si escribe algo más ("5 muy amable",
+// "le pongo 4 pero llegó tarde"), se deja al modelo: ahí hay un comentario que vale la pena guardar.
 func (a *Agent) ResponderCalificacion(from, texto string) (string, bool) {
 	rating, hay := a.store.GetPendingRating(from)
 	if !hay || rating.PedidoID <= 0 {
 		return "", false
 	}
-	n, err := strconv.Atoi(strings.TrimSpace(texto))
-	if err != nil || n < 1 || n > 5 {
+	n := estrellasDeRespuesta(texto)
+	if n == 0 {
 		return "", false
 	}
 	// Si el cliente ya eligió color y le acabamos de preguntar CUÁNTOS, ese "2" es la cantidad

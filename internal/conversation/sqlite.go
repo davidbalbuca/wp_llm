@@ -270,6 +270,53 @@ CREATE TABLE IF NOT EXISTS pedido_en_curso (
     hora       TEXT    NOT NULL DEFAULT '',
     flujo      TEXT    NOT NULL DEFAULT 'inmediato',
     updated_at INTEGER NOT NULL
+);
+
+-- Respuesta del cliente a las políticas de protección de datos, por TELÉFONO: se le pregunta
+-- antes de pedirle la cédula, así que el número es la única llave que existe en ese momento.
+-- El registro definitivo va al backend por cédula (ProteccionDatos).
+--
+-- DURABLE, no en memoria: es la prueba de que dio o negó su permiso. Un reinicio del bot no
+-- puede borrar un consentimiento legal ni hacer que se le vuelva a preguntar a quien ya
+-- respondió. Por lo mismo NO la toca ClearHistory ni el cierre de ciclo.
+CREATE TABLE IF NOT EXISTS consentimiento_pdp (
+    phone        TEXT    PRIMARY KEY,
+    acepta       INTEGER NOT NULL,          -- 1 aceptó, 0 se negó
+    fecha        INTEGER NOT NULL,          -- cuándo respondió (parte del registro legal)
+    sincronizado INTEGER NOT NULL DEFAULT 0 -- ya se registró en el backend por cédula
+);
+
+-- A quién se le mandó el menú y todavía no responde. Tabla SEPARADA de la anterior, no una
+-- columna "acepta = NULL": si un NULL se leyera como 0, el cliente quedaría marcado como que
+-- NEGÓ el permiso sin haber dicho nada, y bloqueado para siempre. Ese error no puede existir.
+--
+-- Durable porque el bot puede reiniciarse entre el menú y el "Sí": sin esto, su respuesta se
+-- iría al modelo en vez de resolverse en código.
+CREATE TABLE IF NOT EXISTS consentimiento_pendiente (
+    phone      TEXT PRIMARY KEY,
+    created_at INTEGER NOT NULL
+);
+
+-- Tarjeta de estado del cliente en el grupo de Telegram: UN mensaje que se va editando
+-- ("Escribió → Pidió gas → Registrado #942 → Entregado ✅") en vez de cuatro avisos sueltos.
+--
+-- Durable porque para EDITAR un mensaje de Telegram hace falta su message_id: si se perdiera al
+-- reiniciar, el bot abriría una tarjeta nueva a mitad del pedido y el grupo vería dos.
+-- A quién se le mandó el menú de horas y todavía no elige.
+CREATE TABLE IF NOT EXISTS eligiendo_hora (
+    phone      TEXT PRIMARY KEY,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tarjeta_estado (
+    phone      TEXT    PRIMARY KEY,
+    message_id INTEGER NOT NULL DEFAULT 0,
+    thread_id  INTEGER NOT NULL DEFAULT 0,
+    etapa      INTEGER NOT NULL DEFAULT 0,
+    detalle    TEXT    NOT NULL DEFAULT '',
+    pedido_id  INTEGER NOT NULL DEFAULT 0,
+    error      TEXT    NOT NULL DEFAULT '',
+    updated_at INTEGER NOT NULL
 );`
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
@@ -1162,6 +1209,148 @@ func (s *sqliteStore) GetPendingGuardarUbicacion(phone string) (PendingGuardarUb
 		return PendingGuardarUbicacion{}, false
 	}
 	return v.(PendingGuardarUbicacion), true
+}
+
+// --- Consentimiento de protección de datos (durable; specs/consentimiento-proteccion-datos.md) ---
+
+func (s *sqliteStore) SetConsentimiento(phone string, c Consentimiento) {
+	if c.Fecha.IsZero() {
+		c.Fecha = time.Now()
+	}
+	acepta, sincronizado := 0, 0
+	if c.Acepta {
+		acepta = 1
+	}
+	if c.Sincronizado {
+		sincronizado = 1
+	}
+	if _, err := s.db.Exec(`
+        INSERT INTO consentimiento_pdp(phone, acepta, fecha, sincronizado)
+        VALUES(?, ?, ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET
+            acepta=excluded.acepta,
+            fecha=excluded.fecha,
+            sincronizado=excluded.sincronizado`,
+		phone, acepta, c.Fecha.Unix(), sincronizado); err != nil {
+		log.Printf("[sqlite] SetConsentimiento %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) GetConsentimiento(phone string) (Consentimiento, bool) {
+	var acepta, fecha, sincronizado int64
+	err := s.db.QueryRow(
+		`SELECT acepta, fecha, sincronizado FROM consentimiento_pdp WHERE phone = ?`,
+		phone).Scan(&acepta, &fecha, &sincronizado)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("[sqlite] GetConsentimiento %s: %v", phone, err)
+		}
+		// Ante un error de lectura se devuelve "no ha respondido", que hace que se le pregunte
+		// otra vez. Es la única falla segura: preguntar de más molesta, pero dar por consentido
+		// a quien no lo está —o por negado a quien sí aceptó— es el error que no se puede cometer.
+		return Consentimiento{}, false
+	}
+	return Consentimiento{
+		Acepta:       acepta == 1,
+		Fecha:        time.Unix(fecha, 0),
+		Sincronizado: sincronizado == 1,
+	}, true
+}
+
+func (s *sqliteStore) SetConsentimientoPendiente(phone string) {
+	if _, err := s.db.Exec(`
+        INSERT INTO consentimiento_pendiente(phone, created_at) VALUES(?, ?)
+        ON CONFLICT(phone) DO UPDATE SET created_at=excluded.created_at`,
+		phone, time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] SetConsentimientoPendiente %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) ConsentimientoPendiente(phone string) bool {
+	var uno int
+	err := s.db.QueryRow(
+		`SELECT 1 FROM consentimiento_pendiente WHERE phone = ?`, phone).Scan(&uno)
+	if err != nil && err != sql.ErrNoRows {
+		log.Printf("[sqlite] ConsentimientoPendiente %s: %v", phone, err)
+	}
+	return err == nil
+}
+
+func (s *sqliteStore) ClearConsentimientoPendiente(phone string) {
+	if _, err := s.db.Exec(
+		`DELETE FROM consentimiento_pendiente WHERE phone = ?`, phone); err != nil {
+		log.Printf("[sqlite] ClearConsentimientoPendiente %s: %v", phone, err)
+	}
+}
+
+// --- Tarjeta de estado en Telegram ---
+
+func (s *sqliteStore) GetTarjetaEstado(phone string) (TarjetaEstado, bool) {
+	var t TarjetaEstado
+	err := s.db.QueryRow(
+		`SELECT message_id, thread_id, etapa, detalle, pedido_id, error
+           FROM tarjeta_estado WHERE phone = ?`, phone).
+		Scan(&t.MessageID, &t.ThreadID, &t.Etapa, &t.Detalle, &t.PedidoID, &t.Error)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("[sqlite] GetTarjetaEstado %s: %v", phone, err)
+		}
+		return TarjetaEstado{}, false
+	}
+	return t, true
+}
+
+func (s *sqliteStore) SetTarjetaEstado(phone string, t TarjetaEstado) {
+	if _, err := s.db.Exec(`
+        INSERT INTO tarjeta_estado(phone, message_id, thread_id, etapa, detalle, pedido_id, error, updated_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET
+            message_id=excluded.message_id,
+            thread_id=excluded.thread_id,
+            etapa=excluded.etapa,
+            detalle=excluded.detalle,
+            pedido_id=excluded.pedido_id,
+            error=excluded.error,
+            updated_at=excluded.updated_at`,
+		phone, t.MessageID, t.ThreadID, t.Etapa, t.Detalle, t.PedidoID, t.Error,
+		time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] SetTarjetaEstado %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) ClearTarjetaEstado(phone string) {
+	if _, err := s.db.Exec(`DELETE FROM tarjeta_estado WHERE phone = ?`, phone); err != nil {
+		log.Printf("[sqlite] ClearTarjetaEstado %s: %v", phone, err)
+	}
+}
+
+// --- Menú de horas para programar ---
+//
+// Durable: entre que se le manda el menú y el cliente toca una hora puede pasar rato (o un
+// reinicio del bot). Si se perdiera, su elección se iría al modelo en vez de resolverse aquí.
+
+func (s *sqliteStore) SetEligiendoHora(phone string) {
+	if _, err := s.db.Exec(`
+        INSERT INTO eligiendo_hora(phone, created_at) VALUES(?, ?)
+        ON CONFLICT(phone) DO UPDATE SET created_at=excluded.created_at`,
+		phone, time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] SetEligiendoHora %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) EligiendoHora(phone string) bool {
+	var uno int
+	err := s.db.QueryRow(`SELECT 1 FROM eligiendo_hora WHERE phone = ?`, phone).Scan(&uno)
+	if err != nil && err != sql.ErrNoRows {
+		log.Printf("[sqlite] EligiendoHora %s: %v", phone, err)
+	}
+	return err == nil
+}
+
+func (s *sqliteStore) ClearEligiendoHora(phone string) {
+	if _, err := s.db.Exec(`DELETE FROM eligiendo_hora WHERE phone = ?`, phone); err != nil {
+		log.Printf("[sqlite] ClearEligiendoHora %s: %v", phone, err)
+	}
 }
 
 func (s *sqliteStore) ClearPendingGuardarUbicacion(phone string) {

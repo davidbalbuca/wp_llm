@@ -83,6 +83,24 @@ type Agent struct {
 	// observable (atómica: se lee desde otra goroutine) para verificar en tests que aceptar
 	// "Esperar" REALMENTE arranca la búsqueda y no solo se lo dice al cliente.
 	esperasArrancadas atomic.Int64
+	// enviarMenu es quien manda el menú interactivo. En producción es nil y se usa
+	// whatsapp.SendMenu (ver mandarMenu); los tests lo sustituyen para LEER el cuerpo que le
+	// llega al cliente.
+	//
+	// Hace falta porque varios mensajes críticos son menús, y lo que importa no es lo que la
+	// función devuelve sino el texto que el cliente ve: un test que solo mire el valor de retorno
+	// pasa aunque el menú salga con otra cosa. Pasó con la dirección, que mostraba la calle sin
+	// el nombre que el cliente le había puesto.
+	enviarMenu func(from, cuerpo string, opciones []string) error
+}
+
+// mandarMenu envía un menú interactivo por WhatsApp. Único camino: así los tests pueden leer el
+// cuerpo que se le manda al cliente sustituyendo a.enviarMenu.
+func (a *Agent) mandarMenu(from, cuerpo string, opciones []string) error {
+	if a.enviarMenu != nil {
+		return a.enviarMenu(from, cuerpo, opciones)
+	}
+	return whatsapp.SendMenu(a.cfg, from, cuerpo, opciones)
 }
 
 // turno agrupa el estado de UN mensaje de UN cliente: si se envió menú, qué pasó con el
@@ -403,7 +421,7 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 				mensaje = "Elige una opción 👇"
 			}
 			if len(opciones) >= 2 && len(opciones) <= 10 {
-				if err := whatsapp.SendMenu(a.cfg, from, mensaje, opciones); err == nil {
+				if err := a.mandarMenu(from, mensaje, opciones); err == nil {
 					t.menuSent = true
 					t.lastMenuText = mensaje + "\n• " + strings.Join(opciones, "\n• ")
 				}
@@ -498,6 +516,29 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// donde sí atendemos) y lo perdió. La cobertura se decide por coordenadas, y esa negativa
 	// la da fueraDeCobertura antes de que el modelo conteste; ver cobertura.go.
 	reply = a.revisarNegativaDeCobertura(from, reply)
+
+	// Y la otra cara del mismo candado: tampoco puede PROMETER cobertura por un nombre. El 15/09
+	// dio por cubiertos Paute, Sígsig, Gualaceo y Santa Isabel —cuatro cantones de Azuay donde no
+	// operamos— y pasó directo a ofrecer el pedido, sin llegar a consultar la geocerca.
+	reply = a.revisarCoberturaAfirmada(from, reply)
+
+	// Y que no le pida el pin a quien acaba de mandarlo. El 15/09, con tres ubicaciones seguidas,
+	// le contestó "compárteme tu ubicación" a una que ya tenía guardada: el pin no se perdió, el
+	// modelo arrastró el turno anterior. Hacerle repetir algo que ya hizo le hace dudar de si el
+	// bot lo escucha, justo cuando iba a pedir.
+	reply = a.revisarPedidoDeUbicacionRedundante(from, reply)
+
+	// Candado de PROTECCIÓN DE DATOS: nadie da su cédula sin haber autorizado antes que la
+	// tratemos. El modelo decide cuándo pedirla (behavior.md §8), así que no hay un estado
+	// previo sobre el que interceptar: se mira la respuesta ya escrita y, si le está pidiendo
+	// la cédula a alguien que no dio permiso, se reemplaza por el menú de consentimiento.
+	// Ver consentimiento.go: este candado es la UX; la garantía es la compuerta de las tools.
+	reply = a.revisarPeticionDeCedula(t, from, reply)
+
+	// Candado del MENÚ: que existan botones no sirve de nada si el modelo decide no mandarlos.
+	// Si preguntó el color o la cantidad en texto plano, el menú lo manda el CÓDIGO —con el
+	// mismo texto del modelo como cuerpo, para no perderle el tono—. Ver menuseguro.go.
+	reply = a.revisarMenuDeProducto(t, from, reply)
 
 	// Turno del modelo para el HISTORIAL. Si en este turno se envió un menú interactivo,
 	// guardamos la PREGUNTA del menú (cuerpo + opciones), NO un texto vacío ni el fallback:
@@ -659,6 +700,18 @@ func (a *Agent) verificarCliente(from string, args map[string]any) string {
 	if identificacion == "" {
 		return "Falta la cédula del cliente. Pídesela para verificar si ya está registrado."
 	}
+	// COMPUERTA de protección de datos: si el cliente negó el permiso, su cédula no se consulta
+	// ni se guarda. Decide por ESTADO, no por el texto de la respuesta: es la garantía real de
+	// que un dato personal no entra cuando su dueño dijo que no. Ver consentimiento.go.
+	if a.consentimientoNiega(from) {
+		log.Printf("[consentimiento] %s: se bloquea verificar_cliente, el cliente negó el permiso", from)
+		return "El cliente NO autorizó el tratamiento de sus datos. NO uses su cédula, NO le pidas " +
+			"más datos personales y NO registres ningún pedido. Explícale con amabilidad que sin esa " +
+			"autorización no puedes tomar su pedido por aquí."
+	}
+	// El consentimiento se capturó por teléfono antes de tener la cédula; ahora que la hay, se
+	// consolida en el backend, que es donde el negocio lo necesita.
+	a.sincronizarConsentimiento(from, identificacion)
 	info, err := a.gr.ClientExists(identificacion)
 	if err != nil {
 		// Fallo técnico: no bloqueamos el pedido, seguimos el registro normal.
@@ -702,7 +755,7 @@ func (a *Agent) mostrarMenu(t *turno, from string, args map[string]any) string {
 	if len(opciones) > 10 {
 		return "El menú admite máximo 10 opciones. Muéstrale las principales o pídeselo por texto."
 	}
-	if err := whatsapp.SendMenu(a.cfg, from, cuerpo, opciones); err != nil {
+	if err := a.mandarMenu(from, cuerpo, opciones); err != nil {
 		return "No pude enviar el menú (motivo: " + err.Error() + "). Preséntale las opciones por texto normal."
 	}
 	t.menuSent = true
@@ -744,6 +797,11 @@ func (a *Agent) calificarConductor(from string, args map[string]any) string {
 		return "No se pudo registrar la calificación (motivo: " + err.Error() + "). Agradécele igualmente por su tiempo."
 	}
 	a.store.ClearPendingRating(from)
+	// FIN DEL CICLO: entregado y calificado. La próxima conversación arranca limpia, para que un
+	// "hola" de mañana no venga con el color, la cantidad y la dirección de este pedido pegados
+	// detrás (ver cierreciclo.go). La despedida que el modelo redacte a continuación sí queda:
+	// se escribe en el historial al cerrar el turno, ya sobre la memoria vacía.
+	a.cerrarCicloDeConversacion(from, "pedido entregado y calificado")
 	return fmt.Sprintf("¡Calificación de %d/5 registrada con éxito para el repartidor %s! Agradécele calurosamente "+
 		"al cliente por su tiempo y su preferencia, y despídete de forma cordial.", estrellas, rating.Conductor)
 }

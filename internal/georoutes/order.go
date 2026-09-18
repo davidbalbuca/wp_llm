@@ -3,6 +3,8 @@ package georoutes
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -116,6 +118,64 @@ func (c *Client) RatingOrder(jwt string, idpedido, calificacion int, observacion
 		"observacion":  observacion,
 	}, jwt)
 	return err
+}
+
+// EstadoEnCamino es el id del estado EN CAMINO en el backend (georoutes/enums.py). Es el único
+// que cancelOrder acepta: un pedido entregado o ya cancelado lo rechaza.
+const EstadoEnCamino = 1
+
+// OrderSummary es un pedido del historial del cliente. Solo se declara lo que el bot necesita
+// para decidir; el resto del payload del backend se ignora.
+//
+// OJO: estado_pedido viene como NOMBRE ("En camino"), no como id. Por eso el filtro va en la
+// consulta (?estado=1) y no comparando cadenas aquí.
+type OrderSummary struct {
+	IDPedido     int    `json:"idpedido"`
+	Alias        string `json:"alias"`
+	Direccion    string `json:"direccion"`
+	Conductor    string `json:"conductor"`
+	EstadoPedido string `json:"estado_pedido"`
+	Fecha        string `json:"fecha"`
+}
+
+// GetOrderHistory devuelve los últimos pedidos del cliente (GET /getOrdersHistoryClient/), el
+// mismo endpoint que usa la app móvil para "mis pedidos". Con estado != nil filtra por ese id
+// (ver EstadoEnCamino); con nil los trae todos. El backend ya valida que sean SUYOS.
+func (c *Client) GetOrderHistory(jwt string, estado *int) ([]OrderSummary, error) {
+	path := "/getOrdersHistoryClient/"
+	if estado != nil {
+		path += "?estado=" + strconv.Itoa(*estado)
+	}
+	env, code, err := c.doGet(path, jwt)
+	if err != nil {
+		return nil, err
+	}
+	if code != http.StatusOK || env.Codigo != 0 {
+		return nil, fmt.Errorf("historial de pedidos: %s (HTTP %d)", env.Mensaje, code)
+	}
+	var pedidos []OrderSummary
+	if err := json.Unmarshal(env.Resultado, &pedidos); err != nil {
+		return nil, fmt.Errorf("historial de pedidos ilegible: %w", err)
+	}
+	return pedidos, nil
+}
+
+// PedidoVigente devuelve el pedido EN CAMINO del cliente, si tiene alguno. Es la pregunta que
+// hay que hacerle al backend antes de cancelar: ¿hay algo que cancelar de verdad?
+//
+// Existe porque el bot no puede fiarse solo de lo que recuerda: el cliente pudo pedir desde la
+// app, o el bot pudo perder su estado local. El backend ordena por fecha descendente, así que el
+// primero es el más reciente.
+func (c *Client) PedidoVigente(jwt string) (OrderSummary, bool, error) {
+	estado := EstadoEnCamino
+	pedidos, err := c.GetOrderHistory(jwt, &estado)
+	if err != nil {
+		return OrderSummary{}, false, err
+	}
+	if len(pedidos) == 0 {
+		return OrderSummary{}, false, nil
+	}
+	return pedidos[0], true, nil
 }
 
 // CancelOrder cancela el pedido del cliente (POST /cancelOrder/) con su JWT. El backend lo marca

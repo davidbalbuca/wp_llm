@@ -141,6 +141,39 @@ func (c *Client) ClientExists(identificacion string) (*ClientInfo, error) {
 	return &info, nil
 }
 
+// AceptarProteccionDatos registra en el backend que esta cédula aceptó las políticas de
+// protección de datos (POST /acceptsPDP/, el mismo que usa la app móvil).
+//
+// El bot captura el consentimiento por TELÉFONO, antes de tener la cédula; esta llamada lo
+// consolida por CÉDULA, que es lo que identifica a una persona. Ver
+// specs/consentimiento-proteccion-datos.md.
+//
+// Un "ya fue aceptado" del backend se trata como ÉXITO, no como error: el endpoint lanza
+// excepción si la cédula ya tenía el consentimiento registrado (user_selectors.py:375), y para
+// nosotros eso es precisamente el estado que queríamos dejar. Tratarlo como fallo haría que el
+// bot reintentara para siempre algo que ya está hecho.
+//
+// LIMITACIÓN CONOCIDA: hoy el backend solo sabe registrar la ACEPTACIÓN (fuerza acepta=True).
+// Una negativa no se puede registrar ahí, así que vive solo en el bot. Cerrarlo depende de un
+// cambio acordado con David (regla #7): ver la fase 2 de la spec.
+func (c *Client) AceptarProteccionDatos(identificacion string) error {
+	_, err := c.post("/acceptsPDP/", map[string]any{
+		"identificacion": identificacion,
+		"dispositivo":    botDevice,
+	}, "")
+	if err != nil && !yaEstabaAceptado(err) {
+		return err
+	}
+	return nil
+}
+
+// yaEstabaAceptado reconoce el error del backend que en realidad significa "ya estaba registrado".
+// Se compara por el texto porque el envoltorio de la API no trae un código distinguible: todos
+// los fallos llegan con codigo=ERROR y el detalle solo en el mensaje.
+func yaEstabaAceptado(err error) bool {
+	return strings.Contains(strings.ToLower(err.Error()), "ya fue aceptado")
+}
+
 // Account son las credenciales que el backend genera y devuelve para un cliente.
 // El bot las guarda por teléfono y las reutiliza para hacer login.
 type Account struct {

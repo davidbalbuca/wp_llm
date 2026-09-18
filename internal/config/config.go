@@ -66,7 +66,7 @@ type Config struct {
 	// pedidos y no hay forma de probarlo sin clientes reales, asi que esto se enciende
 	// mirando los logs y se apaga en segundos si hace falta.
 	UsarBusquedaBackend bool
-	CierreVentanaMax  time.Duration
+	CierreVentanaMax    time.Duration
 	// Telegram: alertas de operación (test productivo). Sin token o chat queda APAGADO y el bot
 	// sigue igual. TelegramAvisarInicio permite dejar solo errores (los verdes son ruidosos).
 	TelegramBotToken     string

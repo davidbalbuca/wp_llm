@@ -16,6 +16,7 @@ import (
 
 	"wp-llm-gas/internal/conversation"
 	"wp-llm-gas/internal/georoutes"
+	"wp-llm-gas/internal/notify"
 )
 
 // marcaHoraria reconoce que el cliente está hablando de una HORA, no de una cantidad:
@@ -87,6 +88,31 @@ func (a *Agent) anotarDelMensaje(from, texto string) {
 	}
 	log.Printf("[encurso] %s: color=%q cantidad=%d items=%v hora=%q flujo=%s", from, p.Color, p.Cantidad, p.Items, p.Hora, p.Flujo)
 	a.store.SetPedidoEnCurso(from, p)
+	a.avisarQuePidioGas(from, p)
+}
+
+// avisarQuePidioGas mueve la tarjeta del grupo de Telegram a "Pidió gas".
+//
+// EL UMBRAL ES COLOR **Y** CANTIDAD, no cualquier mención. Avisar antes llenaría el grupo de gente
+// que solo preguntó el precio y se fue: con las dos cosas elegidas la intención es real. Es el
+// mismo criterio con el que el prompt considera que la ficha está completa.
+//
+// La tarjeta no retrocede ni se repite (ver TarjetaEstado.Avanza), así que llamar a esto en cada
+// mensaje que cambia la ficha es inofensivo: solo el primero que cumple el umbral pinta algo.
+func (a *Agent) avisarQuePidioGas(from string, p conversation.PedidoEnCurso) {
+	lineas := p.Lineas()
+	if len(lineas) == 0 {
+		return
+	}
+	// Todas las líneas tienen que tener color y cantidad: un pedido a medias todavía se está
+	// armando.
+	for _, l := range lineas {
+		if strings.TrimSpace(l.Color) == "" || l.Cantidad < 1 {
+			return
+		}
+	}
+	notify.Default.EstadoCliente(from, a.nombreDe(from), conversation.EtapaPidioGas,
+		describeItems(lineas), 0)
 }
 
 // coloresDelMensaje devuelve los colores del catálogo mencionados en el texto (en su orden de

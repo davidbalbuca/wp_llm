@@ -20,6 +20,8 @@ package agent
 import (
 	"log"
 	"strings"
+
+	"wp-llm-gas/internal/notify"
 )
 
 // BotonCancelarPedido es el texto del botón de cancelar en los menús. Vive aquí para que el
@@ -83,42 +85,62 @@ func pideCancelarPedido(texto string) bool {
 // Solo actúa si el cliente TIENE un pedido vivo: si no lo tiene, "cancelar" puede referirse a
 // otra cosa (una programación, un pedido ya entregado, la conversación misma) y eso es
 // conversación — el modelo la atiende mejor.
+// cancelarPedidoVivoSiLoHay cancela el pedido EN CAMINO del cliente, si tiene uno —lo tenga el
+// bot anotado o no—. Devuelve el mensaje para el cliente y si había algo que cancelar.
+//
+// Se usa desde los sitios donde "cancelar" puede significar dos cosas distintas (el menú de
+// espera, sobre todo): primero se atiende el pedido real, que es lo que el cliente quiere parar.
+func (a *Agent) cancelarPedidoVivoSiLoHay(from string) (string, bool) {
+	if _, hay := a.store.GetActivePedido(from); !hay {
+		account, ok := a.store.GetAccount(from)
+		if !ok || account.Username == "" {
+			return "", false
+		}
+		id, hayEnBackend := a.pedidoVigenteEnBackend(from, account)
+		if !hayEnBackend {
+			return "", false
+		}
+		a.store.SetActivePedido(from, id)
+	}
+
+	t := &turno{}
+	salida := a.runTool(t, from, "cancelar_pedido", map[string]any{})
+	// La verdad es el ESTADO, no el texto de la herramienta.
+	if _, sigue := a.store.GetActivePedido(from); sigue {
+		log.Printf("[cancelacion] %s: el backend NO canceló el pedido en camino; se avisa al equipo", from)
+		a.crearTicketSoporte(from, "No se pudo cancelar el pedido",
+			"El cliente pidió cancelar y el backend no lo canceló. El pedido SIGUE VIVO; hay que "+
+				"cancelarlo a mano. Detalle: "+salida)
+		return "Disculpa 🙏, tuve un problema al cancelar tu pedido. Ya avisé al equipo para que lo " +
+			"cancele enseguida. Lamento la molestia.", true
+	}
+	// El ciclo terminó: la próxima conversación arranca limpia, sin arrastrar el color, la
+	// cantidad ni la dirección del pedido que se acaba de cancelar (ver cierreciclo.go).
+	a.cerrarCicloDeConversacion(from, "el cliente canceló su pedido")
+	// Y la tarjeta del grupo queda en su final alternativo. Se avisa aunque no sea una venta:
+	// que el equipo vea las cancelaciones es justamente de lo que se aprende.
+	notify.Default.CerrarTarjeta(from, a.nombreDe(from), true)
+	return "Listo, cancelé tu pedido 🙏. Cuando necesites tu gas, aquí estoy para ayudarte 😊", true
+}
+
 func (a *Agent) ResponderCancelacion(from, texto string) (string, bool) {
 	if normalizarRespuesta(texto) != normalizarRespuesta(BotonCancelarPedido) && !pideCancelarPedido(texto) {
 		return "", false
 	}
-	if _, hay := a.store.GetActivePedido(from); !hay {
-		// Sin pedido activo no hay nada que cancelar aquí. Puede ser una programación o una
-		// confusión: que el modelo se lo explique con amabilidad.
+	log.Printf("[cancelacion] %s pidió cancelar; se cancela en código sin pasar por el modelo", from)
+	// cancelarPedidoVivoSiLoHay hace el trabajo: busca el pedido (en memoria o preguntándole al
+	// backend), lo cancela por runTool y verifica por ESTADO, no por el texto de la herramienta.
+	// Devuelve hubo=false cuando de verdad no hay nada que cancelar: puede ser una programación o
+	// una confusión, y eso lo explica mejor el modelo.
+	msg, hubo := a.cancelarPedidoVivoSiLoHay(from)
+	if !hubo {
 		return "", false
 	}
-
-	log.Printf("[cancelacion] %s pidió cancelar; se cancela en código sin pasar por el modelo", from)
-	// Por runTool, igual que el resto de interceptores: es quien marca el turno y crea el
-	// ticket si hace falta. cancelarPedido limpia el pedido activo y la ficha en todos los
-	// caminos en que el pedido queda muerto (incluido "ya estaba cancelado").
-	t := &turno{}
-	salida := a.runTool(t, from, "cancelar_pedido", map[string]any{})
 
 	// El turno queda en el HISTORIAL (igual que ConfirmarProgramado y repetir-pedido): sin esto
 	// el modelo no se entera de que el cliente canceló y en el siguiente mensaje contesta como
 	// si el pedido siguiera vivo.
 	a.store.AppendUser(from, texto)
-
-	// La verdad es el ESTADO, no el texto que devolvió la herramienta: si el pedido activo
-	// sigue ahí, la cancelación no ocurrió por más que la salida suene bien.
-	if _, sigue := a.store.GetActivePedido(from); sigue {
-		log.Printf("[cancelacion] %s: el backend NO canceló el pedido; se avisa al equipo", from)
-		a.crearTicketSoporte(from, "No se pudo cancelar el pedido",
-			"El cliente pidió cancelar y el backend no lo canceló. El pedido SIGUE VIVO; hay que "+
-				"cancelarlo a mano. Detalle: "+salida)
-		msg := "Disculpa 🙏, tuve un problema al cancelar tu pedido. Ya avisé al equipo para que lo " +
-			"cancele enseguida. Lamento la molestia."
-		a.store.AppendModel(from, msg)
-		return msg, true
-	}
-
-	msg := "Listo, cancelé tu pedido 🙏. Cuando necesites tu gas, aquí estoy para ayudarte 😊"
 	a.store.AppendModel(from, msg)
 	return msg, true
 }

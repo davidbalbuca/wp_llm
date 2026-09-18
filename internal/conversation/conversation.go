@@ -9,6 +9,7 @@
 package conversation
 
 import (
+	"strings"
 	"time"
 
 	"google.golang.org/genai"
@@ -206,16 +207,45 @@ func (l LastOrder) ItemsDelPedido() []ItemPedido {
 	return []ItemPedido{{Color: l.Color, Cantidad: l.Cantidad}}
 }
 
-// Destino devuelve a dónde se entregó el pedido, en el texto que el cliente reconoce: su
-// nombre si lo puso ("Casa"), la calle si no, y "" si el pedido es anterior a esta función
-// (los pedidos viejos no guardaban ubicación). Con "" NO se menciona destino: el bot pide la
-// ubicación como siempre en vez de inventar a dónde va el gas.
+// Destino devuelve a dónde se entregó el pedido, en el texto que el cliente reconoce.
+//
+// Con nombre Y calle da las dos ("Casa (Av. Solano 123)"): el nombre solo no permite detectar que
+// guardó mal la ubicación, y la calle sola no le dice cuál de sus direcciones es. Antes devolvía
+// solo el alias cuando existía, así que el cliente confirmaba "a Casa" sin poder ver si esa "Casa"
+// apunta a donde él cree — y mandar el gas a otra casa es el error más caro del negocio.
+//
+// Devuelve "" si el pedido es anterior a esta función (los viejos no guardaban ubicación) o si lo
+// único que hay es el texto de respaldo con las coordenadas. Con "" NO se menciona destino: el bot
+// pide la ubicación como siempre, en vez de inventar a dónde va el gas.
 func (l LastOrder) Destino() string {
-	if l.Alias != "" {
-		return l.Alias
+	alias, calle := strings.TrimSpace(l.Alias), strings.TrimSpace(l.Direccion)
+	// 'WhatsApp' es el alias interno que pone el backend en cada pedido del bot, no un nombre que
+	// el cliente eligió: no se le puede decir "te lo envío otra vez a WhatsApp".
+	if strings.EqualFold(alias, AliasInternoWhatsApp) {
+		alias = ""
 	}
-	return l.Direccion
+	// Y el respaldo que escribe el backend cuando solo tuvo el pin son las coordenadas
+	// disfrazadas de dirección: mostrárselas es peor que no decirle nada.
+	if strings.HasPrefix(calle, PrefijoDireccionRespaldo) {
+		calle = ""
+	}
+	switch {
+	case alias != "" && calle != "":
+		return alias + " (" + calle + ")"
+	case alias != "":
+		return alias
+	default:
+		return calle
+	}
 }
+
+// AliasInternoWhatsApp es el nombre que el backend le pone a la dirección que el bot crea en cada
+// pedido. No lo eligió el cliente, así que nunca se le muestra como destino.
+const AliasInternoWhatsApp = "WhatsApp"
+
+// PrefijoDireccionRespaldo es el comienzo del texto que el backend guarda cuando no pudo resolver
+// una calle y solo tenía el pin ("Ubicación compartida por WhatsApp (-2.9, -79.0)").
+const PrefijoDireccionRespaldo = "Ubicación compartida"
 
 // PendingRating indica que un pedido del cliente acaba de ser ENTREGADO y el bot le pidió
 // calificar al conductor. Mientras exista, si el cliente manda una calificación (1-5), el
@@ -298,6 +328,30 @@ type PendingColorSwap struct {
 type PendingGuardarUbicacion struct {
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
+}
+
+// Consentimiento es la respuesta del cliente a las políticas de protección de datos.
+//
+// Se guarda por TELÉFONO porque se pide ANTES de tener la cédula: es la única llave disponible
+// en ese momento. El registro definitivo del backend va por cédula (ProteccionDatos), que es lo
+// que identifica a una persona; este es el puente entre los dos momentos.
+//
+// DURABLE a propósito, en tabla y no en memoria: es la prueba de que el cliente dio (o negó) su
+// permiso. Un reinicio del bot no puede borrar un consentimiento legal, ni volver a preguntarle
+// a quien ya respondió.
+type Consentimiento struct {
+	// Acepta es la respuesta: true aceptó, false se negó. Que el registro EXISTA es lo que
+	// significa "ya respondió"; este campo dice qué respondió.
+	Acepta bool `json:"acepta"`
+	// Fecha es cuándo respondió. Es parte del registro legal, no un dato de depuración.
+	Fecha time.Time `json:"fecha"`
+	// Sincronizado dice si la respuesta ya se registró en el backend por cédula. Mientras sea
+	// false, el consentimiento vive solo aquí y hay que reintentar el envío.
+	//
+	// Una negativa NUNCA se sincroniza: quien se niega no da su cédula, así que no hay llave con
+	// la que registrarla en el backend, y guardar el dato de quien negó el permiso para tratarlo
+	// sería justo lo contrario de lo que pidió.
+	Sincronizado bool `json:"sincronizado"`
 }
 
 // PedidoEnCurso es la ficha del pedido que se va armando EN LA CONVERSACIÓN, antes de
@@ -444,6 +498,26 @@ type Store interface {
 	GetPendingGuardarUbicacion(phone string) (PendingGuardarUbicacion, bool)
 	// ClearPendingGuardarUbicacion la elimina (respondió, o ya no aplica).
 	ClearPendingGuardarUbicacion(phone string)
+
+	// --- Consentimiento de protección de datos (durable; specs/consentimiento-proteccion-datos.md) ---
+	// SetConsentimiento guarda la respuesta del cliente a las políticas de datos.
+	SetConsentimiento(phone string, c Consentimiento)
+	// GetConsentimiento devuelve esa respuesta (ok=false si TODAVÍA NO ha respondido).
+	//
+	// Los tres estados son distintos y no se pueden confundir: no respondió (ok=false), aceptó
+	// (Acepta=true) y se negó (Acepta=false). Un bool solo no alcanza: "no ha respondido" y "dijo
+	// no" llevan a caminos opuestos —al primero hay que preguntarle, al segundo NO.
+	//
+	// NO lo borra ClearHistory ni el cierre de ciclo: la conversación arranca limpia, pero el
+	// consentimiento sobrevive para no volver a preguntarle a quien ya respondió.
+	GetConsentimiento(phone string) (Consentimiento, bool)
+	// SetConsentimientoPendiente marca que se le mandó el menú y se espera su respuesta.
+	SetConsentimientoPendiente(phone string)
+	// ConsentimientoPendiente dice si se le está esperando una respuesta al menú. Es lo que
+	// permite resolver los botones en código, sin que el modelo interprete el "sí".
+	ConsentimientoPendiente(phone string) bool
+	// ClearConsentimientoPendiente quita esa espera (respondió, o la conversación se cerró).
+	ClearConsentimientoPendiente(phone string)
 	// GetOpenTicket devuelve el ticket ABIERTO de ese cliente con ese mismo motivo, si existe.
 	// Sirve para no crear #20, #21 y #22 por el mismo problema: el segundo reporte se suma al
 	// primero en vez de abrir otro caso.
@@ -571,6 +645,68 @@ type Store interface {
 	// la primera vez de la sesión: si el último aviso fue hace menos de `ventana`, devuelve false.
 	// Así el grupo recibe un aviso por sesión y no uno por mensaje.
 	MarcarAvisoInicio(phone string, ventana time.Duration) bool
+
+	// --- Tarjeta de estado del cliente en Telegram (un mensaje que se va editando) ---
+	// GetTarjetaEstado devuelve el mensaje de estado vivo de ese cliente (ok=false si no hay).
+	GetTarjetaEstado(phone string) (TarjetaEstado, bool)
+	// SetTarjetaEstado guarda (o actualiza) la tarjeta de estado del cliente.
+	SetTarjetaEstado(phone string, t TarjetaEstado)
+	// ClearTarjetaEstado la olvida: la próxima conversación abre una tarjeta nueva en vez de
+	// seguir editando la del pedido anterior.
+	ClearTarjetaEstado(phone string)
+
+	// --- Menú de horas para programar la entrega ---
+	// SetEligiendoHora marca que se le mandó al cliente el menú de horas y se espera su elección.
+	SetEligiendoHora(phone string)
+	// EligiendoHora dice si está pendiente esa elección. Es lo que permite resolver el botón en
+	// código: sin el estado, una hora suelta en mitad de otra conversación se tomaría como la
+	// elección de una entrega.
+	EligiendoHora(phone string) bool
+	// ClearEligiendoHora quita esa espera (eligió, pidió otra hora, o el ciclo se cerró).
+	ClearEligiendoHora(phone string)
+}
+
+// Etapas de la tarjeta de estado, en el orden en que avanzan. El número importa: una etapa nunca
+// puede RETROCEDER (ver TarjetaEstado.Avanza), porque un aviso que va de "Entregado" a "Escribió"
+// haría dudar de todos los demás.
+const (
+	EtapaEscribio   = 1 // el cliente inició conversación
+	EtapaPidioGas   = 2 // ya eligió color y cantidad: la intención es real
+	EtapaRegistrado = 3 // el pedido existe en el backend
+	EtapaEntregado  = 4 // el backend avisó que se entregó
+	EtapaCancelado  = 5 // el cliente lo canceló (final alternativo, no un retroceso)
+)
+
+// TarjetaEstado es el mensaje ÚNICO por cliente que el grupo de Telegram ve avanzar:
+// "Escribió → Pidió gas → Registrado #942 → Entregado ✅".
+//
+// POR QUÉ UN MENSAJE QUE SE EDITA Y NO CUATRO MENSAJES NUEVOS. Cuatro avisos por cliente, por
+// muchos clientes, vuelven el grupo ilegible — y un grupo que nadie lee es PEOR que no tener
+// avisos, porque da falsa sensación de vigilancia. Un mensaje que avanza se entiende de un
+// vistazo y deja el historial del cliente en una sola línea de tiempo.
+type TarjetaEstado struct {
+	// MessageID es el mensaje de Telegram que se edita. 0 si todavía no se pudo crear.
+	MessageID int64 `json:"message_id"`
+	// ThreadID es el hilo del cliente donde vive la tarjeta.
+	ThreadID int64 `json:"thread_id"`
+	// Etapa es la última alcanzada (una de las constantes Etapa*).
+	Etapa int `json:"etapa"`
+	// Detalle es lo que se sabe del pedido para mostrarlo en la tarjeta ("2 x GAS 15KG BLANCO").
+	Detalle string `json:"detalle"`
+	// PedidoID es el pedido al que se refiere (0 si aún no hay).
+	PedidoID int `json:"pedido_id"`
+	// Error es el último problema que se le avisó al grupo sobre este cliente ("" si ninguno). No
+	// reemplaza la etapa: un pedido puede estar registrado Y haber tenido un fallo que alguien
+	// debe mirar.
+	Error string `json:"error"`
+}
+
+// Avanza dice si `nueva` es una etapa posterior a la actual. Sirve para no retroceder: los avisos
+// llegan de goroutines distintas (el webhook, el reintento de repartidor, el aviso de entrega del
+// backend) y pueden desordenarse. Una tarjeta que vuelve de "Entregado" a "Pidió gas" hace que el
+// grupo desconfíe de todas las demás.
+func (t TarjetaEstado) Avanza(nueva int) bool {
+	return nueva > t.Etapa
 }
 
 // turn es la forma serializable de un turno de conversación. Se usa para persistir

@@ -124,14 +124,23 @@ func lineasDeArgs(args map[string]any) []conversation.ItemPedido {
 // marca el pedido CANCELADO_CLIENTE, devuelve el stock al conductor y le avisa. Limpia el estado
 // del pedido activo y el historial para arrancar fresco.
 func (a *Agent) cancelarPedido(from string) string {
-	pedidoID, ok := a.store.GetActivePedido(from)
-	if !ok || pedidoID <= 0 {
-		return "El cliente no tiene un pedido activo para cancelar. Aclárale con amabilidad que no encuentras un " +
-			"pedido en curso a su nombre, y ofrécele hacer uno nuevo cuando quiera."
-	}
 	account, ok := a.store.GetAccount(from)
 	if !ok || account.Username == "" {
 		return "No encuentro la cuenta del cliente para cancelar el pedido. Discúlpate y dile que en un momento lo revisa el equipo."
+	}
+	pedidoID, ok := a.store.GetActivePedido(from)
+	if !ok || pedidoID <= 0 {
+		// Sin ID guardado NO se da por hecho que no hay nada: se le PREGUNTA AL BACKEND. El bot
+		// puede haber perdido su estado (reinicio, sesión nueva, pedido hecho desde la app) y el
+		// pedido seguir vivo. Decirle "no encuentro ningún pedido" a quien tiene un conductor en
+		// camino es el peor desenlace: se queda sin poder cancelar por este canal.
+		id, hay := a.pedidoVigenteEnBackend(from, account)
+		if !hay {
+			return "El cliente no tiene un pedido activo para cancelar. Aclárale con amabilidad que no encuentras un " +
+				"pedido en curso a su nombre, y ofrécele hacer uno nuevo cuando quiera."
+		}
+		log.Printf("[cancelar] %s: sin pedido activo en memoria, pero el backend tiene el #%d en camino", from, id)
+		pedidoID = id
 	}
 	// JWT fresco: el pedido pudo hacerse hace rato, re-autenticamos antes de cancelar.
 	tokens, err := a.gr.Login(account.Username, account.Password)
@@ -156,6 +165,29 @@ func (a *Agent) cancelarPedido(from string) string {
 	// El historial NO se borra: la memoria del chat dura la ventana de 24h.
 	return "Pedido cancelado con éxito. Confírmale al cliente con amabilidad que su pedido fue cancelado y que " +
 		"puede hacer uno nuevo cuando lo desee."
+}
+
+// pedidoVigenteEnBackend le pregunta al backend si el cliente tiene un pedido EN CAMINO, para
+// los casos en que el bot no lo tiene anotado: se reinició, la sesión se cerró por inactividad,
+// o el pedido se hizo desde la app móvil.
+//
+// Best-effort: si el backend no responde, devuelve false y el flujo sigue como antes. Nunca
+// rompe la cancelación por un fallo de consulta.
+func (a *Agent) pedidoVigenteEnBackend(from string, account conversation.Account) (int, bool) {
+	tokens, err := a.gr.Login(account.Username, account.Password)
+	if err != nil {
+		log.Printf("[cancelar] %s: no se pudo autenticar para buscar su pedido vigente: %v", from, err)
+		return 0, false
+	}
+	pedido, hay, err := a.gr.PedidoVigente(tokens.Access)
+	if err != nil {
+		log.Printf("[cancelar] %s: no se pudo consultar el pedido vigente: %v", from, err)
+		return 0, false
+	}
+	if !hay || pedido.IDPedido <= 0 {
+		return 0, false
+	}
+	return pedido.IDPedido, true
 }
 
 // esperarConductor arranca la espera de hasta 5 minutos: reintenta la asignación cada 30s y le
@@ -425,6 +457,18 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 		return "Faltan datos del cliente (cédula o nombre). Pídeselos antes de registrar el pedido."
 	}
 
+	// COMPUERTA de protección de datos. Va ANTES de persistir el perfil y antes de llamar al
+	// backend: es el último punto donde los datos del cliente todavía no se han guardado en
+	// ninguna parte. Si negó el permiso, aquí se detiene todo. Ver consentimiento.go.
+	if a.consentimientoNiega(from) {
+		log.Printf("[consentimiento] %s: se bloquea registrar_pedido, el cliente negó el permiso", from)
+		return "El cliente NO autorizó el tratamiento de sus datos: NO se registró el pedido y NO se " +
+			"guardó ningún dato suyo. Explícale con amabilidad que sin esa autorización no puedes " +
+			"tomarle el pedido por aquí, y ofrécele el teléfono de atención."
+	}
+	// Ya hay cédula: se consolida en el backend el consentimiento que se capturó por teléfono.
+	a.sincronizarConsentimiento(from, identificacion)
+
 	// Persistimos el perfil apenas tenemos cédula+nombre (sin correo: el bot no lo pide). Así,
 	// si el pedido falla, un cliente que ya dio sus datos no los repite en el próximo intento.
 	if _, ya := a.store.GetProfile(from); !ya {
@@ -598,6 +642,10 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 		// enlace válido; cuando muere (cancelado/entregado), se va con él. Es lo que permite
 		// detectar después un enlace de otro pedido en la respuesta del modelo.
 		a.store.SetSeguimientoActivo(from, a.urlSeguimiento(resultado.SeguimientoToken))
+		// La tarjeta del grupo avanza a "Registrado", con el número de pedido: es el dato con el
+		// que el equipo lo busca en el panel.
+		notify.Default.EstadoCliente(from, nombres, conversation.EtapaRegistrado,
+			describeLineas(lineas), resultado.IDPedido)
 	}
 	// A dónde se entregó, para que "repetir lo mismo" diga "2 Blanco a Casa" y no solo
 	// "2 Blanco". Se reutiliza lo resuelto arriba (antes del pedido, para elegir la dirección)
@@ -655,6 +703,13 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 	// cual. Con varias líneas, el detalle completo ("1 x ... (BLANCO) + 1 x ... (AMARILLO)").
 	mensaje := fmt.Sprintf("Pedido registrado correctamente: %s. DATOS PARA CONFIRMARLE AL "+
 		"CLIENTE (dáselos todos, de forma amable y clara):", describeLineas(lineas))
+	// A DÓNDE VA, primero que nada. El 15/09 un pedido se registró a 35 km (vía Molleturo) sin
+	// que el cliente viera nunca la dirección: confirmó color y cantidad, y el gas salió a un pin
+	// de horas antes. El destino es el dato que más le importa y el único que no se puede
+	// deshacer, así que encabeza la confirmación.
+	if destino := destinoLegible(aliasDestino, calleDestino); destino != "" {
+		mensaje += " Dirección de entrega (DÍSELA SIEMPRE, es lo primero que debe saber): " + destino + "."
+	}
 	if resultado.ConductorAsignado != "" {
 		mensaje += " Repartidor: " + resultado.ConductorAsignado + "."
 	}

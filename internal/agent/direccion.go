@@ -17,12 +17,10 @@ package agent
 import (
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"wp-llm-gas/internal/conversation"
 	"wp-llm-gas/internal/notify"
-	"wp-llm-gas/internal/whatsapp"
 )
 
 // Botones de la confirmacion. Como en las entregas agendadas, lo que vuelve es el titulo
@@ -48,8 +46,12 @@ func (a *Agent) ubicacionEsDeAhora(from string) bool {
 // pedirConfirmacionDireccionLineas deja el pedido (todas sus lineas) en pausa y le manda al
 // cliente el menu con su direccion. Devuelve el texto para el MODELO y si se hizo cargo.
 func (a *Agent) pedirConfirmacionDireccionLineas(t *turno, from string, items []conversation.ItemPedido) (string, bool) {
-	direccion, hay := a.store.GetDireccionTexto(from)
-	if !hay || strings.TrimSpace(direccion) == "" {
+	// El NOMBRE que el cliente le puso a esta ubicación va primero. Antes aquí solo salía la
+	// calle, así que quien había guardado su ubicación como "Casa" recibía "¿te lo enviamos a
+	// Av. Solano 123?" y tenía que reconocer su propia dirección escrita por el geocodificador
+	// —cuando le había puesto un nombre justamente para no tener que hacer eso—. Ver destino.go.
+	direccion := destinoLegible(a.aliasDeLaUbicacionGuardada(from), a.calleGuardada(from))
+	if direccion == "" {
 		// Sin una direccion legible no se puede preguntar nada util: mostrarle coordenadas o el
 		// nombre de un barrio entero seria pedirle que confirme algo que no identifica.
 		return "", false
@@ -57,7 +59,7 @@ func (a *Agent) pedirConfirmacionDireccionLineas(t *turno, from string, items []
 
 	a.store.SetPedidoEsperandoDireccion(from, items)
 	cuerpo := fmt.Sprintf("¿Te lo enviamos a %s?", direccion)
-	if err := whatsapp.SendMenu(a.cfg, from, cuerpo,
+	if err := a.mandarMenu(from, cuerpo,
 		[]string{BotonMismaDireccion, BotonOtraDireccion}); err != nil {
 		log.Printf("[direccion] no se pudo mandar la confirmación a %s: %v", from, err)
 		a.store.ClearPedidoEsperandoDireccion(from)
