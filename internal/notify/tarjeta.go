@@ -62,11 +62,13 @@ type etapa struct {
 
 // etapasEnOrden son los pasos del ciclo, tal como se muestran. "Cancelado" no está aquí: es un
 // final alternativo que reemplaza la línea entera (ver lineaDeEtapas).
+// El icono de "Entregado" es ✅ y no 🚚: es el final del ciclo, y un camión se lee como "va en
+// camino". Los demás describen el paso que ocurrió.
 var etapasEnOrden = []etapa{
 	{conversation.EtapaEscribio, "💬", "Escribió"},
 	{conversation.EtapaPidioGas, "🛒", "Pidió gas"},
 	{conversation.EtapaRegistrado, "📝", "Registrado"},
-	{conversation.EtapaEntregado, "🚚", "Entregado"},
+	{conversation.EtapaEntregado, "✅", "Entregado"},
 }
 
 // EstadoCliente mueve la tarjeta del cliente a una etapa nueva. Si no hay tarjeta, la crea; si la
@@ -222,13 +224,24 @@ func lineaDeEtapas(t conversation.TarjetaEstado) string {
 		// gris al lado sugeriría que todavía puede llegar.
 		return "❌ <b>Cancelado por el cliente</b>"
 	}
+	// SOLO SE MUESTRA LO QUE YA PASÓ.
+	//
+	// Antes se pintaba la fila entera y lo pendiente iba en cursiva. Sobre el papel se distingue;
+	// en Telegram no: la cursiva casi no se nota, y en la NOTIFICACIÓN del móvil el formato se
+	// pierde del todo. El 18/09 el dueño vio "Escribió → Pidió gas → Registrado → Entregado" en un
+	// cliente que solo había escrito, y entendió —con razón— que el pedido estaba entregado.
+	//
+	// Un aviso que se lee mal es un aviso que miente. Ahora la fila crece según avanza el pedido:
+	// lo que se ve, ocurrió.
 	partes := make([]string, 0, len(etapasEnOrden))
 	for _, e := range etapasEnOrden {
-		if e.orden <= t.Etapa {
-			partes = append(partes, "✅ "+e.nombre)
-			continue
+		if e.orden > t.Etapa {
+			break
 		}
-		partes = append(partes, "<i>"+e.icono+" "+e.nombre+"</i>")
+		partes = append(partes, e.icono+" "+e.nombre)
+	}
+	if len(partes) == 0 {
+		return ""
 	}
 	return strings.Join(partes, " → ")
 }

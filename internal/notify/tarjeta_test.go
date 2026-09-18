@@ -362,3 +362,90 @@ func TestSinNombreNoSeTocaElTituloDelHilo(t *testing.T) {
 		t.Error("se intentó renombrar un hilo sin saber el nombre del cliente")
 	}
 }
+
+// ═══ DOS BUGS VISTOS EN PRODUCCIÓN EL 18/09 (captura del dueño) ═══
+
+// BUG 1: SE CREABAN DOS TEMAS PARA EL MISMO NÚMERO.
+//
+// Al llegar el primer mensaje, AvisarInicio y EstadoCliente arrancan sus goroutines casi a la vez.
+// Las dos llamaban a hiloDe, las dos leían "no hay hilo" antes de que ninguna lo guardara, y las
+// dos creaban uno. El grupo terminaba con dos temas del mismo cliente y la conversación partida.
+func TestNoSeCreanDosTemasParaElMismoCliente(t *testing.T) {
+	const phone = "593939399431"
+	tg := nuevoTelegramFalso(t)
+	store := conversation.NewMemStore() // SIN hilo previo: se tiene que crear
+	n := &Notifier{
+		token: "t", chatID: "c", avisarInicio: true,
+		store: store, cliente: tg.servidor.Client(), base: tg.servidor.URL,
+	}
+
+	// Los dos avisos del primer mensaje, a la vez, como en producción.
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); n.AvisarInicio(phone, "Yovany Morocho", "hola") }()
+	go func() {
+		defer wg.Done()
+		n.EstadoCliente(phone, "Yovany Morocho", conversation.EtapaEscribio, "", 0)
+	}()
+	wg.Wait()
+	esperarCondicion(t, "se creó el tema del cliente", func() bool {
+		_, hay := store.GetTelegramThread(phone)
+		return hay
+	})
+	time.Sleep(80 * time.Millisecond) // margen por si el segundo tema fuera a crearse
+
+	if temas := tg.cuenta("createForumTopic"); temas != 1 {
+		t.Errorf("se crearon %d temas para el mismo cliente; debía ser 1. El grupo queda con la "+
+			"conversación partida en dos", temas)
+	}
+}
+
+// BUG 2: LA TARJETA DECÍA "ENTREGADO" EN UN PEDIDO QUE NI SIQUIERA SE HABÍA HECHO.
+//
+// Se pintaba la fila entera y lo pendiente iba en cursiva. Sobre el papel se distingue; en
+// Telegram no —y en la notificación del móvil el formato se pierde del todo—. El dueño vio
+// "Escribió → Pidió gas → Registrado → Entregado" en alguien que solo había escrito.
+//
+// Un aviso que se lee mal es un aviso que miente.
+func TestLaTarjetaNoMencionaEtapasQueNoHanOcurrido(t *testing.T) {
+	const phone = "593939399432"
+	tg := nuevoTelegramFalso(t)
+	n, _ := notificadorDePrueba(t, tg, phone)
+
+	// El cliente SOLO escribió.
+	n.EstadoCliente(phone, "Yovany Morocho", conversation.EtapaEscribio, "", 0)
+	esperarTexto(t, tg, "Escribió")
+
+	texto := tg.ultimoTexto()
+	for _, futuro := range []string{"Entregado", "Registrado", "Pidió gas"} {
+		if strings.Contains(texto, futuro) {
+			t.Errorf("la tarjeta menciona %q cuando el cliente solo escribió: se lee como que el "+
+				"pedido ya pasó por ahí. Tarjeta: %q", futuro, texto)
+		}
+	}
+}
+
+// Y la fila CRECE conforme avanza: lo que se ve, ocurrió.
+func TestLaFilaCreceConformeAvanzaElPedido(t *testing.T) {
+	const phone = "593939399433"
+	tg := nuevoTelegramFalso(t)
+	n, _ := notificadorDePrueba(t, tg, phone)
+
+	n.EstadoCliente(phone, "Ana", conversation.EtapaPidioGas, "2 x GAS 15KG", 0)
+	esperarTexto(t, tg, "Pidió gas")
+	if texto := tg.ultimoTexto(); !strings.Contains(texto, "Escribió") {
+		t.Errorf("se perdió la etapa anterior: %q", texto)
+	}
+	if texto := tg.ultimoTexto(); strings.Contains(texto, "Entregado") {
+		t.Errorf("aparece una etapa futura: %q", texto)
+	}
+
+	n.EstadoCliente(phone, "Ana", conversation.EtapaRegistrado, "", 777)
+	esperarTexto(t, tg, "Registrado")
+	if texto := tg.ultimoTexto(); strings.Contains(texto, "Entregado") {
+		t.Errorf("el pedido registrado ya aparece como entregado: %q", texto)
+	}
+
+	n.CerrarTarjeta(phone, "Ana", false)
+	esperarTexto(t, tg, "Entregado")
+}

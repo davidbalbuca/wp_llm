@@ -240,6 +240,16 @@ func (n *Notifier) permitido(motivo string) bool {
 // hiloDe devuelve el hilo del cliente, creándolo la primera vez. 0 si no se pudo crear (grupo sin
 // temas/permiso): el mensaje cae en el general, degradado aceptable (se pierde el orden, no el aviso).
 func (n *Notifier) hiloDe(phone, nombre string) int64 {
+	// CERROJO POR CLIENTE. Sin esto se crean DOS temas para el mismo número, y pasó en producción
+	// el 18/09: al llegar el primer mensaje, AvisarInicio y EstadoCliente arrancan sus goroutines
+	// casi a la vez; las dos leen "no hay hilo" antes de que ninguna lo haya guardado, y las dos
+	// crean uno. El grupo termina con dos temas del mismo cliente y la conversación partida.
+	//
+	// Es por TELÉFONO y no el mutex del Notifier a propósito: crear un tema es una llamada de red,
+	// y un cerrojo global pondría los avisos de todos los clientes en fila detrás del más lento.
+	desbloquear := bloquearHilo(phone)
+	defer desbloquear()
+
 	if id, ok := n.store.GetTelegramThread(phone); ok {
 		// El hilo pudo nacer SIN nombre (el primer mensaje llegó antes de saber quién era) y el
 		// título de Telegram no se actualiza solo. Si ahora ya sabemos el nombre, se renombra:
@@ -257,7 +267,22 @@ func (n *Notifier) hiloDe(phone, nombre string) int64 {
 		return 0
 	}
 	n.store.SetTelegramThread(phone, id)
+	// Recién creado CON el nombre: no hace falta renombrarlo después.
+	if strings.TrimSpace(nombre) != "" {
+		hilosYaNombrados.Store(phone, true)
+	}
 	return id
+}
+
+// cerrojosHilo serializa la creación del hilo DE UN MISMO cliente. Ver hiloDe.
+var cerrojosHilo sync.Map // phone -> *sync.Mutex
+
+// bloquearHilo toma el cerrojo de ese cliente y devuelve cómo soltarlo.
+func bloquearHilo(phone string) func() {
+	valor, _ := cerrojosHilo.LoadOrStore(phone, &sync.Mutex{})
+	mu := valor.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 // hilosYaNombrados recuerda a qué clientes ya se les puso el nombre en el título del hilo, para
