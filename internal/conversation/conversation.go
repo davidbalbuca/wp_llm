@@ -296,6 +296,10 @@ type PendingWait struct {
 	// para consultar su estado y para cerrarla si el cliente se arrepiente. Cero cuando la
 	// espera la maneja el bot como antes.
 	IDBusqueda int `json:"idbusqueda,omitempty"`
+	// PreguntoEspera marca que ya se le ofrecio esperar y se esta aguardando su respuesta. La
+	// busqueda se consulta cada 15 s y se queda en SIN_CONDUCTOR mientras el cliente no
+	// contesta: sin esta marca, se le mandaria el mismo menu cada quince segundos.
+	PreguntoEspera bool `json:"pregunto_espera,omitempty"`
 }
 
 // Lineas devuelve las líneas de la espera: la lista si la hay, o la única de los campos

@@ -158,6 +158,49 @@ func primerNumero(s string) int {
 	return -1
 }
 
+// numerosEscritos son las cantidades dichas con letras. Hasta diez: nadie pide "veinticuatro
+// cilindros" por WhatsApp, y cuanto más corta la lista, menos falsos positivos.
+var numerosEscritos = map[string]int{
+	"un": 1, "uno": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5,
+	"seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10,
+}
+
+// palabrasDeGas son las palabras con las que el cliente nombra lo que pide. Sirven de condición
+// para leer un número escrito: sin ellas, "dame un rato" o "espera un momento" dejarían una
+// ficha de un cilindro.
+var palabrasDeGas = []string{"gas", "cilindro", "cilindros", "tanque", "tanques", "bombona",
+	"bombonas", "pipeta", "pipetas", "cocina"}
+
+// cantidadEscrita lee la cantidad dicha EN PALABRAS ("un gas blanco" -> 1), o -1 si no hay.
+//
+// Existe porque el 18/09 un cliente escribió "un gas blanco" y el bot le registró DOS: la
+// cantidad se leía solo en dígitos, así que el "un" no corrigió la ficha, que traía un 2 de un
+// pedido anterior. El cliente había dicho uno.
+//
+// Pide que el mensaje hable de gas o traiga un color (eso lo comprueba quien llama): "un" es
+// demasiado común en español para tomarlo como cantidad por sí solo.
+func cantidadEscrita(t string) int {
+	hablaDeGas := false
+	campos := strings.Fields(t)
+	for _, palabra := range campos {
+		for _, g := range palabrasDeGas {
+			if palabra == g {
+				hablaDeGas = true
+				break
+			}
+		}
+	}
+	if !hablaDeGas {
+		return -1
+	}
+	for _, palabra := range campos {
+		if n, ok := numerosEscritos[palabra]; ok {
+			return n
+		}
+	}
+	return -1
+}
+
 // afirmaCancelado detecta que el texto le está diciendo al cliente que su pedido YA se canceló.
 // Igual que con la confirmación: si el modelo lo afirma sin haber llamado a cancelar_pedido, el
 // pedido sigue vivo en el backend (pasó el 03/09: el bot dijo "he cancelado tu pedido" y el

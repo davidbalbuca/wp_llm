@@ -197,6 +197,17 @@ func (a *Agent) esperarConductor(from string) string {
 	if !ok || w.IDProducto == 0 {
 		return "No hay un pedido en espera en este momento. Ofrécele con amabilidad hacer un pedido nuevo."
 	}
+	// Con la busqueda del backend, cuando el cliente contesta "Esperar" la busqueda YA esta
+	// abierta y la goroutine ya esta preguntando su estado: aca solo hay que DECIRLE al backend
+	// que el cliente espera. Llamar a startWaitForDriver no serviria (el candado ya esta tomado y
+	// volveria sin hacer nada), y la busqueda se cerraria sola en silencio aunque el cliente
+	// hubiera dicho que si.
+	if w.IDBusqueda > 0 {
+		a.decidirEsperaBackend(from, w.IDBusqueda, true)
+		return "El cliente aceptó esperar y ya se le avisó al sistema. Confírmale con calidez que sigues " +
+			"buscando un repartidor y que le avisas apenas se asigne (o si no hay disponible). Pídele " +
+			"que esté atento por aquí."
+	}
 	a.startWaitForDriver(from, w)
 	return "El cliente aceptó esperar. Confírmale con calidez que estás buscando un repartidor y que le " +
 		"avisas apenas se asigne (o si en unos minutos no hay disponible). Pídele que esté atento por aquí."
@@ -620,6 +631,15 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 				Color:    color.Nombre,
 				Cantidad: cantidad,
 				Lineas:   lineas,
+			}
+			// Con la busqueda del backend encendida se arranca AHORA, sin preguntarle nada: los
+			// minutos de busqueda inicial corren mientras el cliente lee que estamos buscando, y
+			// la pregunta de esperar se la hace la propia busqueda si no encuentra a nadie. Antes
+			// el cliente decidia si esperaba antes de que nadie hubiera buscado.
+			if a.cfg.UsarBusquedaBackend {
+				w, _ := a.store.GetPendingWait(from)
+				a.startWaitForDriver(from, w)
+				return mensajeBuscandoRepartidor
 			}
 			return mensajeOfrecerEspera
 		}

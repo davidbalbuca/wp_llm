@@ -29,6 +29,33 @@ func TestPrimerNumero(t *testing.T) {
 	}
 }
 
+// cantidadEscrita lee la cantidad dicha con letras. El caso que la trajo: el 18/09 un cliente
+// escribió "un gas blanco" y el bot le registró DOS cilindros, porque la cantidad se leía solo en
+// dígitos. Los casos de abajo con -1 son los falsos positivos que hay que evitar: "un" es
+// demasiado común en español para tomarlo como cantidad sin que el mensaje hable de gas.
+func TestCantidadEscrita(t *testing.T) {
+	casos := []struct {
+		in   string
+		want int
+	}{
+		{"un gas blanco", 1},
+		{"una pipeta", 1},
+		{"dos cilindros amarillos", 2},
+		{"tres tanques", 3},
+		{"quiero diez cilindros", 10},
+		{"dame un rato", -1},          // no habla de gas: no es una cantidad
+		{"espera un momento", -1},     // idem
+		{"una hora", -1},              // idem
+		{"gas blanco", -1},            // habla de gas pero no dice cuántos
+		{"veinte cilindros", -1},      // fuera de la lista: no se adivina
+	}
+	for _, c := range casos {
+		if got := cantidadEscrita(normalizar(c.in)); got != c.want {
+			t.Errorf("cantidadEscrita(%q) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
 // afirmaCancelado detecta que el bot le dijo al cliente que su pedido YA se canceló (el caso de
 // David: "he cancelado tu pedido" sin llamar a la herramienta), sin saltar con "¿quieres cancelar?".
 func TestAfirmaCancelado(t *testing.T) {

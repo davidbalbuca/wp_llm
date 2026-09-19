@@ -331,6 +331,25 @@ func main() {
 		go notifyOrderReassigned(cfg, store, payload.PedidoID, payload.Telefono, payload.Conductor)
 	})
 
+	// El pedido perdio a su repartidor y el backend se lo esta ofreciendo a otros. El pedido
+	// NO esta cancelado: sigue vivo, y de eso se trata el aviso.
+	mux.HandleFunc("POST /internal/order-searching", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			PedidoID int    `json:"pedido_id"`
+			Telefono string `json:"telefono"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		go notifyOrderSearching(cfg, store, payload.PedidoID, payload.Telefono)
+	})
+
 	log.Printf("Servidor escuchando en http://localhost:%s", cfg.Port)
 	// --- Web/panel: revisar y controlar conversaciones (protegido por el secreto de canal) ---
 	// Lista de chats recientes (número, último mensaje, modo bot/humano).
@@ -1129,6 +1148,27 @@ func notifyOrderNoShow(cfg config.Config, store conversation.Store, pedidoID int
 	msg += ". Cuando quieras, puedes hacer un nuevo pedido."
 	if err := avisarCliente(cfg, store, phone, msg); err != nil {
 		reportarFallo(cfg, store, phone, "No se pudo avisar el cierre por AUSENCIA del cliente",
+			fmt.Sprintf("Pedido #%d. El mensaje no salió: %v", pedidoID, err))
+	}
+}
+
+// notifyOrderSearching avisa al cliente que su repartidor canceló y estamos buscando otro. El
+// pedido sigue vivo, así que NO se limpia nada: si aparece otro repartidor llega el aviso de
+// reasignado, y si no aparece, el de cancelación. Sin este mensaje el cliente veía su pedido
+// congelado varios minutos sin ninguna explicación.
+func notifyOrderSearching(cfg config.Config, store conversation.Store, pedidoID int, telefono string) {
+	phone := telefono
+	if p, ok := store.GetOrderPhone(pedidoID); ok && p != "" {
+		phone = p
+	}
+	if phone == "" {
+		log.Printf("[order-searching] pedido %d sin teléfono de contacto; se ignora", pedidoID)
+		return
+	}
+	msg := "Tu repartidor tuvo que cancelar 😕. Tu pedido sigue en pie: estamos buscando otro " +
+		"repartidor y te aviso en unos minutos."
+	if err := avisarCliente(cfg, store, phone, msg); err != nil {
+		reportarFallo(cfg, store, phone, "No se pudo avisar que buscamos otro repartidor",
 			fmt.Sprintf("Pedido #%d. El mensaje no salió: %v", pedidoID, err))
 	}
 }

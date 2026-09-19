@@ -48,13 +48,26 @@ const mensajeSinCobertura = "IMPORTANTE: En este momento no hay repartidores dis
 // cancelar. NO se deriva al dueño ni se le vuelven a pedir datos.
 const mensajeOfrecerEspera = "IMPORTANTE: En este momento no hay un repartidor disponible cerca, pero el " +
 	"pedido quedó listo. Ofrécele al cliente ESPERAR usando la herramienta mostrar_menu con el cuerpo: " +
-	"'Los repartidores están un poco lejos 🚚. Podría tardar hasta 5 minutos en asignarse. ¿Deseas esperar?' " +
+	"'Estamos buscando al chofer ideal para ti 🚚. Nuestro sistema puede tardar hasta 5 minutos en " +
+	"conectar con el camión más cercano en tu zona. ¿Deseas esperar?' " +
 	"y las opciones exactas [\"Esperar\", \"Programar\", \"Cancelar\"]. Si el cliente elige esperar, llama a " +
 	"la herramienta esperar_conductor. Si elige PROGRAMAR, dile el horario de atención y pídele que ESCRIBA " +
 	"la hora que prefiera (más tarde HOY o MAÑANA, dentro de ese horario y de las próximas 24 horas); NO le " +
 	"ofrezcas horas como opciones ni uses mostrar_menu para eso. Luego llama a programar_entrega. " +
 	"Si elige cancelar, llama a cancelar_espera. NO derives al dueño ni le pidas de nuevo los datos ni la " +
 	"ubicación."
+
+// mensajeBuscandoRepartidor se devuelve cuando no hay conductor en el acto y la busqueda la
+// lleva el BACKEND (BOT_USAR_BUSQUEDA encendido). A diferencia de mensajeOfrecerEspera, aca NO se
+// le pregunta nada al cliente todavia: el backend sigue buscando unos minutos y, si no encuentra a
+// nadie, el bot le ofrece esperar recien entonces. Preguntarle antes de haber buscado es pedirle
+// que decida sin informacion.
+const mensajeBuscandoRepartidor = "IMPORTANTE: No hay un repartidor disponible en este instante, " +
+	"pero el pedido quedó registrado y el sistema ya está buscando uno. Dile al cliente que " +
+	"estamos buscando al repartidor más cercano y que le confirmas en pocos minutos, sin que él " +
+	"tenga que hacer nada, y que si prefiere cancelar escriba \"cancelar\". NO le ofrezcas esperar " +
+	"ni programar ahora: si la búsqueda no encuentra a nadie, el sistema le preguntará solo. NO " +
+	"uses mostrar_menu. NO derives al dueño ni le pidas de nuevo los datos ni la ubicación."
 
 // behaviorPrompt son las instrucciones de comportamiento del agente. Viven en un archivo
 // de plantilla (contenido, no lógica) embebido en el binario, para editarlas sin tocar código.

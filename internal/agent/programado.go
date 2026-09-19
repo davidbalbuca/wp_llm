@@ -192,6 +192,12 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	// Si venia de una espera por falta de conductor, se cierra: el pedido ya quedo agendado y no
 	// debe registrarse ademas como NO ASIGNADO cuando venza la espera.
 	if esperandoConductor {
+		// La busqueda del backend tambien se cierra. Si quedara abierta, el backend podria
+		// asignarle un repartidor a un pedido que el cliente acaba de reagendar, y ademas el
+		// cliente no podria hacer otro pedido: una busqueda abierta bloquea el siguiente.
+		if w, hay := a.store.GetPendingWait(from); hay && w.IDBusqueda > 0 {
+			a.cerrarBusquedaBackend(from, w.IDBusqueda)
+		}
 		a.store.ClearPendingWait(from)
 	}
 

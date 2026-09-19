@@ -97,7 +97,7 @@ func yaTieneLaCedula(texto string) bool {
 // cuerpoConsentimiento es el texto del menú. Se explica POR QUÉ se pide antes de pedir nada: el
 // cliente tiene que poder decidir con la información delante, no después.
 func cuerpoConsentimiento() string {
-	return "Para registrar tu pedido necesito tu cédula 📋\n\n" +
+	return "¡Perfecto, casi listo! Para poder emitir tu nota de venta necesito tu cédula 📋\n\n" +
 		"Por políticas de protección de datos, antes de pedírtela necesito tu autorización " +
 		"para tratarla. Aquí puedes revisar cómo cuidamos tu información:\n" +
 		"• Privacidad: " + urlPrivacidad + "\n" +

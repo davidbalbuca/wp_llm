@@ -69,7 +69,14 @@ func (a *Agent) anotarDelMensaje(from, texto string) {
 	//    Con varias líneas abiertas, "1 de blanco" lleva la cantidad a la línea de ESE color;
 	//    un número solo ("2") va a la línea que se está eligiendo ahora.
 	if !pareceHora && len(strings.Fields(texto)) <= 4 {
-		if n := primerNumero(texto); n >= 1 && n <= 20 {
+		n := primerNumero(texto)
+		if n < 1 {
+			// En palabras: "un gas blanco", "dos cilindros". Antes solo se leían dígitos, así que
+			// "un gas blanco" no corregía la cantidad que traía la ficha y el cliente terminaba
+			// con dos cilindros habiendo pedido uno (pasó el 18/09).
+			n = cantidadEscrita(normalizar(texto))
+		}
+		if n >= 1 && n <= 20 {
 			if colores := coloresDelMensaje(a, texto); len(colores) == 1 {
 				p = ponerCantidad(p, colores[0], n)
 			} else if len(colores) == 0 && p.Color != "" {

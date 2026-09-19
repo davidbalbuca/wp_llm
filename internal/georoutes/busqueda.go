@@ -29,8 +29,14 @@ const (
 type BusquedaResult struct {
 	IDBusqueda int    `json:"idbusqueda"`
 	Estado     string `json:"estado"`
-	// SegundosRestantes de la etapa actual; null cuando ya terminó.
+	// SegundosRestantes de la etapa actual; null cuando ya terminó. OJO: no significa lo mismo en
+	// cada etapa. En SIN_CONDUCTOR son los segundos que tiene el cliente para contestar, NO la
+	// espera; para eso está EsperaSegundos.
 	SegundosRestantes *int `json:"segundos_restantes"`
+	// EsperaSegundos es cuánto duraría la espera si el cliente acepta. Lo decide el backend (se
+	// cambia desde el panel) y es el número que se le dice al cliente en la pregunta: el bot no
+	// tiene ningún plazo escrito.
+	EsperaSegundos int `json:"espera_segundos"`
 	// Pedido llega SOLO con estado ASIGNADO, con la misma forma que el pedido normal.
 	Pedido  *OrderResult `json:"pedido"`
 	Mensaje string       `json:"mensaje"`

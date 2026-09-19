@@ -102,9 +102,10 @@ func (a *Agent) esperaBackend(from string, w conversation.PendingWait) {
 			a.avisarRepartidorAsignado(from, w, estado.Pedido)
 			return
 		case georoutes.BusquedaSinConductor:
-			// Venció la búsqueda inicial. El cliente YA dijo que esperaba, así que se le pasa la
-			// decisión al backend sin volver a preguntarle nada.
-			a.decidirEsperaBackend(from, res.IDBusqueda, true)
+			// Venció la búsqueda inicial sin nadie. ESTE es el momento de preguntarle al cliente
+			// si quiere esperar: ya se buscó de verdad, y el número que se le dice (lo que dura la
+			// espera) sale del backend, no del bot.
+			a.ofrecerEsperaAlCliente(from, estado)
 		case georoutes.BusquedaNoAsignado:
 			// El backend ya lo dejó en no asignados y abrió el ticket: acá solo se avisa.
 			a.avisarEsperaVencida(from, w, "El cliente esperó y no se le asignó nadie.")
@@ -123,6 +124,39 @@ func (a *Agent) esperaBackend(from string, w conversation.PendingWait) {
 	}
 }
 
+// ofrecerEsperaAlCliente le manda el menú de esperar cuando la búsqueda inicial no encontró a
+// nadie. UNA sola vez: la búsqueda se consulta cada 15 s y se queda en SIN_CONDUCTOR mientras el
+// cliente no contesta, así que sin la marca se le mandaría el mismo menú cada quince segundos.
+//
+// Los minutos salen del backend (espera_segundos): el bot no tiene ningún plazo escrito. Si el
+// cliente no contesta, el backend cierra la búsqueda solo y en silencio.
+func (a *Agent) ofrecerEsperaAlCliente(from string, estado *georoutes.BusquedaResult) {
+	w, ok := a.store.GetPendingWait(from)
+	if !ok || w.PreguntoEspera {
+		return
+	}
+	w.PreguntoEspera = true
+	a.store.SetPendingWait(from, w)
+
+	minutos := 5
+	if estado != nil && estado.EsperaSegundos > 0 {
+		minutos = (estado.EsperaSegundos + 59) / 60
+	}
+	cuerpo := fmt.Sprintf("Estamos buscando al chofer ideal para ti 🚚. Nuestro sistema puede "+
+		"tardar hasta %d minutos en conectar con el camión más cercano en tu zona. ¿Deseas esperar?",
+		minutos)
+	if err := whatsapp.SendMenu(a.cfg, from, cuerpo, []string{"Esperar", "Programar", "Cancelar"}); err != nil {
+		log.Printf("[busqueda] %s no se pudo ofrecer la espera: %v", from, err)
+		// Si el menú no sale, el cliente se queda sin saber nada: se le pasa la decisión al
+		// backend para que siga buscando, en vez de cerrarle la búsqueda por un fallo de WhatsApp.
+		a.decidirEsperaBackend(from, w.IDBusqueda, true)
+		return
+	}
+	a.store.LogMessage(from, "system", cuerpo)
+	a.store.AppendModel(from, cuerpo)
+	log.Printf("[busqueda] %s se le ofrecio esperar la busqueda %d", from, w.IDBusqueda)
+}
+
 // decidirEsperaBackend le dice al backend si el cliente espera o no. Best-effort: si falla, se
 // registra; el backend cierra la búsqueda por su cuenta cuando venza.
 func (a *Agent) decidirEsperaBackend(from string, idbusqueda int, esperar bool) {
@@ -139,6 +173,27 @@ func (a *Agent) decidirEsperaBackend(from string, idbusqueda int, esperar bool) 
 	if _, err := a.gr.DecisionBusqueda(tokens.Access, idbusqueda, esperar); err != nil {
 		log.Printf("[busqueda] %s no se pudo responder la espera de %d: %v", from, idbusqueda, err)
 	}
+}
+
+// cerrarBusquedaBackend cancela la búsqueda en el backend, sin dejarla como no asignada: la usa
+// el cliente que prefirió PROGRAMAR la entrega en vez de esperar. No es una venta perdida que haya
+// que perseguir, así que no corresponde el ticket. Best-effort.
+func (a *Agent) cerrarBusquedaBackend(from string, idbusqueda int) {
+	account, ok := a.store.GetAccount(from)
+	if !ok {
+		log.Printf("[busqueda] %s sin cuenta para cerrar la busqueda %d", from, idbusqueda)
+		return
+	}
+	tokens, err := a.gr.Login(account.Username, account.Password)
+	if err != nil {
+		log.Printf("[busqueda] %s no se pudo autenticar para cerrar la busqueda %d: %v", from, idbusqueda, err)
+		return
+	}
+	if _, err := a.gr.CancelarBusqueda(tokens.Access, idbusqueda); err != nil {
+		log.Printf("[busqueda] %s no se pudo cerrar la busqueda %d: %v", from, idbusqueda, err)
+		return
+	}
+	log.Printf("[busqueda] %s cerro la busqueda %d (programo la entrega)", from, idbusqueda)
 }
 
 // fallaBusqueda avisa al grupo cuando la búsqueda ni siquiera pudo abrirse. Al cliente ya se le
