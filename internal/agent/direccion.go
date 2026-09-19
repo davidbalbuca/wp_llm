@@ -124,9 +124,8 @@ func (a *Agent) mensajeDelPedido(t *turno, from string) string {
 		if w, ok := a.store.GetPendingWait(from); ok {
 			a.startWaitForDriver(from, w)
 		}
-		return "¡Listo! 🎉 Tu pedido quedó registrado. En este momento los repartidores están " +
-			"un poco lejos, así que estoy buscando uno para ti 🚚. En menos de 5 minutos te " +
-			"confirmo. No tienes que hacer nada."
+		return "¡Listo! 🎉 Tu pedido quedó registrado. Estoy buscando al repartidor más cercano " +
+			"para ti 🚚. Te confirmo en unos minutos; no tienes que hacer nada."
 	default:
 		// FUERA DE HORARIO no es un fallo: es una condición normal del negocio. Decirle
 		// "inconveniente técnico, ya avisé al equipo" lo asusta y además MIENTE (nadie fue

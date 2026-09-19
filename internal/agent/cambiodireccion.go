@@ -169,8 +169,8 @@ func (a *Agent) CambiarDireccionPorUbicacion(from string, lat, lng float64) (str
 		log.Printf("[cambio-dir] %s: nuevo pedido en espera (sin conductor aún)", from)
 		a.store.AppendUser(from, fmt.Sprintf("📍 ubicación: %.6f, %.6f", lat, lng))
 		msg := fmt.Sprintf("Cancelé tu pedido anterior (#%d) y generé uno nuevo con %s a tu nueva dirección 🙌. "+
-			"En este momento los repartidores están un poco lejos, así que estoy buscando uno para ti 🚚. "+
-			"En menos de 5 minutos te confirmo. No tienes que hacer nada.", pedidoVivo, describeItems(lineas))
+			"Estoy buscando al repartidor más cercano para ti 🚚. Te confirmo en unos minutos; no "+
+			"tienes que hacer nada.", pedidoVivo, describeItems(lineas))
 		a.store.AppendModel(from, msg)
 		return msg, true
 

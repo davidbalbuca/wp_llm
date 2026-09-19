@@ -168,12 +168,12 @@ func (a *Agent) confirmarYRegistrar(from string, sch conversation.ScheduledOrder
 			from, sch.ID)
 		// El plazo va EXPLICITO. La primera version decia solo "te escribo apenas se asigne", y lo
 		// primero que preguntó David al probarlo fue: ¿y si nunca me responde? Con razon: el
-		// cliente no tiene forma de saber si son dos minutos o una hora. La espera siempre cierra
-		// en 5 minutos, asi que se lo decimos.
-		return "¡Confirmado! 🎉 Tu pedido ya quedó registrado. En este momento los repartidores " +
-			"están un poco lejos, así que estoy buscando uno para ti 🚚. En menos de 5 minutos " +
-			"te confirmo si lo conseguí. No tienes que hacer nada; si prefieres cancelar, " +
-			"escríbeme \"cancelar\"."
+		// El plazo NO va con un numero: el backend busca unos minutos y, si no encuentra, le
+		// pregunta al cliente si quiere esperar, y ahi el numero lo dice el backend. Prometer
+		// "5 minutos" aca era inventar un plazo que el bot ya no controla.
+		return "¡Confirmado! 🎉 Tu pedido ya quedó registrado. Estoy buscando al repartidor más " +
+			"cercano para ti 🚚. Te confirmo en unos minutos; no tienes que hacer nada. Si " +
+			"prefieres cancelar, escríbeme \"cancelar\"."
 
 	default:
 		// Falló el registro (backend caído, credenciales, etc.). La entrega NO se marca como

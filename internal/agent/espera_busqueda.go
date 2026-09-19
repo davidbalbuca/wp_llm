@@ -17,6 +17,7 @@ package agent
 import (
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"wp-llm-gas/internal/conversation"
@@ -26,9 +27,14 @@ import (
 )
 
 // intervaloBusqueda es cada cuánto se le pregunta al backend. No es el reloj de la espera: los
-// plazos los decide el backend. 15 s es suficientemente ágil para avisar al cliente y no castiga
-// al servidor (cada consulta puede disparar un intento de asignación).
-const intervaloBusqueda = 15 * time.Second
+// plazos los decide el backend.
+//
+// Estaba en 15 s y se bajó a 7: el reintento de asignación NO corre solo en el backend, corre
+// cuando alguien pregunta, así que el intervalo del bot y el parámetro del panel se suman. Con 15
+// aquí y 20 allá, los intentos caían cada 30 s y un pedido tardaba 34 s en asignarse con el
+// conductor ya en línea (medido el 19/09). Con 7 aquí y 10 en el panel, baja a ~10-15 s. Cada
+// consulta es un intento de asignación, así que tampoco conviene bajarlo mucho más.
+const intervaloBusqueda = 7 * time.Second
 
 // topeBusqueda es una red de seguridad del bot, no un plazo del negocio: si el backend quedara
 // devolviendo "buscando" para siempre (un parámetro absurdo en el panel, por ejemplo), esta
@@ -248,12 +254,13 @@ func (a *Agent) avisarRepartidorAsignado(from string, w conversation.PendingWait
 		Direccion: calle,
 	})
 	store.ClearPendingWait(from)
-	// El historial NO se borra (memoria de 24h). El mensaje queda AUDITADO.
-	msg := "🎉 ¡Listo! Ya tienes un repartidor asignado"
-	if res.ConductorAsignado != "" {
-		msg += ": " + res.ConductorAsignado
+	// El enlace de seguimiento queda registrado como el VIVO de este pedido, igual que en el
+	// pedido normal: es lo que permite detectar despues un enlace de otro pedido.
+	if enlace := a.urlSeguimiento(res.SeguimientoToken); enlace != "" {
+		store.SetSeguimientoActivo(from, enlace)
 	}
-	msg += ". Sale con tu pedido en breve. ¡Gracias por tu espera!"
+	// El historial NO se borra (memoria de 24h). El mensaje queda AUDITADO.
+	msg := mensajeAsignado(a, w, res)
 	// Si venia de una entrega agendada, deja de estar "buscando repartidor".
 	store.CerrarProgramadoEnEspera(from, true)
 	if err := whatsapp.SendText(cfg, from, msg); err == nil {
@@ -262,6 +269,43 @@ func (a *Agent) avisarRepartidorAsignado(from string, w conversation.PendingWait
 		// la IA tiene que saber que se lo mandamos.
 		store.AppendModel(from, msg)
 	}
+}
+
+// mensajeAsignado arma el aviso de "ya tienes repartidor" con TODO lo que el cliente necesita:
+// que le llega, quien se lo lleva y el enlace para ver el camion en el mapa.
+//
+// Existe porque este camino lo cierra una goroutine, sin un turno del modelo que redacte la
+// confirmacion. El texto anterior era de una linea y servia para el cliente que habia esperado
+// cinco minutos; desde que TODO pedido sin conductor inmediato pasa por aqui, ese texto dejaba
+// sin detalle ni enlace a un cliente que solo espero treinta segundos.
+func mensajeAsignado(a *Agent, w conversation.PendingWait, res *georoutes.OrderResult) string {
+	var b strings.Builder
+	b.WriteString("🎉 ¡Listo! Tu pedido está confirmado")
+	if res.IDPedido > 0 {
+		b.WriteString(fmt.Sprintf(" (#%d)", res.IDPedido))
+	}
+	b.WriteString(".\n\n")
+
+	for _, l := range w.Lineas() {
+		nombre := strings.TrimSpace(l.ProductoNombre + " " + l.ColorNombre)
+		if nombre == "" {
+			nombre = "cilindro"
+		}
+		b.WriteString(fmt.Sprintf("📦 %d x %s\n", l.Cantidad, nombre))
+	}
+
+	if res.ConductorAsignado != "" {
+		b.WriteString("🚚 Repartidor: " + res.ConductorAsignado)
+		if res.Placa != "" {
+			b.WriteString(" (placa " + res.Placa + ")")
+		}
+		b.WriteString("\n")
+	}
+	if enlace := a.urlSeguimiento(res.SeguimientoToken); enlace != "" {
+		b.WriteString("\n📍 Sigue tu pedido en vivo aquí:\n" + enlace + "\n")
+	}
+	b.WriteString("\nYa va en camino. ¡Gracias por tu paciencia!")
+	return b.String()
 }
 
 // avisarEsperaVencida cierra una espera sin repartidor: avisa al grupo, limpia el estado y le
