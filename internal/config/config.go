@@ -76,6 +76,10 @@ type Config struct {
 	// NO registra pedidos: ofrece PROGRAMAR la entrega para una hora dentro del horario.
 	BotHorarioInicio string
 	BotHorarioFin    string
+	// BotDiasLaborables son los dias que se trabaja, en numeros ISO (1=lunes ... 7=domingo),
+	// separados por coma o en rango: "1-6" es lunes a sabado. Se configura en el .env del bot
+	// para poder cambiarlo sin recompilar (feriados, un domingo que si se trabaja).
+	BotDiasLaborables string
 }
 
 func required(k string) string {
@@ -147,6 +151,7 @@ func Load() Config {
 		CierreVentanaMax:     time.Duration(optionalInt("BOT_CIERRE_VENTANA_MAX_MIN", 60)) * time.Minute,
 		BotHorarioInicio:     optional("BOT_HORARIO_INICIO", "07:00"),
 		BotHorarioFin:        optional("BOT_HORARIO_FIN", "19:00"),
+		BotDiasLaborables:    optional("BOT_DIAS_LABORABLES", "1-6"),
 		SMTPHost:             os.Getenv("SMTP_HOST"),
 		SMTPPort:             optional("SMTP_PORT", "587"),
 		SMTPUser:             os.Getenv("SMTP_USER"),

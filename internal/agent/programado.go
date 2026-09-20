@@ -227,6 +227,9 @@ func (a *Agent) cancelarProgramacion(from string) string {
 
 // dentroDeHorario indica si `t` cae dentro del horario laboral de entregas configurado.
 func (a *Agent) dentroDeHorario(t time.Time) bool {
+	if !a.esDiaLaborable(t) {
+		return false
+	}
 	ini := parseHoraHHMM(a.cfg.BotHorarioInicio)
 	fin := parseHoraHHMM(a.cfg.BotHorarioFin)
 	if ini < 0 || fin < 0 {
@@ -235,6 +238,86 @@ func (a *Agent) dentroDeHorario(t time.Time) bool {
 	mins := t.Hour()*60 + t.Minute()
 	return mins >= ini && mins < fin
 }
+
+// diasEnEspanol traduce los numeros ISO de dia a su nombre, para poder decirselo al cliente.
+var diasEnEspanol = map[int]string{1: "lunes", 2: "martes", 3: "miércoles", 4: "jueves",
+	5: "viernes", 6: "sábado", 7: "domingo"}
+
+// diasLaborables devuelve los dias que se trabaja, leidos de la configuracion. Acepta "1-6" y
+// "1,2,3": lo primero es lo comun y lo segundo permite un horario con huecos. Si la configuracion
+// esta mal, se devuelven TODOS los dias: un error de configuracion no puede cerrar el negocio.
+func (a *Agent) diasLaborables() map[int]bool {
+	dias := map[int]bool{}
+	texto := strings.TrimSpace(a.cfg.BotDiasLaborables)
+	for _, parte := range strings.Split(texto, ",") {
+		parte = strings.TrimSpace(parte)
+		if desde, hasta, hayRango := strings.Cut(parte, "-"); hayRango {
+			d, err1 := strconv.Atoi(strings.TrimSpace(desde))
+			h, err2 := strconv.Atoi(strings.TrimSpace(hasta))
+			if err1 == nil && err2 == nil {
+				for i := d; i <= h; i++ {
+					dias[i] = true
+				}
+			}
+			continue
+		}
+		if d, err := strconv.Atoi(parte); err == nil {
+			dias[d] = true
+		}
+	}
+	if len(dias) == 0 {
+		for i := 1; i <= 7; i++ {
+			dias[i] = true
+		}
+	}
+	return dias
+}
+
+// esDiaLaborable dice si ESE dia se trabaja. time.Weekday() pone el domingo en 0; los numeros de
+// la configuracion son ISO (lunes=1, domingo=7), que es como los lee la gente.
+func (a *Agent) esDiaLaborable(t time.Time) bool {
+	iso := int(t.Weekday())
+	if iso == 0 {
+		iso = 7
+	}
+	return a.diasLaborables()[iso]
+}
+
+// textoDiasLaborables arma "lunes a sábado" (o la lista, si los dias no son seguidos) para
+// decirselo al cliente. El bot no puede decir "de lunes a sabado" a secas: si manana alguien
+// cambia la configuracion, el mensaje tiene que cambiar con ella.
+func (a *Agent) textoDiasLaborables() string {
+	dias := a.diasLaborables()
+	var nombres []string
+	for i := 1; i <= 7; i++ {
+		if dias[i] {
+			nombres = append(nombres, diasEnEspanol[i])
+		}
+	}
+	if len(nombres) == 0 {
+		return "todos los días"
+	}
+	// Seguidos: "lunes a sábado". Con huecos: la lista entera, que es mas larga pero no miente.
+	seguidos := true
+	primero := -1
+	ultimo := -1
+	for i := 1; i <= 7; i++ {
+		if !dias[i] {
+			continue
+		}
+		if primero == -1 {
+			primero = i
+		} else if i != ultimo+1 {
+			seguidos = false
+		}
+		ultimo = i
+	}
+	if seguidos && len(nombres) > 1 {
+		return diasEnEspanol[primero] + " a " + diasEnEspanol[ultimo]
+	}
+	return strings.Join(nombres, ", ")
+}
+
 
 // horaPedidaPorCliente busca en lo que el cliente escribió una hora del horario laboral y la
 // devuelve como "HH:MM" (o "" si no hay). Es lo que permite forzar la programación cuando el

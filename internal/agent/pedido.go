@@ -385,7 +385,15 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) string {
 	// REGLA DURA de horario: fuera del horario laboral NO se registran pedidos (no hay
 	// conductores). El prompt también lo dice; esto es la garantía en código.
-	if !a.dentroDeHorario(time.Now().In(zonaEcuador)) {
+	ahoraEc := time.Now().In(zonaEcuador)
+	if !a.esDiaLaborable(ahoraEc) {
+		return "HOY NO SE TRABAJA (solo atendemos " + a.textoDiasLaborables() + " de " +
+			a.cfg.BotHorarioInicio + " a " + a.cfg.BotHorarioFin + "): NO se registró el pedido porque " +
+			"hoy no hay conductores. Díselo al cliente con amabilidad, DILE QUE DÍAS Y EN QUÉ HORARIO " +
+			"atendemos, y PREGÚNTALE si quiere agendar su pedido para otro día; si acepta, usa la " +
+			"herramienta programar_entrega."
+	}
+	if !a.dentroDeHorario(ahoraEc) {
 		return "FUERA DE HORARIO (" + a.cfg.BotHorarioInicio + " a " + a.cfg.BotHorarioFin + "): NO se registró " +
 			"el pedido porque a esta hora no hay conductores. Explícaselo al cliente con amabilidad y ofrécele " +
 			"PROGRAMAR la entrega con la herramienta programar_entrega."

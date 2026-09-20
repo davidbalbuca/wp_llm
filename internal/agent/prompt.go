@@ -151,9 +151,21 @@ func (a *Agent) construirSistema(from string) (fijo, volatil string) {
 	// Fecha y hora de Ecuador. Sin la fecha el modelo inventa el día y agenda mal (09/09: dijo
 	// "hoy es sábado" un miércoles). Va en la parte volátil: cambia cada mensaje.
 	ahora := time.Now().In(zonaEcuador)
-	fmt.Fprintf(&b, "\n\nHOY ES: %s. HORA ACTUAL: %s (Ecuador). HORARIO DE ENTREGAS: %s a %s.",
-		fechaEnEspanol(ahora), ahora.Format("15:04"), a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
-	if !a.dentroDeHorario(ahora) {
+	fmt.Fprintf(&b, "\n\nHOY ES: %s. HORA ACTUAL: %s (Ecuador). HORARIO DE ENTREGAS: %s de %s a %s.",
+		fechaEnEspanol(ahora), ahora.Format("15:04"), a.textoDiasLaborables(),
+		a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
+	// El dia no laborable se avisa APARTE de la hora: son dos motivos distintos y al cliente hay
+	// que decirle el suyo. Un domingo, "a esta hora no hay repartidores" es falso -no es la hora,
+	// es el dia- y le hace pensar que mas tarde si habra.
+	if !a.esDiaLaborable(ahora) {
+		fmt.Fprintf(&b, " HOY NO SE TRABAJA: solo atendemos %s. NO llames a registrar_pedido. "+
+			"Dile con amabilidad que hoy no hay servicio, DILE QUE DÍAS Y EN QUÉ HORARIO "+
+			"atendemos, y PREGÚNTALE si quiere agendar su pedido para otro día. Si acepta, "+
+			"pídele color, cantidad, su ubicación de WhatsApp, cédula y nombre (si es cliente "+
+			"nuevo) y que ESCRIBA el día y la hora que prefiera dentro de ese horario; luego "+
+			"llama a programar_entrega. NO le ofrezcas días ni horas como opciones ni uses "+
+			"mostrar_menu para eso.", a.textoDiasLaborables())
+	} else if !a.dentroDeHorario(ahora) {
 		b.WriteString(" ESTAMOS FUERA DE HORARIO: a esta hora NO hay conductores disponibles, así que NO llames " +
 			"a registrar_pedido. Explícaselo con amabilidad y ofrécele PROGRAMAR la entrega con la herramienta " +
 			"programar_entrega: pide color, cantidad, su ubicación de WhatsApp, cédula y nombre (si es cliente " +
