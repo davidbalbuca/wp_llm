@@ -213,16 +213,24 @@ func TestSinMenuPendienteNoSeAgendaNadaSolo(t *testing.T) {
 // cualquier motivo (falta un dato, el catálogo no responde) sin probar la guarda.
 func TestConElMenuOfrecidoLaHoraElegidaSiSeAgenda(t *testing.T) {
 	const from = "593999100004"
-	ag, store := agenteQuePuedeAgendar(t)
+	// HORARIO DE 24 HORAS a propósito: este test prueba la GUARDA del menú, no el horario. Con un
+	// horario acotado, la hora a la que se ejecuta decide si pasa o falla.
+	//
+	// Es la segunda bomba de tiempo de este test. La primera decía "mañana 15:00" y se salía de la
+	// ventana de 24 h toda la mañana; la arreglé calculando la hora del reloj (+2 h), pero seguía
+	// fallando entre las 17:00 y las 19:00, porque +2 h caía FUERA del horario laboral. Dos
+	// restricciones distintas —la ventana de 24 h y el horario de atención— y yo solo había visto
+	// una. Abriendo el horario, ninguna de las dos depende del reloj.
+	ag, store := agenteConHorario(t, "00:00", "23:59")
+	ag.catalog = catalog.NewStaticForTest(&catalog.Context{
+		Products: []georoutes.Product{{IDProducto: 1, IDCategoria: 1, Nombre: "GAS 15KG",
+			Colores: []georoutes.Color{{ID: 10, Nombre: "BLANCO"}}}},
+		Payments: []georoutes.Payment{{ID: 1, Nombre: "Efectivo"}},
+	})
 	clienteListoParaAgendar(store, from)
 	store.SetEligiendoHora(from)
 
-	// LA HORA SE CALCULA DEL RELOJ, NO SE ESCRIBE FIJA. Antes decía "mañana 15:00" y el test
-	// llevaba una bomba de tiempo: programar_entrega solo acepta las próximas 24 HORAS, así que
-	// "mañana 15:00" se pasa de la ventana cada vez que el test corre antes de las 15:00 —o sea,
-	// toda la mañana—. Fallaba por el reloj, no por el código.
-	//
-	// Dentro de dos horas siempre cae dentro de la ventana, y sigue siendo futuro.
+	// Dentro de dos horas: siempre futuro y siempre dentro de la ventana de 24 h.
 	objetivo := time.Now().In(zonaEcuador).Add(2 * time.Hour)
 	dia := "hoy"
 	if objetivo.Day() != time.Now().In(zonaEcuador).Day() {
