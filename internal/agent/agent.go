@@ -217,7 +217,6 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 						},
 						Required: []string{"color", "cantidad"},
 					}},
-				"telefono": {Type: genai.TypeString, Description: "Teléfono del cliente. Si no lo indica, se usa su número de WhatsApp."},
 			},
 			Required: []string{},
 		},

@@ -458,10 +458,14 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 
 	identificacion := strings.TrimSpace(str(args["identificacion"]))
 	nombres := strings.TrimSpace(str(args["nombres_completos"]))
-	telefono := strings.TrimSpace(str(args["telefono"]))
-	if telefono == "" {
-		telefono = from
-	}
+	// El telefono es el de la CONVERSACION, punto. Antes salia de lo que el modelo escribiera en
+	// el argumento y solo se caia a `from` si venia vacio: el modelo lo rellenaba con etiquetas y
+	// en produccion quedaron clientes con telefono "wa", "WhatsApp", "+593" y "+593WHATSAPP". El
+	// conductor pulsaba llamar y el marcador recibia "tel:+593", sin numero al que llamar.
+	//
+	// Un cliente puede dar OTRO telefono de contacto, pero eso seria un dato aparte: el numero
+	// con el que escribe no se deduce, se sabe.
+	telefono := from
 
 	// Cliente recurrente: si la IA no repitió cédula/nombre, los tomamos del perfil guardado.
 	if perfil, ok := a.store.GetProfile(from); ok {
