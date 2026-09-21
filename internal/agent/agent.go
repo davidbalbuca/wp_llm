@@ -824,8 +824,13 @@ func (a *Agent) calificarConductor(from string, args map[string]any) string {
 	// detrás (ver cierreciclo.go). La despedida que el modelo redacte a continuación sí queda:
 	// se escribe en el historial al cerrar el turno, ya sobre la memoria vacía.
 	a.cerrarCicloDeConversacion(from, "pedido entregado y calificado")
-	return fmt.Sprintf("¡Calificación de %d/5 registrada con éxito para el repartidor %s! Agradécele calurosamente "+
-		"al cliente por su tiempo y su preferencia, y despídete de forma cordial.", estrellas, rating.Conductor)
+	// La invitación a guardarnos en contactos va TAL CUAL en la despedida. Este camino es el del
+	// cliente que ESCRIBE su calificación en vez de tocar el botón (el del botón lo resuelve
+	// ResponderCalificacion, que ya la añade). Se le dicta el texto al modelo en vez de dejarlo
+	// redactar: es un mensaje de marca y tiene que decir lo mismo por los dos caminos.
+	return fmt.Sprintf("¡Calificación de %d/5 registrada con éxito para el repartidor %s! Agradécele "+
+		"calurosamente al cliente por su tiempo y su preferencia, y TERMINA tu mensaje con este "+
+		"texto EXACTO, sin cambiarle nada:\n\n%s", estrellas, rating.Conductor, MensajeGuardarContacto())
 }
 
 // nombreDe devuelve el nombre del cliente si lo conocemos, "" si no. Para los avisos.

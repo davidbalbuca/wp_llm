@@ -151,13 +151,15 @@ func (a *Agent) ResponderCalificacion(from, texto string) (string, bool) {
 	// calificarConductor limpia el pendiente en todos los caminos y su texto está escrito para
 	// el modelo; aquí redactamos el del cliente según haya salido bien o mal.
 	salida := a.calificarConductor(from, map[string]any{"estrellas": n})
+	// La invitación a guardarnos en contactos cierra el ciclo (ver guardarcontacto.go): es el
+	// momento de más buena voluntad del cliente y el único en que pedirle algo no interrumpe nada.
 	if strings.Contains(salida, "registrada con éxito") {
-		return fmt.Sprintf("¡Gracias por calificar a %s con %d/5! 🙌 Tu opinión nos ayuda muchísimo. "+
-			"Cuando necesites tu gas, aquí estoy 😊", rating.Conductor, n), true
+		return fmt.Sprintf("¡Gracias por calificar a %s con %d/5! 🙌 Tu opinión nos ayuda muchísimo.\n\n%s",
+			rating.Conductor, n, MensajeGuardarContacto()), true
 	}
 	// No se pudo registrar (backend caído, cuenta sin credenciales): se agradece igual. El
 	// cliente no tiene por qué enterarse de un problema nuestro que no le afecta.
-	return "¡Gracias por tu calificación! 🙌 Cuando necesites tu gas, aquí estoy 😊", true
+	return "¡Gracias por tu calificación! 🙌\n\n" + MensajeGuardarContacto(), true
 }
 
 // pideRepetirPedido detecta que el cliente pide su pedido de siempre ESCRIBIENDO, sin tocar el

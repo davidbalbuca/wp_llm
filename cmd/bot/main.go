@@ -1076,11 +1076,20 @@ func notifyOrderFinished(cfg config.Config, store conversation.Store, pedidoID i
 	// es pedirle que abra el teclado para algo que se resuelve con un toque, y cada paso de más
 	// es gente que no califica.
 	msg := "¡Tu pedido fue entregado! 🎉 Gracias por preferirnos. 🙌\n\n"
+	// La invitación a guardarnos en contactos va AQUÍ además de en el agradecimiento por
+	// calificar (ver agent.MensajeGuardarContacto). No es repetirla por repetirla: este aviso lo
+	// recibe TODO el que recibe su gas, y la mayoría no llega a calificar nunca. Quien sí
+	// califique la verá dos veces, y eso es mejor que no llegarle al que no responde.
+	//
+	// Va ANTES de la pregunta y no después: lo último que se lee tiene que ser aquello para lo
+	// que están los botones, o el cliente se queda mirando unas estrellas sin saber qué contestan.
+	msg += agent.MensajeGuardarContacto() + "\n\n"
 	if conductor != "" {
 		msg += fmt.Sprintf("¿Cómo calificarías a tu repartidor %s?", conductor)
 	} else {
 		msg += "¿Cómo calificarías a tu repartidor?"
 	}
+
 	// El respaldo conserva la instrucción de escribir: si el menú no sale, el cliente tiene que
 	// saber qué hacer. ResponderCalificacion acepta las dos formas.
 	respaldo := msg + " Responde con un número del 1 al 5 ⭐ (y si quieres, un breve comentario)."
