@@ -791,7 +791,7 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 			ubicacionNueva, ubicLat, ubicLng = true, lat, lng
 			messageForAgent = "He compartido mi ubicación actual."
 		} else if whatsapp.EsLinkCortoDeMaps(inc.Text) {
-			if lat, lng, ok := whatsapp.ResolverLinkCortoDeMaps(inc.Text); ok {
+			if lat, lng, ok := whatsapp.ResolverLinkCortoDeMaps(inc.Text, cfg.BotCentroLat, cfg.BotCentroLng); ok {
 				store.SetLocation(inc.From, lat, lng)
 				log.Printf("[webhook] ubicación (link corto resuelto) de %s: %f, %f", inc.From, lat, lng)
 				if fueraDeCobertura(cfg, store, gr, inc.From, lat, lng) {

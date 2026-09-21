@@ -41,7 +41,7 @@ func TestResolverLinkCortoDeMaps_SoloHostsDeMaps(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, _, ok := ResolverLinkCortoDeMaps(srv.URL); ok {
+	if _, _, ok := ResolverLinkCortoDeMaps(srv.URL, cuencaLat, cuencaLng); ok {
 		t.Errorf("se resolvió un host que no es de Maps (%s): el bot haría peticiones a donde le digan", srv.URL)
 	}
 }
@@ -50,7 +50,7 @@ func TestResolverLinkCortoDeMaps_SoloHostsDeMaps(t *testing.T) {
 // nativo en vez de dar por buena una ubicación que no existe.
 func TestResolverLinkCortoDeMaps_SinCoordenadas(t *testing.T) {
 	// Dominio de Maps inexistente: la petición falla y no hay coordenadas que sacar.
-	if _, _, ok := ResolverLinkCortoDeMaps("https://maps.app.goo.gl/noexiste-" + t.Name()); ok {
+	if _, _, ok := ResolverLinkCortoDeMaps("https://maps.app.goo.gl/noexiste-"+t.Name(), cuencaLat, cuencaLng); ok {
 		t.Error("no debía resolver coordenadas de un link que no lleva a ninguna parte")
 	}
 }

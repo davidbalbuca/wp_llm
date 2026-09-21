@@ -130,7 +130,9 @@ func EsLinkCortoDeMaps(text string) bool {
 //
 // Recibe el TEXTO del cliente, no una URL limpia, y se queda solo con el link de Maps que
 // contenga: el resto del mensaje no llega nunca al cliente HTTP.
-func ResolverLinkCortoDeMaps(texto string) (lat, lng float64, ok bool) {
+// refLat/refLng es el centro de la zona donde se opera, y solo se usa si la URL final trae un
+// PLUS CODE en vez de coordenadas (ver pluscode.go).
+func ResolverLinkCortoDeMaps(texto string, refLat, refLng float64) (lat, lng float64, ok bool) {
 	link := ExtraerLinkCortoDeMaps(texto)
 	if link == "" {
 		return 0, 0, false
@@ -142,6 +144,13 @@ func ResolverLinkCortoDeMaps(texto string) (lat, lng float64, ok bool) {
 	defer resp.Body.Close()
 	finalURL := resp.Request.URL.String()
 	if lat, lng, ok := ParseCoordsFromText(finalURL); ok {
+		return lat, lng, true
+	}
+	// Sin lat,lng en la URL todavía puede haber un PLUS CODE. Google lo pone cuando el lugar no
+	// tiene dirección exacta —un conjunto, una casa sin nomenclatura—, que en media Cuenca es lo
+	// normal: es lo que pasó con Carlos el 21/09, cuando el bot le dijo "no pude abrir tu
+	// enlace". Ver pluscode.go, sobre todo por qué la referencia importa tanto.
+	if lat, lng, ok := CoordenadasDePlusCodeEnURL(finalURL, refLat, refLng); ok {
 		return lat, lng, true
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 32*1024))

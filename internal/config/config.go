@@ -80,6 +80,15 @@ type Config struct {
 	// separados por coma o en rango: "1-6" es lunes a sabado. Se configura en el .env del bot
 	// para poder cambiarlo sin recompilar (feriados, un domingo que si se trabaja).
 	BotDiasLaborables string
+	// BotCentroLat/BotCentroLng es el centro de la zona donde se opera. Solo se usa para
+	// recuperar el prefijo de un Plus Code corto cuando el cliente manda un enlace de Google
+	// Maps (ver internal/whatsapp/pluscode.go): esos codigos vienen sin la parte que dice en que
+	// cuadrante del planeta estan, y se completa con el cuadrante mas cercano a este punto.
+	//
+	// Va en configuracion y no quemado en el codigo porque el dia que se abra en otra ciudad hay
+	// que poder cambiarlo sin recompilar. Por defecto, el centro de Cuenca.
+	BotCentroLat float64
+	BotCentroLng float64
 }
 
 func required(k string) string {
@@ -102,6 +111,18 @@ func optionalInt(k string, def int) int {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
 		}
+	}
+	return def
+}
+
+// optionalFloat lee un numero con decimales. Ante un valor mal escrito se queda con el por
+// defecto en vez de abortar: una coordenada con una coma de mas no puede tumbar el bot.
+func optionalFloat(k string, def float64) float64 {
+	if v := os.Getenv(k); v != "" {
+		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+			return f
+		}
+		log.Printf("[config] %s=%q no es un numero valido; se usa %v", k, v, def)
 	}
 	return def
 }
@@ -152,6 +173,9 @@ func Load() Config {
 		BotHorarioInicio:     optional("BOT_HORARIO_INICIO", "07:00"),
 		BotHorarioFin:        optional("BOT_HORARIO_FIN", "19:00"),
 		BotDiasLaborables:    optional("BOT_DIAS_LABORABLES", "1-6"),
+		// Centro de Cuenca (Parque Calderón). Ver BotCentroLat en la Config.
+		BotCentroLat:         optionalFloat("BOT_CENTRO_LAT", -2.9001),
+		BotCentroLng:         optionalFloat("BOT_CENTRO_LNG", -79.0059),
 		SMTPHost:             os.Getenv("SMTP_HOST"),
 		SMTPPort:             optional("SMTP_PORT", "587"),
 		SMTPUser:             os.Getenv("SMTP_USER"),

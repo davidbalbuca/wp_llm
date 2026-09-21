@@ -47,7 +47,7 @@ func TestNoSeSigueUnHostAjenoQueMencionaMaps(t *testing.T) {
 		if EsLinkCortoDeMaps(url) {
 			t.Errorf("se tomó como link de Maps una URL ajena: %q — el bot le haría una petición", url)
 		}
-		if _, _, ok := ResolverLinkCortoDeMaps(url); ok {
+		if _, _, ok := ResolverLinkCortoDeMaps(url, cuencaLat, cuencaLng); ok {
 			t.Errorf("se resolvieron coordenadas desde una URL ajena: %q", url)
 		}
 	}
@@ -140,7 +140,7 @@ func TestResolverLinkCortoSigueElRedirectYSacaLasCoordenadas(t *testing.T) {
 
 // Un texto sin link no dispara ninguna petición ni devuelve coordenadas.
 func TestResolverLinkCortoSinLinkNoHaceNada(t *testing.T) {
-	if _, _, ok := ResolverLinkCortoDeMaps("hola, quiero 2 cilindros blancos"); ok {
+	if _, _, ok := ResolverLinkCortoDeMaps("hola, quiero 2 cilindros blancos", cuencaLat, cuencaLng); ok {
 		t.Error("devolvió coordenadas de un texto sin link")
 	}
 	if strings.TrimSpace(ExtraerLinkCortoDeMaps("")) != "" {
