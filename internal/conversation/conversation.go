@@ -34,6 +34,17 @@ const SessionGap = 24 * time.Hour
 // de CADA conversación nueva, para siempre.
 const RatingTTL = 24 * time.Hour
 
+// VidaEsperaPDP es cuánto dura la espera de respuesta al menú de protección de datos.
+//
+// HACE FALTA PORQUE ESA ESPERA BLOQUEA. Mientras está viva, la compuerta impide registrar
+// pedidos y consultar cédulas (es lo que arregla el agujero del 21/09), así que sin caducidad un
+// cliente que recibió el menú, no contestó y volvió dos días después se quedaría sin poder pedir
+// gas para siempre, y en silencio: nadie se entera de que ese número ya no compra.
+//
+// 24 horas, igual que SessionGap y RatingTTL: si vuelve al día siguiente es otra conversación, y
+// lo correcto es preguntarle de nuevo —no dar por buena ni por mala una respuesta que nunca dio—.
+const VidaEsperaPDP = 24 * time.Hour
+
 // Modos de un chat para el control humano (takeover).
 const (
 	ChatModeBot   = "bot"   // el bot responde normalmente
@@ -519,6 +530,11 @@ type Store interface {
 	SetConsentimientoPendiente(phone string)
 	// ConsentimientoPendiente dice si se le está esperando una respuesta al menú. Es lo que
 	// permite resolver los botones en código, sin que el modelo interprete el "sí".
+	//
+	// CADUCA a las VidaEsperaPDP. Mientras la espera está viva el cliente no puede hacer pedidos
+	// (la compuerta lo bloquea), así que no puede durar para siempre: quien recibió el menú, no
+	// contestó y vuelve dos días después tiene que poder pedir gas. Al caducar se le vuelve a
+	// preguntar, que es el resultado correcto.
 	ConsentimientoPendiente(phone string) bool
 	// ClearConsentimientoPendiente quita esa espera (respondió, o la conversación se cerró).
 	ClearConsentimientoPendiente(phone string)

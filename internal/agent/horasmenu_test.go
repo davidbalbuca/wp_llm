@@ -217,12 +217,24 @@ func TestConElMenuOfrecidoLaHoraElegidaSiSeAgenda(t *testing.T) {
 	clienteListoParaAgendar(store, from)
 	store.SetEligiendoHora(from)
 
-	// Se elige una hora de MAÑANA: siempre es futura, sea cual sea la hora a la que corra el test.
-	respuesta, manejado := ag.ResponderHoraProgramada(from, "mañana 15:00")
+	// LA HORA SE CALCULA DEL RELOJ, NO SE ESCRIBE FIJA. Antes decía "mañana 15:00" y el test
+	// llevaba una bomba de tiempo: programar_entrega solo acepta las próximas 24 HORAS, así que
+	// "mañana 15:00" se pasa de la ventana cada vez que el test corre antes de las 15:00 —o sea,
+	// toda la mañana—. Fallaba por el reloj, no por el código.
+	//
+	// Dentro de dos horas siempre cae dentro de la ventana, y sigue siendo futuro.
+	objetivo := time.Now().In(zonaEcuador).Add(2 * time.Hour)
+	dia := "hoy"
+	if objetivo.Day() != time.Now().In(zonaEcuador).Day() {
+		dia = "mañana" // pasada la medianoche
+	}
+	hora := objetivo.Format("15:04")
+
+	respuesta, manejado := ag.ResponderHoraProgramada(from, dia+" "+hora)
 
 	if !manejado {
-		t.Fatal("con el menú ofrecido y todos los datos, la hora elegida no agendó nada: el " +
-			"cliente toca un botón y no pasa nada")
+		t.Fatalf("con el menú ofrecido y todos los datos, %q no agendó nada: el cliente toca un "+
+			"botón y no pasa nada", dia+" "+hora)
 	}
 	if !store.TieneProgramacionViva(from) {
 		t.Error("no quedó ninguna programación viva tras elegir la hora")
@@ -230,8 +242,8 @@ func TestConElMenuOfrecidoLaHoraElegidaSiSeAgenda(t *testing.T) {
 	if store.EligiendoHora(from) {
 		t.Error("sigue esperando que elija hora después de haber elegido")
 	}
-	if !strings.Contains(respuesta, "15:00") {
-		t.Errorf("no se le confirmó la hora que eligió: %q", respuesta)
+	if !strings.Contains(respuesta, hora) {
+		t.Errorf("no se le confirmó la hora que eligió (%s): %q", hora, respuesta)
 	}
 }
 

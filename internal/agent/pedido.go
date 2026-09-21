@@ -482,12 +482,11 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 
 	// COMPUERTA de protección de datos. Va ANTES de persistir el perfil y antes de llamar al
 	// backend: es el último punto donde los datos del cliente todavía no se han guardado en
-	// ninguna parte. Si negó el permiso, aquí se detiene todo. Ver consentimiento.go.
+	// ninguna parte. Si negó el permiso —o si todavía no ha respondido—, aquí se detiene todo.
+	// Ver consentimiento.go.
 	if a.consentimientoNiega(from) {
-		log.Printf("[consentimiento] %s: se bloquea registrar_pedido, el cliente negó el permiso", from)
-		return "El cliente NO autorizó el tratamiento de sus datos: NO se registró el pedido y NO se " +
-			"guardó ningún dato suyo. Explícale con amabilidad que sin esa autorización no puedes " +
-			"tomarle el pedido por aquí, y ofrécele el teléfono de atención."
+		log.Printf("[consentimiento] %s: se bloquea registrar_pedido, sin autorización de datos", from)
+		return a.instruccionSinConsentimiento(from, "NO se registró el pedido")
 	}
 	// Ya hay cédula: se consolida en el backend el consentimiento que se capturó por teléfono.
 	a.sincronizarConsentimiento(from, identificacion)

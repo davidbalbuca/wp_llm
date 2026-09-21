@@ -1267,13 +1267,22 @@ func (s *sqliteStore) SetConsentimientoPendiente(phone string) {
 }
 
 func (s *sqliteStore) ConsentimientoPendiente(phone string) bool {
-	var uno int
+	var creado int64
 	err := s.db.QueryRow(
-		`SELECT 1 FROM consentimiento_pendiente WHERE phone = ?`, phone).Scan(&uno)
-	if err != nil && err != sql.ErrNoRows {
-		log.Printf("[sqlite] ConsentimientoPendiente %s: %v", phone, err)
+		`SELECT created_at FROM consentimiento_pendiente WHERE phone = ?`, phone).Scan(&creado)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("[sqlite] ConsentimientoPendiente %s: %v", phone, err)
+		}
+		return false
 	}
-	return err == nil
+	// CADUCIDAD: una espera vieja no puede bloquear al cliente para siempre. Ver VidaEsperaPDP.
+	if time.Since(time.Unix(creado, 0)) > VidaEsperaPDP {
+		log.Printf("[consentimiento] %s: la espera del menú caducó; se le preguntará de nuevo", phone)
+		s.ClearConsentimientoPendiente(phone)
+		return false
+	}
+	return true
 }
 
 func (s *sqliteStore) ClearConsentimientoPendiente(phone string) {

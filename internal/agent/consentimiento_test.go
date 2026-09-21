@@ -170,17 +170,28 @@ func TestElNoDelClienteDetieneElFlujo(t *testing.T) {
 
 // "sí" y "no" ESCRITOS valen igual que el botón: se pidió explícitamente ("solo si presiona sí,
 // o escribe sí"). Mucha gente responde escribiendo aunque tenga el botón delante.
+// El sí/no ESCRITO vale igual que el botón, mientras el menú de datos siga siendo lo último que
+// el bot preguntó. Mucha gente escribe en vez de tocar, y no aceptárselo la dejaría atrapada.
+//
+// DOS CAMBIOS DEL 21/09, los dos por lo mismo:
+//   - Se quitó el caso {"dale", true}. Lo decía este test y resultó ser el bug: "dale", "ok" y
+//     "listo" viven en respuestasAfirmativas para confirmar direcciones, y colarlos aquí hizo que
+//     cuatro consentimientos de producción se grabaran a partir de palabras dichas contestando a
+//     otra cosa.
+//   - Ahora el menú se pone en el HISTORIAL, porque de ahí sale el criterio: un "si" solo cuenta
+//     si contesta al menú. Ver respuestaAlMenuDeDatos y consentimientoprod_test.go.
 func TestElSiYElNoEscritosValenIgualQueElBoton(t *testing.T) {
 	casos := []struct {
 		texto  string
 		acepta bool
 	}{
-		{"si", true}, {"Sí, acepto", true}, {"si acepto", true}, {"dale", true},
+		{"si", true}, {"Sí, acepto", true}, {"si acepto", true},
 		{"no", false}, {"No acepto", false}, {"no gracias", false},
 	}
 	for _, c := range casos {
 		ag, store, from := agenteConsentimiento(t)
 		store.SetConsentimientoPendiente(from)
+		store.AppendModel(from, cuerpoConsentimiento())
 
 		if _, manejado := ag.ResponderConsentimiento(from, c.texto); !manejado {
 			t.Errorf("%q no se resolvió en código", c.texto)

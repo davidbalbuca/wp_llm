@@ -70,10 +70,8 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	// COMPUERTA de protección de datos, igual que en registrar_pedido: agendar también guarda los
 	// datos del cliente, así que sin autorización tampoco se puede. Ver consentimiento.go.
 	if a.consentimientoNiega(from) {
-		log.Printf("[consentimiento] %s: se bloquea programar_entrega, el cliente negó el permiso", from)
-		return "El cliente NO autorizó el tratamiento de sus datos: NO se agendó nada y NO se guardó " +
-			"ningún dato suyo. Explícale con amabilidad que sin esa autorización no puedes tomarle el " +
-			"pedido por aquí."
+		log.Printf("[consentimiento] %s: se bloquea programar_entrega, sin autorización de datos", from)
+		return a.instruccionSinConsentimiento(from, "NO se agendó nada")
 	}
 	a.sincronizarConsentimiento(from, identificacion)
 
@@ -317,7 +315,6 @@ func (a *Agent) textoDiasLaborables() string {
 	}
 	return strings.Join(nombres, ", ")
 }
-
 
 // horaPedidaPorCliente busca en lo que el cliente escribió una hora del horario laboral y la
 // devuelve como "HH:MM" (o "" si no hay). Es lo que permite forzar la programación cuando el

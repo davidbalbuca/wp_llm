@@ -43,6 +43,15 @@ func (a *Agent) cerrarCicloDeConversacion(from, motivo string) {
 	a.store.ClearEligiendoHora(from)           // menú de horas de una programación que ya no toca
 	a.store.LimpiarFueraDeCobertura(from)      // un rechazo de zona no sigue vigente
 
+	// La espera del menú de protección de datos SIN RESPONDER. Se limpia porque mientras está
+	// viva la compuerta bloquea los pedidos de ese cliente: arrastrarla al ciclo siguiente lo
+	// dejaría sin poder comprar por un menú que ya no está en pantalla.
+	//
+	// OJO CON LA DIFERENCIA: esto borra la ESPERA, no la RESPUESTA. El consentimiento que el
+	// cliente llegó a dar (o a negar) vive en su propia tabla y sobrevive a propósito, para no
+	// volver a preguntarle lo que ya contestó.
+	a.store.ClearConsentimientoPendiente(from)
+
 	// NO se tocan: Account, Profile ni las direcciones guardadas. Un cliente conocido tiene que
 	// seguir siéndolo en su próximo pedido: volver a pedirle la cédula sería un retroceso.
 }

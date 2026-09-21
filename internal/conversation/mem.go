@@ -28,7 +28,7 @@ type memStore struct {
 	pendingColorSwap   map[string]PendingColorSwap        // oferta de cambio de color sin responder
 	pendingGuardarUbic map[string]PendingGuardarUbicacion // oferta de nombrar la ubicación
 	consentimiento     map[string]Consentimiento          // respuesta a las políticas de datos
-	consentPendiente   map[string]bool                    // se le mandó el menú y no ha respondido
+	consentPendiente   map[string]time.Time               // se le mandó el menú y no ha respondido (caduca)
 	tarjetaEstado      map[string]TarjetaEstado           // tarjeta de Telegram que se va editando
 	eligiendoHora      map[string]bool                    // se le mandó el menú de horas y no ha elegido
 	pendingRating      map[string]PendingRating           // pedidos entregados por calificar
@@ -63,7 +63,7 @@ func NewMemStore() Store {
 		pendingColorSwap:   make(map[string]PendingColorSwap),
 		pendingGuardarUbic: make(map[string]PendingGuardarUbicacion),
 		consentimiento:     make(map[string]Consentimiento),
-		consentPendiente:   make(map[string]bool),
+		consentPendiente:   make(map[string]time.Time),
 		tarjetaEstado:      make(map[string]TarjetaEstado),
 		eligiendoHora:      make(map[string]bool),
 		pendingRating:      make(map[string]PendingRating),
@@ -246,6 +246,14 @@ func (s *memStore) ForzarUltimaActividad(phone string, cuando time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastActivity[phone] = cuando
+}
+
+// ForzarEsperaPDP envejece la espera del menú de protección de datos. Solo lo usan las pruebas,
+// para comprobar que caduca sin tener que esperar un día entero (ver VidaEsperaPDP).
+func (s *memStore) ForzarEsperaPDP(phone string, cuando time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.consentPendiente[phone] = cuando
 }
 
 // ForzarFechaUbicacion envejece una ubicacion. Solo lo usan las pruebas, para poder simular
@@ -650,13 +658,23 @@ func (s *memStore) GetConsentimiento(phone string) (Consentimiento, bool) {
 func (s *memStore) SetConsentimientoPendiente(phone string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.consentPendiente[phone] = true
+	s.consentPendiente[phone] = time.Now()
 }
 
 func (s *memStore) ConsentimientoPendiente(phone string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.consentPendiente[phone]
+	desde, hay := s.consentPendiente[phone]
+	if !hay {
+		return false
+	}
+	// CADUCIDAD: la espera bloquea al cliente, así que no puede durar para siempre (ver
+	// VidaEsperaPDP). Mismo comportamiento que en SQLite: los dos backends tienen que coincidir.
+	if time.Since(desde) > VidaEsperaPDP {
+		delete(s.consentPendiente, phone)
+		return false
+	}
+	return true
 }
 
 func (s *memStore) ClearConsentimientoPendiente(phone string) {

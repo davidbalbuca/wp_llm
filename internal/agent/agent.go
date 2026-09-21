@@ -712,14 +712,13 @@ func (a *Agent) verificarCliente(from string, args map[string]any) string {
 	if identificacion == "" {
 		return "Falta la cédula del cliente. Pídesela para verificar si ya está registrado."
 	}
-	// COMPUERTA de protección de datos: si el cliente negó el permiso, su cédula no se consulta
-	// ni se guarda. Decide por ESTADO, no por el texto de la respuesta: es la garantía real de
-	// que un dato personal no entra cuando su dueño dijo que no. Ver consentimiento.go.
+	// COMPUERTA de protección de datos: sin autorización, su cédula no se consulta ni se guarda.
+	// Consultarla en el backend YA es tratarla. Decide por ESTADO, no por el texto de la
+	// respuesta: es la garantía real de que un dato personal no entra cuando su dueño no ha dicho
+	// que sí. Ver consentimiento.go.
 	if a.consentimientoNiega(from) {
-		log.Printf("[consentimiento] %s: se bloquea verificar_cliente, el cliente negó el permiso", from)
-		return "El cliente NO autorizó el tratamiento de sus datos. NO uses su cédula, NO le pidas " +
-			"más datos personales y NO registres ningún pedido. Explícale con amabilidad que sin esa " +
-			"autorización no puedes tomar su pedido por aquí."
+		log.Printf("[consentimiento] %s: se bloquea verificar_cliente, sin autorización de datos", from)
+		return a.instruccionSinConsentimiento(from, "NO se consultó su cédula")
 	}
 	// El consentimiento se capturó por teléfono antes de tener la cédula; ahora que la hay, se
 	// consolida en el backend, que es donde el negocio lo necesita.

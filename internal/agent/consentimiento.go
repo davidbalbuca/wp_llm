@@ -149,12 +149,24 @@ func (a *Agent) revisarPeticionDeCedula(t *turno, from, reply string) string {
 			"se bloquea", from)
 		return a.mensajeSinConsentimiento()
 	}
-	// Si ya se le mandó el menú y no ha contestado, no se le manda otro: repetir el mismo menú es
-	// exactamente lo que behavior.md §5 prohíbe, y pasó en producción tres veces seguidas.
+	// Ya se le mandó el menú y no ha contestado. Se le RECUERDA con los botones otra vez, en vez
+	// de mandarle el menú completo de nuevo: repetir el mismo texto largo es lo que behavior.md
+	// §5 prohíbe, y pasó en producción tres veces seguidas.
+	//
+	// Pero los BOTONES sí se reenvían, y esto es importante: el menú original ya quedó enterrado
+	// varios mensajes más arriba en el chat. Pedirle que confirme sin darle nada que tocar es
+	// pedirle que busque para atrás, y quien no lo encuentre se queda sin poder seguir.
 	if a.store.ConsentimientoPendiente(from) {
-		log.Printf("[consentimiento] %s tiene el menú pendiente; no se repite", from)
-		return "Para seguir necesito que me confirmes si aceptas nuestras políticas de " +
+		log.Printf("[consentimiento] %s tiene el menú pendiente; se le recuerda con los botones", from)
+		recordatorio := "Para seguir necesito que me confirmes si aceptas nuestras políticas de " +
 			"protección de datos 🙏 Puedes revisarlas aquí: " + urlPrivacidad
+		if err := a.mandarMenu(from, recordatorio, []string{BotonAceptoDatos, BotonNoAceptoDatos}); err != nil {
+			log.Printf("[consentimiento] %s: el recordatorio falló (%v); sale como texto", from, err)
+			return recordatorio + "\n\nRespóndeme *Sí* o *No*."
+		}
+		t.menuSent = true
+		t.lastMenuText = recordatorio + " [" + BotonAceptoDatos + " / " + BotonNoAceptoDatos + "]"
+		return ""
 	}
 
 	log.Printf("[consentimiento] %s: el modelo pidió la cédula sin autorización previa; "+
@@ -175,6 +187,10 @@ func (a *Agent) pedirConsentimiento(from string) bool {
 	opciones := []string{BotonAceptoDatos, BotonNoAceptoDatos}
 	if err := a.mandarMenu(from, cuerpo, opciones); err != nil {
 		log.Printf("[consentimiento] %s: el menú falló (%v); se pregunta por texto", from, err)
+		// La espera se marca IGUAL aunque el menú no saliera: el llamador pregunta por texto, y
+		// sin esta marca la respuesta del cliente se iría al modelo en vez de resolverse en
+		// código.
+		a.store.SetConsentimientoPendiente(from)
 		return false
 	}
 	a.store.SetConsentimientoPendiente(from)
@@ -199,9 +215,10 @@ func (a *Agent) ResponderConsentimiento(from, texto string) (string, bool) {
 	if respuesta == "" {
 		return "", false
 	}
+	acepta, niega := a.respuestaAlMenuDeDatos(from, respuesta)
 
 	switch {
-	case respuestasAfirmativas[respuesta]:
+	case acepta:
 		log.Printf("[consentimiento] %s ACEPTÓ las políticas de datos", from)
 		a.store.ClearConsentimientoPendiente(from)
 		a.store.SetConsentimiento(from, conversation.Consentimiento{
@@ -213,7 +230,7 @@ func (a *Agent) ResponderConsentimiento(from, texto string) (string, bool) {
 		a.store.AppendModel(from, msg)
 		return msg, true
 
-	case respuestasNegativas[respuesta]:
+	case niega:
 		log.Printf("[consentimiento] %s NO aceptó las políticas de datos; no se le pide la cédula", from)
 		a.store.ClearConsentimientoPendiente(from)
 		a.store.SetConsentimiento(from, conversation.Consentimiento{
@@ -236,16 +253,162 @@ func (a *Agent) ResponderConsentimiento(from, texto string) (string, bool) {
 	return "", false
 }
 
-// consentimientoNiega es la COMPUERTA: dice si este cliente tiene una negativa registrada, en
-// cuyo caso ninguna herramienta puede tratar sus datos personales.
+// Lo único que cuenta como respuesta cuando la pregunta salió CON BOTONES. Son los títulos que
+// devuelve WhatsApp al tocarlos, más las formas en que alguien los escribiría a mano.
+var (
+	aceptacionesLiterales = map[string]bool{
+		"si acepto": true, "acepto": true, "si acepto las politicas": true,
+	}
+	negativasLiterales = map[string]bool{
+		"no acepto": true, "no acepto las politicas": true,
+	}
+)
+
+// respuestaAlMenuDeDatos decide si este mensaje es un sí, un no, o ninguna de las dos cosas.
 //
-// Solo bloquea con una negativa EXPLÍCITA, no con la ausencia de respuesta. Es deliberado: los
-// clientes que ya estaban registrados de antes tienen que seguir pidiendo igual, como se pidió
-// ("a los que ya están registrados no podemos hacer nada, deben continuar igual"). A ellos el bot
-// nunca les pide la cédula —ya tiene su perfil—, así que nunca llegan al menú.
+// LA DIFERENCIA CON EL RESTO DE LOS MENÚS DEL BOT, que es la razón de que esta función exista:
+// en los demás, aceptar de más cuesta un viaje en balde y el cliente lo corrige en el momento.
+// Aquí lo que se está firmando es el permiso para tratar la cédula de una persona. Un falso
+// positivo no se corrige: queda escrito que alguien autorizó algo que nunca autorizó.
+//
+// LO QUE DISTINGUE UN "SÍ" BUENO DE UNO MALO NO ES CÓMO SE PREGUNTÓ, SINO A QUÉ RESPONDE. Lo
+// enseñaron los cuatro consentimientos falsos del 21/09, puestos al lado del único "Si" que sí
+// era válido:
+//
+//	07:04 bot: menú de datos → 07:06 bot: "¿en qué tiempo?" + RE-PREGUNTA las políticas
+//	→ 07:06 cliente: "Si"                                            ← VÁLIDO: contesta el menú
+//
+//	09:06 bot: menú de datos → 09:07 bot: "¡tu pedido quedó registrado!"
+//	→ 09:07 cliente: "Ok"                                            ← NO: contesta a otra cosa
+//
+// En los cuatro casos malos, entre el menú y la palabra el bot preguntó o dijo OTRA cosa, y el
+// cliente estaba contestando a eso. En el bueno, lo último que el bot había preguntado seguía
+// siendo el consentimiento.
+//
+// Así que la pregunta correcta es: ¿el menú de datos sigue siendo lo ÚLTIMO que el bot preguntó?
+//   - Sí  → vale el sí/no suelto ("si", "no", "acepto"): está contestando a eso y a nada más.
+//   - No  → el hilo se movió; solo vale el literal del botón, que es inequívoco venga cuando venga.
+//
+// El primer intento de este arreglo usaba "¿se preguntó con botones?" y era el criterio
+// equivocado: dejaba fuera el "si" a secas de quien tenía los botones delante —mucha gente
+// escribe en vez de tocar— y lo dejaba ATRAPADO, porque el recordatorio le pedía confirmar sin
+// aceptarle ninguna forma de hacerlo. Un cliente bloqueado para siempre es peor que el bug que
+// veníamos a arreglar.
+func (a *Agent) respuestaAlMenuDeDatos(from, respuesta string) (acepta, niega bool) {
+	// El literal del botón vale SIEMPRE: es inequívoco, diga lo que diga el resto del hilo.
+	if aceptacionesLiterales[respuesta] {
+		return true, false
+	}
+	if negativasLiterales[respuesta] {
+		return false, true
+	}
+	// El sí/no suelto solo cuenta si el menú es lo último que se preguntó.
+	if !a.menuDeDatosSigueSiendoLaUltimaPregunta(from) {
+		return false, false
+	}
+	return afirmacionesSimples[respuesta], negacionesSimples[respuesta]
+}
+
+// menuDeDatosSigueSiendoLaUltimaPregunta mira el último turno del BOT en el historial y dice si
+// fue el menú de consentimiento.
+//
+// Se mira el historial y no una bandera aparte porque el historial es lo que de verdad vio el
+// cliente, en el orden en que lo vio. Una bandera habría que acordarse de apagarla en cada sitio
+// donde el bot dice algo —y el olvido de uno solo reintroduce el bug.
+//
+// Sin historial (el bot se reinició, o se limpió la conversación) devuelve FALSO: ante la duda,
+// se exige el literal del botón. Equivocarse hacia ese lado hace que se le vuelva a preguntar;
+// hacia el otro, graba un consentimiento que nadie dio.
+func (a *Agent) menuDeDatosSigueSiendoLaUltimaPregunta(from string) bool {
+	historial := a.store.History(from)
+	for i := len(historial) - 1; i >= 0; i-- {
+		turno := historial[i]
+		if turno == nil || turno.Role != "model" {
+			continue
+		}
+		var dijo strings.Builder
+		for _, parte := range turno.Parts {
+			dijo.WriteString(parte.Text)
+		}
+		return esElMenuDeDatos(dijo.String())
+	}
+	return false
+}
+
+// esElMenuDeDatos reconoce el texto del menú de consentimiento en el historial. Se busca por lo
+// que ese mensaje tiene de propio —la pregunta por las políticas y el enlace de privacidad— y no
+// por el texto completo, que cambia según se haya enviado como menú o como respaldo escrito.
+func esElMenuDeDatos(texto string) bool {
+	if strings.Contains(texto, urlPrivacidad) {
+		return true
+	}
+	return afirmaSecuencia(texto, [][]string{
+		{"aceptas", "politicas", "proteccion", "datos"},
+		{"aceptas", "nuestras", "politicas"},
+		{"confirmes", "aceptas", "politicas"},
+	}, 4)
+}
+
+// Las formas de decir sí y no CUANDO SE PREGUNTÓ POR TEXTO. Deliberadamente cortas: son las que
+// no pueden significar otra cosa. "ok", "listo" y "dale" no están, y no por olvido.
+var (
+	afirmacionesSimples = map[string]bool{
+		"si": true, "sii": true, "siii": true, "sip": true, "sisi": true,
+		"si quiero": true, "si por favor": true, "si porfa": true, "si acepto": true,
+		"acepto": true, "yes": true, "afirmativo": true,
+	}
+	negacionesSimples = map[string]bool{
+		"no": true, "nop": true, "no gracias": true, "no quiero": true,
+		"no acepto": true, "negativo": true, "mejor no": true,
+	}
+)
+
+// consentimientoNiega es la COMPUERTA: dice si a este cliente NO se le pueden tratar los datos
+// personales, sea porque se negó o porque todavía no ha respondido.
+//
+// LOS TRES ESTADOS Y QUÉ HACE CADA UNO:
+//
+//	aceptó                      → pasa
+//	se negó                     → bloquea (siempre fue así)
+//	se le preguntó y no responde → BLOQUEA (esto es lo que faltaba)
+//	nunca se le preguntó         → pasa
+//
+// El tercero es el agujero que producción encontró el 21/09. Antes solo se miraba la negativa
+// explícita, así que con el menú enviado y sin responder las herramientas seguían abiertas: a las
+// 09:06 Carlos (593986140905) recibió el menú, lo ignoró, escribió su cédula suelta y a las
+// 09:07:26 su pedido estaba registrado. El consentimiento se grabó DIECISÉIS SEGUNDOS DESPUÉS.
+//
+// El silencio no es un sí. Si se le preguntó, hay que esperar la respuesta.
+//
+// El cuarto caso sigue pasando y es igual de deliberado: al cliente de siempre el bot nunca le
+// pide la cédula —ya tiene su perfil—, así que nunca llega al menú y no puede quedar bloqueado
+// por algo que no se le preguntó. Es lo que se pidió: "a los que ya están registrados no podemos
+// hacer nada, deben continuar igual".
 func (a *Agent) consentimientoNiega(from string) bool {
-	c, hay := a.store.GetConsentimiento(from)
-	return hay && !c.Acepta
+	if c, hay := a.store.GetConsentimiento(from); hay {
+		return !c.Acepta
+	}
+	// Sin respuesta registrada: bloquea solo si se le llegó a preguntar.
+	return a.store.ConsentimientoPendiente(from)
+}
+
+// instruccionSinConsentimiento es lo que se le dice AL MODELO cuando una herramienta se bloquea.
+// No lo ve el cliente: el modelo lo lee y redacta con sus palabras.
+//
+// Distingue los dos motivos porque llevan a mensajes opuestos. A quien se NEGÓ hay que
+// despedirlo con amabilidad; a quien solo no ha contestado hay que RECORDARLE que responda —
+// decirle "no aceptaste" a alguien que simplemente no vio el menú es acusarlo de algo que no
+// hizo, y encima cierra una venta que todavía estaba viva.
+func (a *Agent) instruccionSinConsentimiento(from, queNoSeHizo string) string {
+	if _, respondio := a.store.GetConsentimiento(from); !respondio {
+		return "El cliente TODAVÍA NO ha respondido al menú de protección de datos: " + queNoSeHizo +
+			" y NO se guardó ningún dato suyo. NO le pidas la cédula ni otros datos personales. " +
+			"Recuérdale con amabilidad que para continuar necesitas que responda si acepta las " +
+			"políticas, con los botones que ya le enviaste. NO le digas que se negó: no lo hizo."
+	}
+	return "El cliente NO autorizó el tratamiento de sus datos: " + queNoSeHizo + " y NO se guardó " +
+		"ningún dato suyo. Explícale con amabilidad que sin esa autorización no puedes tomarle el " +
+		"pedido por aquí, y ofrécele el teléfono de atención."
 }
 
 // sincronizarConsentimiento registra en el backend, POR CÉDULA, el consentimiento que hasta ahora
