@@ -547,6 +547,12 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// Ver consentimiento.go: este candado es la UX; la garantía es la compuerta de las tools.
 	reply = a.revisarPeticionDeCedula(t, from, reply)
 
+	// Candado del REPARTIDOR: con el pedido en la cola esperando conductor, el modelo no puede
+	// decir que el repartidor viene ni cuánto tarda. Va DESPUÉS del candado del fantasma a
+	// propósito: aquel rescata el pedido que no existe, y este corrige lo que se dice del que sí
+	// existe pero todavía no tiene a nadie asignado. Ver repartidorprometido.go.
+	reply = a.revisarRepartidorPrometido(from, reply)
+
 	// Candado del MENÚ: que existan botones no sirve de nada si el modelo decide no mandarlos.
 	// Si preguntó el color o la cantidad en texto plano, el menú lo manda el CÓDIGO —con el
 	// mismo texto del modelo como cuerpo, para no perderle el tono—. Ver menuseguro.go.
