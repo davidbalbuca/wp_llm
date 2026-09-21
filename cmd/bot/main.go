@@ -698,6 +698,13 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	// Ver internal/agent/sesionnueva.go.
 	ag.EmpezarConversacionSiCorresponde(inc.From)
 
+	// EL BOT SE PRESENTA al empezar una conversación (ver internal/agent/bienvenida.go).
+	//
+	// Se calcula AQUÍ y no más abajo porque depende de LastActivity, y el TouchActivity de unas
+	// líneas más adelante la pisa: después de eso, todo cliente parece estar a media conversación
+	// y no se saludaría a nadie. Se envía luego, cuando ya sabemos que el bot va a responder.
+	saludoInicial, haySaludo := ag.SaludoDeBienvenida(inc.From)
+
 	// --- Control humano (takeover) ---
 	// Si el chat está tomado por un humano pero lleva más de HumanTakeoverTimeout inactivo, vuelve
 	// SOLO al bot (para que un pedido NUEVO lo atienda el bot y no quede colgado esperando a alguien).
@@ -734,6 +741,20 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	if humanControlled {
 		log.Printf("[webhook] chat en control humano; el bot no responde a %s", inc.From)
 		return
+	}
+
+	// LA PRESENTACIÓN SALE AQUÍ, antes de que el modelo conteste nada.
+	//
+	// Va como mensaje APARTE y no metida en la respuesta: el cliente escribió para algo concreto
+	// ("deseo pedir gas", "¿traen a mi zona?") y esa respuesta tiene que llegarle igual. Así ve
+	// primero quiénes somos y enseguida lo que vino a buscar, sin que una cosa tape a la otra.
+	//
+	// Después del control humano a propósito: si un humano tomó el chat, el bot no habla.
+	if haySaludo {
+		if err := avisarCliente(cfg, store, inc.From, saludoInicial); err != nil {
+			// Que no salga el saludo no puede cortar la conversación: se sigue con el pedido.
+			log.Printf("[bienvenida] no se pudo saludar a %s: %v", inc.From, err)
+		}
 	}
 
 	// Determina el texto a procesar por la IA.
