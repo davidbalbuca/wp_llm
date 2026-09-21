@@ -224,8 +224,7 @@ func (a *Agent) ResponderConsentimiento(from, texto string) (string, bool) {
 		a.store.SetConsentimiento(from, conversation.Consentimiento{
 			Acepta: true, Fecha: time.Now(),
 		})
-		// Se sincroniza con el backend en cuanto haya cédula: aquí todavía no la hay.
-		msg := "¡Gracias! 🙌 Ahora sí, ¿me compartes tu número de cédula?"
+		msg := a.mensajeTrasAceptar(from)
 		a.store.AppendUser(from, texto)
 		a.store.AppendModel(from, msg)
 		return msg, true
@@ -362,6 +361,38 @@ var (
 		"no acepto": true, "negativo": true, "mejor no": true,
 	}
 )
+
+// mensajeTrasAceptar responde al "Sí, acepto" MIRANDO en qué punto está el pedido, en vez de
+// suponer que la cédula todavía no llegó.
+//
+// EL BOTÓN SE QUEDA EN LA PANTALLA DEL CLIENTE. Eso es lo que nadie tuvo en cuenta al escribir
+// la respuesta quemada. El cliente ve el menú, lo ignora, sigue por otro camino —manda su cédula,
+// pregunta el precio, comparte la ubicación— y minutos después toca el botón, que seguía ahí.
+// Para entonces el flujo ya avanzó.
+//
+// El 20/09 a las 08:31 Jessica (593968179884) mandó su cédula a las 08:31:19, el bot le pidió el
+// nombre, y a las 08:31:22 tocó "Sí, acepto": el bot le pidió la cédula OTRA VEZ. Ella contestó
+// con su nombre —a la pregunta de hacía 12 segundos— y a partir de ahí los dos fueron
+// desfasados. Cuatro turnos cruzados seguidos, todos por esta frase.
+//
+// Pasó en 9 de los 15 consentimientos de producción. El peor: Carlos (21/09 09:07:42), con el
+// pedido YA registrado, recibió "¿me compartes tu número de cédula?" — que le hace dudar de si
+// su pedido existe.
+func (a *Agent) mensajeTrasAceptar(from string) string {
+	perfil, hayPerfil := a.store.GetProfile(from)
+	tieneCedula := hayPerfil && strings.TrimSpace(perfil.Identificacion) != ""
+
+	if !tieneCedula {
+		// El caso normal: aceptó y ahora sí toca pedírsela.
+		return "¡Gracias! 🙌 Ahora sí, ¿me compartes tu número de cédula?"
+	}
+	// Ya la tenía. Lo que corresponde depende de hasta dónde llegó el pedido.
+	if a.tienePedidoVivo(from) {
+		// Lo que necesita oír es que su pedido sigue en pie, no una petición de datos.
+		return "¡Gracias por confirmarlo! 🙌 Tu pedido sigue en marcha, no tienes que hacer nada más 😊"
+	}
+	return "¡Gracias! 🙌 Ya tengo tus datos, seguimos con tu pedido."
+}
 
 // consentimientoNiega es la COMPUERTA: dice si a este cliente NO se le pueden tratar los datos
 // personales, sea porque se negó o porque todavía no ha respondido.
