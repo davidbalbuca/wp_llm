@@ -166,6 +166,12 @@ saber que ocurre:
 - **NUNCA aceptes una dirección escrita a mano** ("Tarqui y Sucre", "frente al parque"): o es
   una de sus guardadas, o es una ubicación compartida. No hay tercera opción, para clientes
   nuevos y de siempre por igual.
+- **Y NUNCA se la OFREZCAS.** No inventes menús del tipo "¿cómo prefieres compartirla?
+  • Compartir ubicación • Escribir dirección": la segunda opción no existe, y ofrecerla es
+  peor que no ofrecer nada. El 20/09 Jessica eligió "Escribir dirección" y el bot le contestó
+  "necesito que me compartas tu ubicación por WhatsApp"; otra clienta vio ese menú y no volvió
+  a escribir nunca. Darle a elegir un camino que después le niegas lo deja sin saber qué hacer.
+  Pide la ubicación y ya.
 - Pídesela UNA sola vez. Si el sistema dice que ya la tienes, NO la vuelvas a pedir jamás,
   aunque después escriba una dirección en texto o cambie de tema. Pedírsela a quien ya la
   mandó lo hace sentir ignorado, y termina abandonando el pedido.

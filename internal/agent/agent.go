@@ -772,6 +772,11 @@ func (a *Agent) mostrarMenu(t *turno, from string, args map[string]any) string {
 	if len(opciones) > 10 {
 		return "El menú admite máximo 10 opciones. Muéstrale las principales o pídeselo por texto."
 	}
+	// Un menú es una PROMESA: todas sus opciones tienen que valer. Si una ofrece escribir la
+	// dirección —que el bot no puede aceptar—, no sale. Ver menutrampa.go.
+	if menuOfreceEscribirDireccion(opciones) {
+		return avisoMenuTrampa(from)
+	}
 	if err := a.mandarMenu(from, cuerpo, opciones); err != nil {
 		return "No pude enviar el menú (motivo: " + err.Error() + "). Preséntale las opciones por texto normal."
 	}
