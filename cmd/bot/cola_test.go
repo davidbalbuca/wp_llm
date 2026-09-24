@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -187,5 +188,59 @@ func TestProcessWebhookTomaElLockAntesDeTocarElStore(t *testing.T) {
 		}
 		t.Fatalf("processWebhook accede al store ANTES de tomar el lock (%q): dos turnos del "+
 			"mismo cliente leerían el mismo estado viejo", strings.TrimSpace(linea))
+	}
+}
+
+// EL CLIENTE NUNCA PUEDE VER UN ERROR TÉCNICO.
+//
+// El caso (Norma, 593984573546, 24-sep 11:33): el proxy devolvió un 401 y en el panel quedó
+// "La IA falló al responder: anthropic HTTP 401: {...Invalid bearer token...}". A ella SÍ le
+// llegó solo la disculpa —ese texto es auditoría interna (LogMessage), no se envía por
+// WhatsApp—, pero la distancia entre las dos cosas es una sola línea de código: basta que
+// alguien interpole el err en el texto que se manda para filtrar un stacktrace, una URL
+// interna o el nombre del proveedor.
+//
+// Este guard es ESTRUCTURAL a propósito: no prueba el mensaje de hoy, prohíbe la FORMA de
+// escribirlo mal. Un test que solo comprobara el texto actual no se enteraría del día en que
+// alguien añada un replyClient(..., fmt.Sprintf("... %v", err)) tres funciones más abajo.
+func TestNoSeLeMandaElErrorTecnicoAlCliente(t *testing.T) {
+	// Las funciones que ESCRIBEN al cliente por WhatsApp. LogMessage/reportarFallo no están:
+	// esas son la auditoría del panel, que sí debe llevar el detalle crudo para diagnosticar.
+	enviosAlCliente := regexp.MustCompile(`(replyClient|whatsapp\.SendText)\([^)]*`)
+
+	for _, archivo := range []string{"main.go", "cobertura.go", "cierre.go", "takeover.go"} {
+		src := codigoSinComentarios(t, archivo)
+		for _, envio := range enviosAlCliente.FindAllString(src, -1) {
+			// `err` como identificador suelto: err, %v con err, err.Error(), fmt.Sprintf(..., err).
+			// Se excluye `err :=` y `err !=`, que son la comprobación normal del valor devuelto.
+			if regexp.MustCompile(`\berr\b\s*(?:\.|,|\))`).MatchString(envio) {
+				t.Errorf("%s: se le está mandando el error técnico al cliente:\n  %s\n"+
+					"El cliente recibe una disculpa; el detalle va a reportarFallo (panel y "+
+					"Telegram), nunca a WhatsApp.", archivo, envio)
+			}
+		}
+	}
+}
+
+// Y la disculpa tiene que seguir siendo una disculpa: sin jerga, sin códigos, sin nombres de
+// proveedor. Si alguien "mejora" el mensaje metiendo el detalle para ayudar al soporte, el
+// cliente acaba leyendo "anthropic HTTP 401" y pierde la confianza en el servicio.
+func TestLaDisculpaNoLlevaJergaTecnica(t *testing.T) {
+	src := codigoSinComentarios(t, "main.go")
+	i := strings.Index(src, "inconveniente técnico")
+	if i < 0 {
+		t.Fatal("no se encontró el mensaje de disculpa; si se renombró, actualizar este test")
+	}
+	// La línea entera donde vive el mensaje.
+	inicio := strings.LastIndex(src[:i], "\n") + 1
+	fin := strings.Index(src[i:], "\n")
+	linea := src[inicio : i+fin]
+
+	prohibidas := []string{"anthropic", "gemini", "HTTP", "401", "429", "%v", "%s", "%w",
+		"err", "token", "API", "status"}
+	for _, p := range prohibidas {
+		if strings.Contains(linea, p) {
+			t.Errorf("la disculpa al cliente contiene %q: %s", p, strings.TrimSpace(linea))
+		}
 	}
 }
