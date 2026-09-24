@@ -92,8 +92,57 @@ func TestLockClienteEsElMismoPorTelefono(t *testing.T) {
 // Un turno colgado no puede bloquear la cola para siempre: timeoutTurno lo acota. Este test
 // fija el contrato del valor (si alguien lo sube a minutos, el cliente siguiente esperaría eso).
 func TestTimeoutTurnoAcotado(t *testing.T) {
-	if timeoutTurno <= 0 || timeoutTurno > time.Minute {
-		t.Fatalf("timeoutTurno = %s; debe ser > 0 y <= 1m para que un turno colgado no bloquee la cola", timeoutTurno)
+	if timeoutTurno <= 0 || timeoutTurno > 90*time.Second {
+		t.Fatalf("timeoutTurno = %s; debe ser > 0 y <= 90s para que un turno colgado no bloquee la cola", timeoutTurno)
+	}
+}
+
+// Y el techo NO puede estar pegado a lo que tarda una respuesta normal.
+//
+// El caso (593984573546, 24-sep 15:57): el cliente escribió su dirección con referencias
+// -"Rumiñahui 3-34 y hernando Leopulla esquina a 2 cuadras del rio tomebamba"- y no recibió
+// respuesta. En el log: "ERROR tras 30.025s" y "signal: killed". No falló el modelo: el bot
+// dejó de esperarlo, canceló el contexto y el proxy mató el proceso.
+//
+// timeoutTurno estaba en 30s cuando las respuestas reales medidas en producción llegaban a
+// 22s. Ocho segundos de margen: cualquier turno un poco más largo caía. Es la misma clase de
+// error que topeBusqueda (ver docs/flujo-espera-repartidor.md) — una red de seguridad puesta
+// tan cerca del caso normal que deja de ser red y pasa a ser el límite.
+//
+// El test NO fija el número: fija el MARGEN sobre lo que de verdad tarda el modelo. Falla si
+// alguien lo vuelve a bajar hasta rozar el caso normal.
+func TestTimeoutTurnoNoAhogaUnaRespuestaNormal(t *testing.T) {
+	// Máximo observado en producción (60 peticiones al proxy el 24-sep): 22s. Mediana ~7s.
+	const respuestaLentaReal = 22 * time.Second
+	const margenMinimo = 2 * respuestaLentaReal
+
+	if timeoutTurno < margenMinimo {
+		t.Fatalf("timeoutTurno = %s; con respuestas reales de hasta %s hace falta al menos %s "+
+			"de margen. Con el techo pegado al caso normal, el cliente se queda sin respuesta "+
+			"justo cuando escribe el mensaje más largo (el caso del 24-sep)",
+			timeoutTurno, respuestaLentaReal, margenMinimo)
+	}
+}
+
+// El turno del bot tiene que vencer ANTES que los relojes que están por debajo, o el orden se
+// invierte y quien corta pasa a ser otro.
+//
+// Son tres, en cascada:
+//
+//	turno del bot        timeoutTurno            <- el que debe ganar
+//	cliente HTTP         90s  (internal/llm/anthropic.go)
+//	salida del proxy     100s (claude_proxy/cmd/proxy/main.go)
+//
+// Si timeoutTurno superara al del cliente HTTP, el error que vería el cliente cambiaría de
+// "el turno tardó demasiado" a uno de transporte, y el reintento del proveedor quedaría
+// atrapado dentro de un turno ya vencido.
+func TestElTurnoVenceAntesQueElClienteHTTP(t *testing.T) {
+	// Declarado en internal/llm/anthropic.go: &http.Client{Timeout: 90 * time.Second}.
+	const timeoutClienteHTTP = 90 * time.Second
+
+	if timeoutTurno >= timeoutClienteHTTP {
+		t.Fatalf("timeoutTurno = %s >= cliente HTTP (%s): el turno tiene que vencer PRIMERO, "+
+			"si no el corte lo decide el transporte y no la cola", timeoutTurno, timeoutClienteHTTP)
 	}
 }
 
