@@ -578,6 +578,14 @@ type Store interface {
 	FueraDeCoberturaVerificado(phone string) bool
 	// LimpiarFueraDeCobertura olvida ese rechazo (ubicación nueva o sesión nueva).
 	LimpiarFueraDeCobertura(phone string)
+	// SetSectorCubierto guarda el SECTOR que devolvió la geocerca cuando la ubicación del
+	// cliente SÍ tiene cobertura ("TOTORACOCHA"). Es el dato que permite confirmárselo por su
+	// nombre en vez de pasar de largo al resto del pedido.
+	SetSectorCubierto(phone, sector string)
+	// SectorCubierto devuelve ese sector (vacío si no se ha verificado ninguna ubicación).
+	SectorCubierto(phone string) string
+	// LimpiarSectorCubierto lo olvida (ubicación nueva sin verificar, o sesión nueva).
+	LimpiarSectorCubierto(phone string)
 	// SetSeguimientoActivo guarda el enlace de seguimiento del pedido activo. Va junto al pedido
 	// y muere con él: al cancelarse o entregarse, ClearActivePedido lo borra.
 	SetSeguimientoActivo(phone, url string)

@@ -105,6 +105,18 @@ func (a *Agent) construirSistema(from string) (fijo, volatil string) {
 			"guardada. NO se la vuelvas a pedir por ningun motivo. Si te escribe una direccion " +
 			"en texto, agradecele y usala como referencia, pero NO le pidas que mande el pin de " +
 			"nuevo: ya lo hizo. Sigue con lo que falte del pedido.")
+		// El sector que la geocerca CONFIRMO. Compartir la ubicacion es una pregunta ("¿llegan
+		// aqui?") y hay que responderla: el 24/09 un cliente pregunto en que parte de Cuenca se
+		// atiende, mando el pin justo para que se lo confirmaran, y el bot salio con el menu de
+		// colores sin decirle que si. El nombre sale del backend, NO del modelo.
+		if sector := a.store.SectorCubierto(from); sector != "" {
+			b.WriteString(fmt.Sprintf("\n\nCOBERTURA CONFIRMADA: la geocerca verifico su "+
+				"ubicacion y SI llegamos: sector %s. DISELO en tu proxima respuesta, con esas "+
+				"palabras y ese nombre, ANTES de seguir con el pedido (ej: \"¡Buenas noticias! "+
+				"Si llegamos a tu zona (%s) 🎉\"). Es lo que el cliente esta esperando saber. No "+
+				"inventes ni cambies el nombre del sector, y no lo repitas en turnos siguientes.",
+				sector, sector))
+		}
 	}
 
 	// Pedido EN PAUSA esperando que confirme la direccion. Si el cliente no toco ninguno de los

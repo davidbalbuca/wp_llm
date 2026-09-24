@@ -31,6 +31,17 @@ func fueraDeCobertura(cfg config.Config, store conversation.Store, gr *georoutes
 		return false
 	}
 	if res.Cubierto {
+		// SÍ hay cobertura: se le DICE, con el nombre del sector. El backend ya devolvía
+		// {sector, zona} y el bot los tiraba a la basura (caso 593939235151, 24/09: el cliente
+		// preguntó "en qué parte de Cuenca dan servicio", mandó el pin justo para que se lo
+		// confirmaran, y el bot salió con el menú de colores sin decirle que sí). Compartir la
+		// ubicación es una pregunta, y quedaba sin responder.
+		//
+		// El nombre viene del backend, nunca del modelo: es el sector que decidió la geocerca.
+		if res.Sector != "" {
+			store.SetSectorCubierto(from, res.Sector)
+			log.Printf("[cobertura] %s está dentro de cobertura: sector %q (zona %q)", from, res.Sector, res.Zona)
+		}
 		return false
 	}
 

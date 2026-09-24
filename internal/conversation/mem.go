@@ -16,6 +16,7 @@ type memStore struct {
 	esperandoDireccion map[string][]ItemPedido
 	seguimiento        map[string]string // enlace de seguimiento del pedido ACTIVO
 	fueraCobertura     map[string]bool   // su ubicación se verificó y cayó fuera de zona
+	sectorCubierto     map[string]string // sector que devolvió la geocerca cuando SÍ hay cobertura
 	data               map[string][]*genai.Content
 	locations          map[string]Location
 	accounts           map[string]Account
@@ -824,6 +825,27 @@ func (s *memStore) LimpiarFueraDeCobertura(phone string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.fueraCobertura, phone)
+}
+
+func (s *memStore) SetSectorCubierto(phone, sector string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sectorCubierto == nil {
+		s.sectorCubierto = map[string]string{}
+	}
+	s.sectorCubierto[phone] = sector
+}
+
+func (s *memStore) SectorCubierto(phone string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sectorCubierto[phone]
+}
+
+func (s *memStore) LimpiarSectorCubierto(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sectorCubierto, phone)
 }
 
 func (s *memStore) SetSeguimientoActivo(phone, url string) {

@@ -109,7 +109,14 @@ type Agent struct {
 
 // mandarMenu envía un menú interactivo por WhatsApp. Único camino: así los tests pueden leer el
 // cuerpo que se le manda al cliente sustituyendo a.enviarMenu.
+//
+// Aquí se antepone también la confirmación de cobertura pendiente. Tiene que ser en este punto:
+// cuando el turno acaba en menú, el TEXTO de la respuesta no se envía (el llamador solo muestra
+// el menú), así que un candado que solo reescribiera el texto se perdería —y ese es justo el caso
+// del 24/09, donde el bot contestó la ubicación del cliente con el menú de colores—. El cuerpo
+// del menú sí llega, así que la confirmación viaja con él.
 func (a *Agent) mandarMenu(from, cuerpo string, opciones []string) error {
+	cuerpo = a.conCoberturaConfirmada(from, cuerpo)
 	if a.enviarMenu != nil {
 		return a.enviarMenu(from, cuerpo, opciones)
 	}
@@ -555,6 +562,12 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// dio por cubiertos Paute, Sígsig, Gualaceo y Santa Isabel —cuatro cantones de Azuay donde no
 	// operamos— y pasó directo a ofrecer el pedido, sin llegar a consultar la geocerca.
 	reply = a.revisarCoberturaAfirmada(from, reply)
+
+	// Y la cara POSITIVA: cuando la geocerca SÍ confirmó la zona, el cliente tiene que
+	// enterarse. El 24/09 uno preguntó en qué parte de Cuenca se atiende, mandó el pin para que
+	// se lo confirmaran y el bot pasó directo al menú de colores sin decirle que sí. Ver
+	// cobertura.go: el nombre del sector lo pone el backend, no el modelo.
+	reply = a.revisarCoberturaConfirmada(from, reply)
 
 	// Y que no le pida el pin a quien acaba de mandarlo. El 15/09, con tres ubicaciones seguidas,
 	// le contestó "compárteme tu ubicación" a una que ya tenía guardada: el pin no se perdió, el

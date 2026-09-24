@@ -1511,6 +1511,28 @@ func (s *sqliteStore) LimpiarFueraDeCobertura(phone string) {
 	fueraCoberturaMem.Delete(phone)
 }
 
+// El sector cubierto vive en memoria por lo mismo que el rechazo: dura la conversación y solo se
+// usa para confirmarle al cliente que llegamos a su zona. Si el bot reinicia, el peor caso es que
+// no se le nombre el sector; el pedido sigue igual porque la geocerca se consulta aparte.
+var sectorCubiertoMem sync.Map // phone -> sector
+
+func (s *sqliteStore) SetSectorCubierto(phone, sector string) {
+	sectorCubiertoMem.Store(phone, sector)
+}
+
+func (s *sqliteStore) SectorCubierto(phone string) string {
+	if v, ok := sectorCubiertoMem.Load(phone); ok {
+		if sector, ok := v.(string); ok {
+			return sector
+		}
+	}
+	return ""
+}
+
+func (s *sqliteStore) LimpiarSectorCubierto(phone string) {
+	sectorCubiertoMem.Delete(phone)
+}
+
 // El enlace de seguimiento vive junto al pedido activo (misma fila): así no hay forma de que
 // sobreviva a su pedido. Se guarda en la tabla existente por la columna `seguimiento`, que
 // entra por el ALTER idempotente.

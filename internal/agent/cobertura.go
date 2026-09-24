@@ -22,6 +22,7 @@
 package agent
 
 import (
+	"fmt"
 	"log"
 	"strings"
 
@@ -107,6 +108,67 @@ func (a *Agent) revisarPedidoDeUbicacionRedundante(from, reply string) string {
 		"se reemplaza para no hacerle repetir el pin", from)
 	return "¡Ya tengo tu ubicación, gracias! 😊 Cuéntame qué cilindro necesitas y cuántos, y te " +
 		"lo despacho enseguida."
+}
+
+// confirmaElSector dice si el texto ya le está confirmando al cliente que llegamos a su zona.
+// Se usa para NO duplicar la confirmación: si el modelo hizo lo que el prompt le pidió, el
+// candado no tiene nada que añadir.
+func confirmaElSector(texto, sector string) bool {
+	norm := normalizar(texto)
+	// El nombre del sector basta como señal: el prompt le pide nombrarlo, y no hay otra razón
+	// para que aparezca en la respuesta.
+	if sector != "" && strings.Contains(norm, normalizar(sector)) {
+		return true
+	}
+	return afirmaSecuencia(texto, [][]string{
+		{"si", "llegamos", "tu", "zona"}, {"si", "llegamos", "alla"},
+		{"llegamos", "tu", "sector"}, {"si", "atendemos", "tu", "zona"},
+		{"si", "tenemos", "cobertura", "tu", "zona"}, {"estas", "dentro", "nuestra", "cobertura"},
+		{"buenas", "noticias", "si", "llegamos"},
+	}, 3)
+}
+
+// revisarCoberturaConfirmada garantiza que el cliente se ENTERE de que sí llegamos a su zona.
+//
+// El caso (593939235151, 24/09): preguntó "en qué parte de cuenca da su servicio", el bot le
+// pidió la ubicación para confirmárselo, el cliente la mandó... y el bot pasó directo al menú de
+// colores. Nunca le dijo que sí. Compartir la ubicación es una PREGUNTA y se quedó sin responder;
+// el cliente siguió el pedido sin saber si le iba a llegar.
+//
+// El prompt ya le pide nombrar el sector (ver COBERTURA CONFIRMADA en prompt.go), pero pedirle
+// algo al modelo no es garantía —es la lección de los otros diez candados—, así que si no lo
+// dijo, lo antepone el código con el nombre que devolvió la geocerca.
+//
+// Se hace UNA sola vez: la marca se consume al usarla, para no repetirle lo mismo en cada turno.
+func (a *Agent) revisarCoberturaConfirmada(from, reply string) string {
+	if strings.TrimSpace(reply) == "" {
+		// Turno sin texto: o no hay nada que decir, o acabó en menú y la confirmación ya viajó
+		// en su cuerpo (ver mandarMenu). En ningún caso hay que consumir la marca aquí.
+		return reply
+	}
+	return a.conCoberturaConfirmada(from, reply)
+}
+
+// conCoberturaConfirmada antepone la confirmación de zona al mensaje que va a salir, sea el texto
+// de la respuesta o el cuerpo de un menú. Consume la marca: la confirmación es de UN turno, el
+// que siguió a la ubicación, y repetirla en cada mensaje sonaría a disco rayado.
+func (a *Agent) conCoberturaConfirmada(from, mensaje string) string {
+	sector := a.store.SectorCubierto(from)
+	if sector == "" {
+		return mensaje
+	}
+	a.store.LimpiarSectorCubierto(from)
+
+	if confirmaElSector(mensaje, sector) {
+		return mensaje // el modelo ya lo dijo, con su propio tono
+	}
+	log.Printf("[cobertura] %s: el modelo no confirmó la cobertura del sector %q; se antepone en código",
+		from, sector)
+	confirmacion := fmt.Sprintf("¡Buenas noticias! Sí llegamos a tu zona (%s) 🎉", sector)
+	if strings.TrimSpace(mensaje) == "" {
+		return confirmacion
+	}
+	return confirmacion + "\n\n" + mensaje
 }
 
 // revisarCoberturaAfirmada reemplaza la respuesta del modelo cuando PROMETE cobertura sin que

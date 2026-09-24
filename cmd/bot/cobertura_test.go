@@ -73,6 +73,40 @@ func TestDentroDeCoberturaElFlujoSigue(t *testing.T) {
 	}
 }
 
+// Y el SECTOR que devolvió la geocerca se GUARDA, para poder confirmárselo por su nombre.
+//
+// El caso (593939235151, 24/09): el cliente preguntó en qué parte de Cuenca se atiende, mandó su
+// ubicación justo para que se lo confirmaran, y el bot pasó directo al menú de colores. El
+// backend SÍ devolvía {"sector":"..."} en esa misma respuesta: el bot leía solo `cubierto` y
+// tiraba el nombre. Sin este guardado, el candado de confirmación no tiene nada que decir.
+func TestDentroDeCoberturaSeGuardaElSector(t *testing.T) {
+	gr := backendCobertura(t, "dentro")
+	store := conversation.NewMemStore()
+	const from = "593939235151"
+
+	if fueraDeCobertura(config.Config{}, store, gr, from, -2.898, -79.002) {
+		t.Fatal("un cliente DENTRO de cobertura fue tratado como fuera")
+	}
+	if got := store.SectorCubierto(from); got != "EL SAGRARIO" {
+		t.Errorf("el sector no se guardó: %q (esperado \"EL SAGRARIO\")", got)
+	}
+}
+
+// Fuera de cobertura NO deja sector: si quedara, el bot podría confirmarle la zona justo a quien
+// acabamos de rechazar.
+func TestFueraDeCoberturaNoDejaSector(t *testing.T) {
+	gr := backendCobertura(t, "fuera")
+	store := conversation.NewMemStore()
+	const from = "593999000072"
+
+	if !fueraDeCobertura(config.Config{}, store, gr, from, -0.18, -78.47) {
+		t.Fatal("un cliente FUERA de cobertura no fue detectado")
+	}
+	if got := store.SectorCubierto(from); got != "" {
+		t.Errorf("quedó un sector para un cliente fuera de zona: %q", got)
+	}
+}
+
 // Fuera de cobertura: el turno se corta (true) y queda la marca en la auditoría. El envío
 // del WhatsApp falla (config vacía) y no importa: lo que se mide es la decisión.
 func TestFueraDeCoberturaCortaElTurno(t *testing.T) {
