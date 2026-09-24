@@ -68,7 +68,10 @@ func (a *Agent) anotarDelMensaje(from, texto string) {
 	//
 	//    Con varias líneas abiertas, "1 de blanco" lleva la cantidad a la línea de ESE color;
 	//    un número solo ("2") va a la línea que se está eligiendo ahora.
-	if !pareceHora && len(strings.Fields(texto)) <= 4 {
+	//    Y la opción "Más de 3" del menú NO es una cantidad, aunque lleve un 3 dentro: es la
+	//    puerta para escribir un número mayor. Sin esta salida, el cliente que la toca queriendo
+	//    SEIS se queda con TRES anotados — lo contrario exacto de lo que pidió.
+	if !pareceHora && !esOpcionMasCilindros(texto) && len(strings.Fields(texto)) <= 4 {
 		n := primerNumero(texto)
 		if n < 1 {
 			// En palabras: "un gas blanco", "dos cilindros". Antes solo se leían dígitos, así que

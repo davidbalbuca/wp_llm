@@ -1111,6 +1111,16 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 			}
 			return
 		}
+		// "Más de 3" del menú de cantidad: se le pide el número. Los botones tappables de
+		// WhatsApp son 3, así que con [1/2/3] quien quería 6 tenía que adivinar que podía
+		// escribirlo. Ver internal/agent/mascilindros.go.
+		if reply, manejado := ag.ResponderMasCilindros(inc.From, inc.Text); manejado {
+			log.Printf("[webhook] peticion de mas cilindros resuelta para %s", inc.From)
+			if reply != "" {
+				_ = replyClient(cfg, store, inc.From, reply)
+			}
+			return
+		}
 		// Dirección GUARDADA elegida como destino ("Tienda", "a la casa", o el botón del menú).
 		// En código porque el destino del gas no puede depender de que el modelo interprete
 		// bien un nombre (Fase B.4; ver internal/agent/direcciones.go).

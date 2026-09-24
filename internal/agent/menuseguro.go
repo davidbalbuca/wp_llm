@@ -28,10 +28,23 @@ import (
 	"strings"
 )
 
-// cantidadesSugeridas son los botones de "¿cuántos?". Tres opciones cubren casi todos los pedidos
-// domésticos; quien quiera más lo escribe y el flujo sigue igual (la ficha lo entiende).
+// BotonMasCilindros es la última opción del menú de cantidad, para quien necesita más de los
+// sugeridos. No es un pedido: abre la puerta a escribir el número.
+//
+// Hace falta porque los botones tappables de WhatsApp son 3 como máximo, y con [1/2/3] el
+// cliente que quiere 6 —hay dos pedidos reales de 6 en producción— tenía que adivinar que podía
+// escribirlo. Con 4 o más opciones WhatsApp manda una LISTA desplegable, así que la opción cabe.
+const BotonMasCilindros = "Más de 3"
+
+// cantidadesSugeridas son las opciones de "¿cuántos?". Decisión del dueño (24-sep): lista
+// desplegable, y para más de 3 que el cliente escriba el número.
+//
+// Son CUATRO entradas a propósito: con tres o menos WhatsApp las manda como botones y no cabría
+// la salida para cantidades mayores (ver buildInteractiveMenu). El reparto real de producción es
+// 1 → 67 pedidos, 2 → 23, 3 → 5, 6 → 2: los tres primeros cubren el 95%, y el resto ya no queda
+// sin camino.
 func cantidadesSugeridas() []string {
-	return []string{"1", "2", "3"}
+	return []string{"1", "2", "3", BotonMasCilindros}
 }
 
 // preguntaElColor detecta que el texto le está preguntando al cliente qué color o marca quiere.
