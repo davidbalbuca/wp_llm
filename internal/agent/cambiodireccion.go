@@ -124,8 +124,10 @@ func (a *Agent) CambiarDireccionPorUbicacion(from string, lat, lng float64) (str
 		a.store.AppendModel(from, msg)
 		return msg, true
 	}
-	// Si además había espera, limpiarla: ya no aplica.
-	a.store.ClearPendingWait(from)
+	// Si además había espera, cerrarla — y con ella la búsqueda del backend. Sin esto el
+	// backend podría asignarle un repartidor al pedido VIEJO y mandarlo a la dirección
+	// anterior, mientras el bot registra otro en la nueva. Ver cerrarEsperaYBusqueda.
+	a.cerrarEsperaYBusqueda(from, "cambio de direccion con pedido en ruta")
 
 	// --- Paso 2: re-registrar con las mismas líneas en la nueva ubicación ---
 	// La ubicación NUEVA ya está en el store (la guardó el webhook), así que

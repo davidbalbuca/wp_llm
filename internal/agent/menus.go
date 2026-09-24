@@ -42,8 +42,12 @@ func (a *Agent) ResponderMenuEspera(from, texto string) (string, bool) {
 	respuesta := normalizarRespuesta(texto)
 
 	switch {
-	case respuesta == "esperar" || respuestasAfirmativas[respuesta]:
+	case respuesta == "esperar" || respuesta == "seguir buscando" || respuestasAfirmativas[respuesta]:
 		log.Printf("[menu-espera] %s aceptó esperar; se arranca la búsqueda en código", from)
+		// Ya contestó: se libera la marca para que la SIGUIENTE ronda pueda volver a
+		// preguntarle. Sin esto acepta una vez y nunca más se le consulta — es lo que le pasó a
+		// Carlos el 23/09 (ver rondasespera.go).
+		a.liberarRespuestaDeEspera(from)
 		a.esperarConductor(from) // arranca startWaitForDriver; su texto es para el modelo
 		respuesta := "¡Perfecto! 🚚 Ya estoy buscando un repartidor para ti. Te aviso por aquí apenas " +
 			"se asigne (o si en unos minutos no hay ninguno disponible). Quédate atento 😊"
@@ -55,6 +59,12 @@ func (a *Agent) ResponderMenuEspera(from, texto string) (string, bool) {
 
 	case respuesta == "cancelar" || respuestasNegativas[respuesta]:
 		log.Printf("[menu-espera] %s no quiso esperar; se cancela la espera en código", from)
+		// La ronda se lee AQUÍ, antes de que cancelarEspera borre la espera: si no, al redactar
+		// la respuesta ya no hay estado que consultar y todo el mundo recibe el mismo texto.
+		yaHabiaEsperado := false
+		if espera, hay := a.store.GetPendingWait(from); hay && espera.RondaEspera > 1 {
+			yaHabiaEsperado = true
+		}
 		// ANTES DE NADA: ¿tiene un pedido de VERDAD en camino? Un cliente puede estar esperando
 		// repartidor para un pedido nuevo y tener otro ya asignado de antes (o hecho desde la
 		// app). Si lo hay, "Cancelar" tiene que cancelar ESE, que es lo que él entiende por
@@ -70,10 +80,18 @@ func (a *Agent) ResponderMenuEspera(from, texto string) (string, bool) {
 		// "Entendido 🙏" a secas: sonaba a cancelado, pero el pedido había quedado en la cola de
 		// No asignados, donde el equipo lo llama para ofrecérselo. Dos horas y media después
 		// seguía ahí. Llamar a alguien que cree haber cancelado es peor que no llamarlo.
-		respuesta := fmt.Sprintf("Listo, ya no te busco repartidor 🙏. Dejé tu pedido anotado por si "+
-			"quieres retomarlo, y si prefieres puedo agendarte la entrega para más tarde: atendemos "+
-			"de %s a %s, dime a qué hora te viene bien. Y si ya no lo necesitas, aquí estoy cuando "+
-			"me busques 😊", a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
+		// A quien YA ESPERÓ se le despide distinto: no se arrepintió, se quedó sin gas por algo
+		// nuestro. Ofrecerle otra vez agendar suena a insistencia después de media hora de
+		// espera fallida; lo que corresponde es agradecerle y dejar la puerta abierta.
+		var respuesta string
+		if yaHabiaEsperado {
+			respuesta = MensajeDespedidaTrasCancelar()
+		} else {
+			respuesta = fmt.Sprintf("Listo, ya no te busco repartidor 🙏. Dejé tu pedido anotado por si "+
+				"quieres retomarlo, y si prefieres puedo agendarte la entrega para más tarde: atendemos "+
+				"de %s a %s, dime a qué hora te viene bien. Y si ya no lo necesitas, aquí estoy cuando "+
+				"me busques 😊", a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
+		}
 		// El turno queda en el HISTORIAL. Sin esto el modelo no se entera de que el cliente
 		// canceló la espera: el 15/09, dos horas después, le volvió a ofrecer esperar o programar
 		// un pedido que ya no estaba en curso, porque para él ese turno nunca ocurrió.
@@ -81,7 +99,7 @@ func (a *Agent) ResponderMenuEspera(from, texto string) (string, bool) {
 		a.store.AppendModel(from, respuesta)
 		return respuesta, true
 
-	case respuesta == "programar" || respuesta == "programar entrega":
+	case respuesta == "programar" || respuesta == "reprogramar" || respuesta == "programar entrega":
 		// Antes esto se dejaba al modelo porque hacía falta que el cliente ESCRIBIERA una hora.
 		// Ahora se le ofrecen las horas disponibles como botones (calculadas en código, ver
 		// horasmenu.go), así que el cliente solo toca. Si no hay horas que ofrecer, cae al
@@ -150,7 +168,10 @@ func (a *Agent) ResponderCalificacion(from, texto string) (string, bool) {
 	log.Printf("[menu-calificacion] %s calificó con %d; se registra en código", from, n)
 	// calificarConductor limpia el pendiente en todos los caminos y su texto está escrito para
 	// el modelo; aquí redactamos el del cliente según haya salido bien o mal.
-	salida := a.calificarConductor(from, map[string]any{"estrellas": n})
+	// Turno propio y desechable: este camino es un INTERCEPTOR (resuelve en código y contesta
+	// sin pasar por el modelo), así que no hay un turno del agente al que marcarle nada. La
+	// invariante del turno colgado no corre aquí; ver turnocolgado.go.
+	salida := a.calificarConductor(&turno{}, from, map[string]any{"estrellas": n})
 	// La invitación a guardarnos en contactos cierra el ciclo (ver guardarcontacto.go): es el
 	// momento de más buena voluntad del cliente y el único en que pedirle algo no interrumpe nada.
 	if strings.Contains(salida, "registrada con éxito") {

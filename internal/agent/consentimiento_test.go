@@ -290,7 +290,7 @@ func TestConNegativaLaCedulaNoLlegaAlBackend(t *testing.T) {
 	ag.gr = georoutes.NewClient(esp.servidor.URL)
 	store.SetConsentimiento(from, conversation.Consentimiento{Acepta: false})
 
-	ag.verificarCliente(from, map[string]any{"identificacion": "0105566777"})
+	ag.verificarCliente(&turno{}, from, map[string]any{"identificacion": "0105566777"})
 
 	if esp.llamo("clientExists") {
 		t.Error("la cédula de un cliente que NEGÓ el permiso se consultó en el backend")
@@ -341,7 +341,7 @@ func TestAlLlegarLaCedulaLaAceptacionSeRegistraEnElBackend(t *testing.T) {
 	ag.gr = georoutes.NewClient(esp.servidor.URL)
 	store.SetConsentimiento(from, conversation.Consentimiento{Acepta: true})
 
-	ag.verificarCliente(from, map[string]any{"identificacion": "0105566777"})
+	ag.verificarCliente(&turno{}, from, map[string]any{"identificacion": "0105566777"})
 
 	if !esp.llamo("acceptsPDP") {
 		t.Fatal("la aceptación no se registró en el backend: el consentimiento se quedaría solo en " +

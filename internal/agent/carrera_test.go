@@ -100,7 +100,12 @@ func agentDePrueba(modelo llm.Provider, store conversation.Store) *Agent {
 	// que mide de quién es el turno, no qué se responde.
 	muerto := georoutes.NewClient("http://127.0.0.1:1")
 	return &Agent{
-		cfg:     config.Config{BotHorarioInicio: "07:00", BotHorarioFin: "19:00"},
+		// Horario ABIERTO (00:00-23:59) a propósito. Con 07:00-19:00 la suite entera se volvía
+		// una bomba de tiempo: después de las 19:00 los tests de consentimiento fallaban con
+		// "FUERA DE HORARIO" —el pedido se detenía por la hora, no por la compuerta que decían
+		// probar— y el fallo no tenía nada que ver con el cambio que uno acababa de hacer.
+		// Quien necesite probar el horario lo fija en SU test (ver horasmenu_test.go).
+		cfg:     config.Config{BotHorarioInicio: "00:00", BotHorarioFin: "23:59"},
 		modelo:  modelo,
 		store:   store,
 		catalog: catalog.NewClient(muerto, time.Minute),

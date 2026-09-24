@@ -340,7 +340,7 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 					fmt.Sprintf("La búsqueda de repartidor murió con panic: %v. El cliente quedó esperando.", r))
 			}
 		}()
-		deadline := time.Now().Add(5 * time.Minute)
+		deadline := time.Now().Add(duracionDeLaRonda(cfg))
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 		for {

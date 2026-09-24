@@ -144,6 +144,18 @@ type turno struct {
 	programo bool
 	// escalado marca que en este turno se derivó al dueño (tool o derivación en código).
 	escalado bool
+	// huboHerramienta marca que en este turno se ejecutó AL MENOS UNA herramienta QUE HIZO
+	// ALGO. No sustituye a las banderas de arriba (que dicen CUÁL se ejecutó): sirve para la
+	// invariante de turnocolgado.go, que solo necesita saber si el bot actuó o se limitó a
+	// escribir. Se marca en runTool, el único punto por el que pasan todas las herramientas.
+	huboHerramienta bool
+	// sinEfecto lo levanta una herramienta que NO hizo nada y solo le devolvió una instrucción
+	// al modelo ("falta la cédula", "el menú necesita 2 opciones", "no se pudo verificar").
+	// Esos retornos son indistinguibles de que el modelo escriba texto: no avanzan la
+	// conversación, así que no pueden desarmar la invariante del turno colgado. Sin esto, el
+	// caso de Doris con el backend caído —el más probable— quedaba sin cubrir Y con apariencia
+	// de estarlo. Lo lee y lo reinicia runTool en cada llamada.
+	sinEfecto bool
 }
 
 // Resultado es lo que el llamador (cmd/bot) necesita saber de un turno. Antes lo consultaba
@@ -414,6 +426,16 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 		break
 	}
 
+	// Lo que ESCRIBIÓ EL MODELO, antes de que ningún candado lo toque. La invariante de fin de
+	// turno (turnocolgado.go) lo necesita: su premisa —"el cliente quedó esperando al bot"— solo
+	// vale para texto del modelo. Cuando un candado reemplaza la respuesta, ese texto es una
+	// decisión deliberada del código (avisarle que buscamos repartidor, pedirle la ubicación
+	// para verificar cobertura) y agregarle un "¿seguimos?" encima lo contradice.
+	//
+	// Se compara el texto final contra este, en vez de marcar una bandera en cada candado:
+	// así un candado nuevo queda cubierto sin que nadie tenga que acordarse de marcarlo.
+	dijoElModelo := reply
+
 	// Red de seguridad: a veces el modelo (flash-lite) "narra" la herramienta mostrar_menu
 	// escribiendo su JSON {cuerpo, opciones} como TEXTO en vez de invocarla de verdad, y el
 	// cliente vería ese JSON crudo. Si detectamos ese JSON en la respuesta y aún no se envió
@@ -558,6 +580,16 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// mismo texto del modelo como cuerpo, para no perderle el tono—. Ver menuseguro.go.
 	reply = a.revisarMenuDeProducto(t, from, reply)
 
+	// INVARIANTE DE FIN DE TURNO. Va la ÚLTIMA, después de todos los candados: cualquiera de
+	// ellos puede haber reescrito la respuesta, y lo que importa es cómo queda el turno al
+	// final, no cómo lo dejó el modelo. No mira frases —eso ya lo hacen los candados—, sino la
+	// forma: un turno que no llamó ninguna herramienta y no le devuelve el turno al cliente
+	// deja la conversación esperando a un bot que no va a volver a hablar. Ver turnocolgado.go
+	// y el caso de Doris (21/09).
+	if a.turnoQuedaColgado(t, from, reply, dijoElModelo) {
+		reply = a.rescatarTurnoColgado(from, reply)
+	}
+
 	// Turno del modelo para el HISTORIAL. Si en este turno se envió un menú interactivo,
 	// guardamos la PREGUNTA del menú (cuerpo + opciones), NO un texto vacío ni el fallback:
 	// así el modelo recuerda qué preguntó y no repite el menú. El historial solo guarda texto,
@@ -644,7 +676,14 @@ func (a *Agent) runTool(t *turno, from, name string, args map[string]any) string
 	// bot hace algo raro en produccion solo queda su mensaje final y hay que adivinar que
 	// llamo: asi paso el 27/08 con la reprogramacion de una clienta real.
 	log.Printf("[tool] %s %s args=%v", from, name, args)
+	t.sinEfecto = false // lo levanta la propia herramienta si resultó ser solo una instrucción
 	res := a.runToolInterno(t, from, name, args)
+	// Ver turnocolgado.go: solo cuenta como "el bot hizo algo" la herramienta que de verdad
+	// hizo algo. Una que devolvió una instrucción al modelo deja la conversación igual que
+	// antes, y el turno puede quedar colgado lo mismo.
+	if !t.sinEfecto {
+		t.huboHerramienta = true
+	}
 	corte := res
 	if len(corte) > 160 {
 		corte = corte[:160] + "..."
@@ -667,13 +706,13 @@ func (a *Agent) runToolInterno(t *turno, from, name string, args map[string]any)
 		return "No se pudo registrar el caso, pero el equipo fue notificado. Dile al cliente que pronto lo contactarán."
 
 	case "verificar_cliente":
-		return a.verificarCliente(from, args)
+		return a.verificarCliente(t, from, args)
 
 	case "mostrar_menu":
 		return a.mostrarMenu(t, from, args)
 
 	case "calificar_conductor":
-		return a.calificarConductor(from, args)
+		return a.calificarConductor(t, from, args)
 
 	case "registrar_pedido":
 		a.anotarDeTool(from, args, conversation.FlujoInmediato)
@@ -713,10 +752,10 @@ func (a *Agent) runToolInterno(t *turno, from, name string, args map[string]any)
 // secundarios. Si existe, guarda su perfil local para no volver a pedirle nombre/correo y
 // le indica al modelo que lo salude por su nombre. Si no existe (o falla la consulta),
 // deja que el flujo de registro continúe normalmente.
-func (a *Agent) verificarCliente(from string, args map[string]any) string {
+func (a *Agent) verificarCliente(t *turno, from string, args map[string]any) string {
 	identificacion := strings.TrimSpace(str(args["identificacion"]))
 	if identificacion == "" {
-		return "Falta la cédula del cliente. Pídesela para verificar si ya está registrado."
+		return soloInstruccion(t, "Falta la cédula del cliente. Pídesela para verificar si ya está registrado.")
 	}
 	// COMPUERTA de protección de datos: sin autorización, su cédula no se consulta ni se guarda.
 	// Consultarla en el backend YA es tratarla. Decide por ESTADO, no por el texto de la
@@ -731,8 +770,12 @@ func (a *Agent) verificarCliente(from string, args map[string]any) string {
 	a.sincronizarConsentimiento(from, identificacion)
 	info, err := a.gr.ClientExists(identificacion)
 	if err != nil {
-		// Fallo técnico: no bloqueamos el pedido, seguimos el registro normal.
-		return "No se pudo verificar al cliente en este momento; continúa pidiéndole su nombre completo para registrarlo (NO pidas correo)."
+		// Fallo técnico: no bloqueamos el pedido, seguimos el registro normal. Va como
+		// soloInstruccion porque la consulta NO llegó a ocurrir: el cliente sigue igual que
+		// antes de llamarla, y si el modelo remata con "un momento, ya verifico" el turno
+		// queda colgado igual (ver turnocolgado.go). Es el camino por el que el caso de Doris
+		// se repetiría con el backend caído.
+		return soloInstruccion(t, "No se pudo verificar al cliente en este momento; continúa pidiéndole su nombre completo para registrarlo (NO pidas correo).")
 	}
 	if !info.Existe {
 		return "El cliente NO está registrado todavía. Continúa el registro: pídele SOLO su nombre completo (NO pidas correo electrónico; no hace falta)."
@@ -767,10 +810,10 @@ func (a *Agent) mostrarMenu(t *turno, from string, args map[string]any) string {
 		}
 	}
 	if cuerpo == "" || len(opciones) < 2 {
-		return "Para un menú necesito un texto y al menos 2 opciones. Si hay menos, responde por texto normal."
+		return soloInstruccion(t, "Para un menú necesito un texto y al menos 2 opciones. Si hay menos, responde por texto normal.")
 	}
 	if len(opciones) > 10 {
-		return "El menú admite máximo 10 opciones. Muéstrale las principales o pídeselo por texto."
+		return soloInstruccion(t, "El menú admite máximo 10 opciones. Muéstrale las principales o pídeselo por texto.")
 	}
 	// Un menú es una PROMESA: todas sus opciones tienen que valer. Si una ofrece escribir la
 	// dirección —que el bot no puede aceptar—, no sale. Ver menutrampa.go.
@@ -778,7 +821,7 @@ func (a *Agent) mostrarMenu(t *turno, from string, args map[string]any) string {
 		return avisoMenuTrampa(from)
 	}
 	if err := a.mandarMenu(from, cuerpo, opciones); err != nil {
-		return "No pude enviar el menú (motivo: " + err.Error() + "). Preséntale las opciones por texto normal."
+		return soloInstruccion(t, "No pude enviar el menú (motivo: "+err.Error()+"). Preséntale las opciones por texto normal.")
 	}
 	t.menuSent = true
 	// Guardamos la pregunta del menú para el historial (ver turno.lastMenuText): así, en el
@@ -790,14 +833,14 @@ func (a *Agent) mostrarMenu(t *turno, from string, args map[string]any) string {
 // calificarConductor registra la calificación del cliente sobre el conductor de un pedido
 // entregado. Re-autentica al cliente (la calificación puede llegar horas después) y envía la
 // reseña por el flujo real (ratingOrder). Limpia el estado pendiente al terminar.
-func (a *Agent) calificarConductor(from string, args map[string]any) string {
+func (a *Agent) calificarConductor(t *turno, from string, args map[string]any) string {
 	rating, ok := a.store.GetPendingRating(from)
 	if !ok || rating.PedidoID <= 0 {
-		return "No hay un pedido pendiente de calificación en este momento. Agradécele e invítalo a un nuevo pedido."
+		return soloInstruccion(t, "No hay un pedido pendiente de calificación en este momento. Agradécele e invítalo a un nuevo pedido.")
 	}
 	estrellas := toInt(args["estrellas"])
 	if estrellas < 1 || estrellas > 5 {
-		return "La calificación debe ser un número del 1 al 5. Pídele al cliente que indique cuántas estrellas (1 a 5)."
+		return soloInstruccion(t, "La calificación debe ser un número del 1 al 5. Pídele al cliente que indique cuántas estrellas (1 a 5).")
 	}
 	comentario := strings.TrimSpace(str(args["comentario"]))
 

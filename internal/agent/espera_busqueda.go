@@ -130,37 +130,52 @@ func (a *Agent) esperaBackend(from string, w conversation.PendingWait) {
 	}
 }
 
-// ofrecerEsperaAlCliente le manda el menú de esperar cuando la búsqueda inicial no encontró a
-// nadie. UNA sola vez: la búsqueda se consulta cada 15 s y se queda en SIN_CONDUCTOR mientras el
-// cliente no contesta, así que sin la marca se le mandaría el mismo menú cada quince segundos.
+// ofrecerEsperaAlCliente le manda el menú cuando la búsqueda no encontró a nadie.
 //
-// Los minutos salen del backend (espera_segundos): el bot no tiene ningún plazo escrito. Si el
-// cliente no contesta, el backend cierra la búsqueda solo y en silencio.
+// Se le ofrece hasta rondasConEspera veces seguir esperando, y en la última solo reprogramar o
+// cancelar (ver rondasespera.go y el caso de Carlos). Mientras no conteste NO se repite el
+// menú: la búsqueda se consulta cada pocos segundos y se queda en SIN_CONDUCTOR, así que sin
+// esa marca se le mandaría el mismo menú sin parar.
+//
+// Los minutos que se le dicen salen del backend cuando los manda (espera_segundos); si no,
+// del bot (BOT_ESPERA_RONDA_MIN). Nunca se inventa un número distinto del real.
 func (a *Agent) ofrecerEsperaAlCliente(from string, estado *georoutes.BusquedaResult) {
 	w, ok := a.store.GetPendingWait(from)
-	if !ok || w.PreguntoEspera {
+	if !ok || w.EsperandoRespuesta {
 		return
 	}
-	w.PreguntoEspera = true
-	a.store.SetPendingWait(from, w)
+	ronda := w.RondaEspera
 
-	minutos := 5
+	minutos := int(a.cfg.EsperaRonda.Minutes())
+	if minutos <= 0 {
+		minutos = 15
+	}
 	if estado != nil && estado.EsperaSegundos > 0 {
 		minutos = (estado.EsperaSegundos + 59) / 60
 	}
-	cuerpo := fmt.Sprintf("Estamos buscando al chofer ideal para ti 🚚. Nuestro sistema puede "+
-		"tardar hasta %d minutos en conectar con el camión más cercano en tu zona. ¿Deseas esperar?",
-		minutos)
-	if err := whatsapp.SendMenu(a.cfg, from, cuerpo, []string{"Esperar", "Programar", "Cancelar"}); err != nil {
-		log.Printf("[busqueda] %s no se pudo ofrecer la espera: %v", from, err)
+
+	cuerpo := cuerpoDeLaRonda(ronda, minutos)
+	opciones := opcionesDeLaRonda(ronda)
+
+	if err := a.mandarMenu(from, cuerpo, opciones); err != nil {
+		log.Printf("[busqueda] %s no se pudo ofrecer la espera (ronda %d): %v", from, ronda, err)
 		// Si el menú no sale, el cliente se queda sin saber nada: se le pasa la decisión al
 		// backend para que siga buscando, en vez de cerrarle la búsqueda por un fallo de WhatsApp.
 		a.decidirEsperaBackend(from, w.IDBusqueda, true)
 		return
 	}
+
+	// El estado se guarda DESPUÉS de que el menú salió: si el envío falla, la ronda no avanza y
+	// en la próxima vuelta se vuelve a intentar. Al revés, un fallo de WhatsApp le gastaría una
+	// ronda al cliente sin que él haya visto nada.
+	w.EsperandoRespuesta = true
+	w.RondaEspera = ronda + 1
+	a.store.SetPendingWait(from, w)
+
 	a.store.LogMessage(from, "system", cuerpo)
 	a.store.AppendModel(from, cuerpo)
-	log.Printf("[busqueda] %s se le ofrecio esperar la busqueda %d", from, w.IDBusqueda)
+	log.Printf("[busqueda] %s ronda %d de espera (opciones %v) para la busqueda %d",
+		from, ronda, opciones, w.IDBusqueda)
 }
 
 // decidirEsperaBackend le dice al backend si el cliente espera o no. Best-effort: si falla, se

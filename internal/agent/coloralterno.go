@@ -105,7 +105,9 @@ func (a *Agent) ResponderCambioColor(from, texto string) (string, bool) {
 				sw.ColorAlterno+". Quedó en No asignados.")
 		}
 		a.registrarNoAsignado(from)
-		a.store.ClearPendingWait(from)
+		// Cierra tambien la busqueda del backend: si no, seguiria buscando repartidor para un
+		// color que el cliente ya rechazo. Ver cerrarEsperaYBusqueda.
+		a.cerrarEsperaYBusqueda(from, "rechazo el color alterno")
 		a.store.ClearPedidoEnCurso(from)
 		return fmt.Sprintf("Entendido 🙏 ¡Gracias por escribirnos! Cuando necesites tu gas %s "+
 			"o cualquier otro, aquí estoy 😊", strings.ToLower(sw.ColorOriginal)), true

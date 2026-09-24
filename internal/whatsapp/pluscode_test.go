@@ -170,7 +170,10 @@ func TestElCentroConfiguradoLlegaAlResolvedor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("no se pudo leer main.go: %v", err)
 	}
-	if !strings.Contains(string(src), "ResolverLinkCortoDeMaps(inc.Text, cfg.BotCentroLat, cfg.BotCentroLng)") {
+	// Se buscan los ARGUMENTOS y no la llamada literal: al agregarle el geocodificador, este
+	// test se rompió por el cambio de firma aunque el centro seguía llegando igual. Un test que
+	// depende del texto exacto de una línea avisa de cosas que no son el bug que vigila.
+	if !strings.Contains(string(src), "ResolverLinkCortoDeMaps(inc.Text, cfg.BotCentroLat, cfg.BotCentroLng") {
 		t.Error("el webhook no le pasa el centro configurado al resolvedor de links")
 	}
 }

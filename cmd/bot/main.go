@@ -429,6 +429,10 @@ func main() {
 			// -ya recibio su gas- y solo delata que alguien se olvido de marcarlo. Sin este
 			// campo el comportamiento es el de siempre (se manda y punto).
 			MaxHoras float64 `json:"max_horas"`
+			// Automatico marca los mensajes que manda el SISTEMA solo (el aviso de entrega, el de
+			// conductor asignado). Esos no apagan al bot; los de una persona sí. Ver
+			// tomarChatAlEscribir.
+			Automatico bool `json:"automatico"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Phone) == "" || strings.TrimSpace(payload.Text) == "" {
 			w.WriteHeader(http.StatusBadRequest)
@@ -445,6 +449,14 @@ func main() {
 		}
 		store.TouchActivity(payload.Phone) // mantiene viva la sesión de control humano
 		store.LogMessage(payload.Phone, "human", payload.Text)
+		// Escribirle al cliente ES tomar la conversación. Hasta el 22/09 esto no se hacía: el
+		// panel registraba el mensaje de la persona pero dejaba el chat en modo bot, así que
+		// había dos voces contestando. Ver takeover.go y el caso de Doris.
+		if loEscribioUnaPersona(payload.Automatico, payload.MaxHoras) {
+			tomarChatAlEscribir(store, payload.Phone)
+		} else {
+			avisarSinTomarChat(store, payload.Phone)
+		}
 		if err := whatsapp.SendText(cfg, payload.Phone, payload.Text); err != nil {
 			log.Printf("[send-message] error enviando a %s: %v", payload.Phone, err)
 			w.WriteHeader(http.StatusBadGateway)
@@ -812,7 +824,8 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 			ubicacionNueva, ubicLat, ubicLng = true, lat, lng
 			messageForAgent = "He compartido mi ubicación actual."
 		} else if whatsapp.EsLinkCortoDeMaps(inc.Text) {
-			if lat, lng, ok := whatsapp.ResolverLinkCortoDeMaps(inc.Text, cfg.BotCentroLat, cfg.BotCentroLng); ok {
+			if lat, lng, ok := whatsapp.ResolverLinkCortoDeMaps(inc.Text, cfg.BotCentroLat, cfg.BotCentroLng,
+				whatsapp.NuevoGeocodificadorGoogle(cfg.GeocodingAPIKey, cfg.BotCentroLat, cfg.BotCentroLng)); ok {
 				store.SetLocation(inc.From, lat, lng)
 				log.Printf("[webhook] ubicación (link corto resuelto) de %s: %f, %f", inc.From, lat, lng)
 				if fueraDeCobertura(cfg, store, gr, inc.From, lat, lng) {
@@ -873,6 +886,14 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 			_ = replyClient(cfg, store, inc.From, reply)
 			return
 		}
+	}
+
+	// POSIBLE ATAQUE. Va antes que TODO —incluso que los comandos— porque un `/model
+	// claude-opus-5` lo resolvería ResponderComando y el intento nunca llegaría hasta aquí.
+	// Ver internal/agent/abuso.go y el caso de Sergy (23/09).
+	if inc.IsText && agent.PareceAbuso(inc.Text) {
+		atenderPosibleAtaque(cfg, store, inc.From, inc.Text)
+		return
 	}
 
 	// COMANDOS de herramienta (/clear, /compact, /model...). Van ANTES que todo lo demás: no son

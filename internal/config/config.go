@@ -89,6 +89,18 @@ type Config struct {
 	// que poder cambiarlo sin recompilar. Por defecto, el centro de Cuenca.
 	BotCentroLat float64
 	BotCentroLng float64
+
+	// GeocodingAPIKey es la clave de Google Geocoding, y NO es la misma que GOOGLE_API_KEY (esa
+	// es solo de Gemini; se probó contra la API de Geocoding y responde REQUEST_DENIED). Sirve
+	// para resolver los links de Maps que traen el NOMBRE de un lugar en vez de coordenadas
+	// -"?q=Gapal,+Cuenca"-, que es como quedan cuando el cliente elige un sitio del buscador en
+	// vez de mandar su pin. Vacía = esos links no se resuelven y se le pide el pin, como antes.
+	GeocodingAPIKey string
+
+	// EsperaRonda es cuanto dura CADA ronda de espera de repartidor. El cliente puede aceptar
+	// esperar hasta dos veces, asi que el total posible es tres veces esto. Antes eran 5 minutos
+	// escritos en el codigo y a Carlos (23/09) se le despidio a los ocho minutos de pedir.
+	EsperaRonda time.Duration
 }
 
 func required(k string) string {
@@ -174,8 +186,11 @@ func Load() Config {
 		BotHorarioFin:        optional("BOT_HORARIO_FIN", "19:00"),
 		BotDiasLaborables:    optional("BOT_DIAS_LABORABLES", "1-6"),
 		// Centro de Cuenca (Parque Calderón). Ver BotCentroLat en la Config.
-		BotCentroLat:         optionalFloat("BOT_CENTRO_LAT", -2.9001),
-		BotCentroLng:         optionalFloat("BOT_CENTRO_LNG", -79.0059),
+		BotCentroLat: optionalFloat("BOT_CENTRO_LAT", -2.9001),
+		BotCentroLng: optionalFloat("BOT_CENTRO_LNG", -79.0059),
+		// Misma variable que usa el backend Django, para no tener dos claves distintas de lo mismo.
+		GeocodingAPIKey:      os.Getenv("KEY_GOOGLE_MAPS"),
+		EsperaRonda:          time.Duration(optionalInt("BOT_ESPERA_RONDA_MIN", 10)) * time.Minute,
 		SMTPHost:             os.Getenv("SMTP_HOST"),
 		SMTPPort:             optional("SMTP_PORT", "587"),
 		SMTPUser:             os.Getenv("SMTP_USER"),

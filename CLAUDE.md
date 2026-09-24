@@ -50,8 +50,16 @@ ANTHROPIC_MAX_TOKENS        # (default: 1024)
 ANTHROPIC_CACHE_TTL         # 5m (default) | 1h - cuanto vive el prompt cacheado
 BOT_CIERRE_INACTIVIDAD_MIN  # silencio tras el cual el bot se despide (default: 7)
 BOT_CIERRE_VENTANA_MAX_MIN  # techo: pasado esto ya no se despide (default: 60)
+BOT_ESPERA_RONDA_MIN        # (default: 15) cuánto dura CADA ronda de espera de repartidor. Al
+                            # cliente se le pregunta hasta 2 veces si quiere seguir esperando, y
+                            # en la 3ª solo le quedan [Reprogramar / Cancelar]. Antes eran 5 min
+                            # quemados y una sola pregunta: así se perdió a Carlos (23-sep).
 BOT_CENTRO_LAT              # centro de la zona de operación (default: -2.9001, Cuenca)
 BOT_CENTRO_LNG              # (default: -79.0059). Solo para recuperar Plus Codes de links de Maps
+KEY_GOOGLE_MAPS             # clave de Google GEOCODING (la MISMA del backend Django; NO es
+                            # GOOGLE_API_KEY, que es solo de Gemini). Resuelve los links de Maps
+                            # que traen el NOMBRE de un lugar en vez de coordenadas. Vacía = esos
+                            # links no se resuelven y se le pide el pin al cliente, como antes.
 WHATSAPP_TOKEN              # Graph API token
 WHATSAPP_PHONE_NUMBER_ID    # ID del número de WhatsApp
 WEBHOOK_VERIFY_TOKEN        # token de verificación del webhook

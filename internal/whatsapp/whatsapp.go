@@ -132,7 +132,11 @@ func EsLinkCortoDeMaps(text string) bool {
 // contenga: el resto del mensaje no llega nunca al cliente HTTP.
 // refLat/refLng es el centro de la zona donde se opera, y solo se usa si la URL final trae un
 // PLUS CODE en vez de coordenadas (ver pluscode.go).
-func ResolverLinkCortoDeMaps(texto string, refLat, refLng float64) (lat, lng float64, ok bool) {
+//
+// geo puede ser nil: en ese caso no se intenta el tercer formato (nombre de lugar) y se
+// devuelve ok=false, que hace que el llamador le pida el pin al cliente. Es el comportamiento
+// correcto sin clave de geocoding: mejor un mensaje de más que un punto inventado.
+func ResolverLinkCortoDeMaps(texto string, refLat, refLng float64, geo Geocodificador) (lat, lng float64, ok bool) {
 	link := ExtraerLinkCortoDeMaps(texto)
 	if link == "" {
 		return 0, 0, false
@@ -142,20 +146,40 @@ func ResolverLinkCortoDeMaps(texto string, refLat, refLng float64) (lat, lng flo
 		return 0, 0, false
 	}
 	defer resp.Body.Close()
-	finalURL := resp.Request.URL.String()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 32*1024))
+	return resolverURLFinal(resp.Request.URL.String(), string(body), refLat, refLng, geo)
+}
+
+// resolverURLFinal saca las coordenadas de la página a la que llevó el link. Está separado de
+// la petición HTTP para poder probar los tres formatos sin salir a internet: ResolverLinkCorto
+// solo acepta dominios de Google —bien, no sale a cualquier URL que le manden en un mensaje—,
+// y eso hacía imposible ejercitar esta parte con un servidor de prueba.
+func resolverURLFinal(finalURL, cuerpo string, refLat, refLng float64, geo Geocodificador) (lat, lng float64, ok bool) {
+	// 1) COORDENADAS en la URL: el caso normal, cuando el cliente manda su pin.
 	if lat, lng, ok := ParseCoordsFromText(finalURL); ok {
 		return lat, lng, true
 	}
-	// Sin lat,lng en la URL todavía puede haber un PLUS CODE. Google lo pone cuando el lugar no
-	// tiene dirección exacta —un conjunto, una casa sin nomenclatura—, que en media Cuenca es lo
-	// normal: es lo que pasó con Carlos el 21/09, cuando el bot le dijo "no pude abrir tu
-	// enlace". Ver pluscode.go, sobre todo por qué la referencia importa tanto.
+	// 2) PLUS CODE. Google lo pone cuando el lugar no tiene dirección exacta —un conjunto, una
+	// casa sin nomenclatura—, que en media Cuenca es lo normal: es lo que pasó con Carlos el
+	// 21/09, cuando el bot le dijo "no pude abrir tu enlace". Ver pluscode.go, sobre todo por
+	// qué la referencia importa tanto.
 	if lat, lng, ok := CoordenadasDePlusCodeEnURL(finalURL, refLat, refLng); ok {
 		return lat, lng, true
 	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 32*1024))
-	if lat, lng, ok := ParseCoordsFromText(string(body)); ok {
+	if lat, lng, ok := ParseCoordsFromText(cuerpo); ok {
 		return lat, lng, true
+	}
+	// 3) El NOMBRE DEL LUGAR y nada más (?q=Gapal,+Cuenca,+Ecuador). Pasa cuando el cliente
+	// elige un sitio del buscador de Maps en vez de mandar su pin. El HTML tampoco trae
+	// coordenadas —Maps las carga por JS—, así que lo único que queda es geocodificar ese
+	// nombre. Ver lugarconnombre.go y geocodificar.go, que RECHAZA los resultados imprecisos
+	// ("Cuenca" a secas devuelve el centro de la ciudad con cara de dato bueno).
+	if geo != nil {
+		if nombre, hay := NombreDeLugarEnURL(finalURL); hay {
+			if lat, lng, ok := geo.Coordenadas(nombre); ok {
+				return lat, lng, true
+			}
+		}
 	}
 	return 0, 0, false
 }

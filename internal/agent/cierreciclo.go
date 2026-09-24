@@ -37,11 +37,11 @@ func (a *Agent) cerrarCicloDeConversacion(from, motivo string) {
 	a.store.ClearPedidoEnCurso(from)
 
 	// Banderas de flujo que solo tienen sentido dentro del pedido que acaba de cerrarse.
-	a.store.ClearPendingWait(from)             // espera de repartidor
-	a.store.ClearOrderDraft(from)              // pedido en pausa por OTP
-	a.store.ClearPendingGuardarUbicacion(from) // "¿la guardo como Casa?"
-	a.store.ClearEligiendoHora(from)           // menú de horas de una programación que ya no toca
-	a.store.LimpiarFueraDeCobertura(from)      // un rechazo de zona no sigue vigente
+	a.cerrarEsperaYBusqueda(from, "se cerro el ciclo de la conversacion") // espera + busqueda del backend
+	a.store.ClearOrderDraft(from)                                         // pedido en pausa por OTP
+	a.store.ClearPendingGuardarUbicacion(from)                            // "¿la guardo como Casa?"
+	a.store.ClearEligiendoHora(from)                                      // menú de horas de una programación que ya no toca
+	a.store.LimpiarFueraDeCobertura(from)                                 // un rechazo de zona no sigue vigente
 
 	// La espera del menú de protección de datos SIN RESPONDER. Se limpia porque mientras está
 	// viva la compuerta bloquea los pedidos de ese cliente: arrastrarla al ciclo siguiente lo

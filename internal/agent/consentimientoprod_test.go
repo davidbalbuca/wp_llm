@@ -72,7 +72,7 @@ func TestConElMenuPendienteLaCedulaNoSeConsulta(t *testing.T) {
 	ag.gr = georoutes.NewClient(esp.servidor.URL)
 	store.SetConsentimientoPendiente(from)
 
-	ag.verificarCliente(from, map[string]any{"identificacion": "0103519336"})
+	ag.verificarCliente(&turno{}, from, map[string]any{"identificacion": "0103519336"})
 
 	if esp.llamo("clientExists") {
 		t.Error("se consultó la cédula de alguien que no ha respondido al menú de datos")
@@ -92,7 +92,7 @@ func TestConElConsentimientoDadoElPedidoSiPasa(t *testing.T) {
 	ag.gr = georoutes.NewClient(esp.servidor.URL)
 	store.SetConsentimiento(from, conversation.Consentimiento{Acepta: true})
 
-	ag.verificarCliente(from, map[string]any{"identificacion": "0103519336"})
+	ag.verificarCliente(&turno{}, from, map[string]any{"identificacion": "0103519336"})
 
 	if !esp.llamo("clientExists") {
 		t.Error("se bloqueó a un cliente que SÍ había aceptado; la compuerta cierra de más")
@@ -110,7 +110,7 @@ func TestSinMenuNiRespuestaElClienteDeSiempreNoSeBloquea(t *testing.T) {
 	ag.gr = georoutes.NewClient(esp.servidor.URL)
 	// Ni consentimiento registrado ni menú pendiente: nunca pasó por aquí.
 
-	ag.verificarCliente(from, map[string]any{"identificacion": "0103519336"})
+	ag.verificarCliente(&turno{}, from, map[string]any{"identificacion": "0103519336"})
 
 	if !esp.llamo("clientExists") {
 		t.Error("se bloqueó a un cliente al que nunca se le preguntó; eso rompe a los de siempre")
