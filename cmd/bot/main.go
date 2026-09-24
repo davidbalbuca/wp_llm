@@ -395,6 +395,44 @@ func main() {
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
+	// PEDIDO CREADO A MANO por un operador desde el chat (gestion manual: el cliente espero, no
+	// hubo repartidor, se lo llamo por telefono y sigue queriendo el gas). Lo crea el BOT para que
+	// sepa que ese pedido existe y pueda seguir el seguimiento. Ver internal/agent/pedido_operador.go:
+	// revisa la ventana de tiempo, la disponibilidad, crea el pedido, y SOLO si quedo con
+	// repartidor le escribe al cliente. Si algo falla, el cliente no recibe nada y el motivo se
+	// devuelve aqui para que el panel lo muestre.
+	mux.HandleFunc("POST /internal/pedido-operador", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			Phone       string                         `json:"phone"`
+			Items       []conversation.PendingWaitItem `json:"items"`
+			IDTipoPago  int                            `json:"idtipopago"`
+			IDConductor int                            `json:"idconductor"`
+			Operador    string                         `json:"operador"`
+			MaxHoras    float64                        `json:"max_horas"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Phone) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		res := ag.CrearPedidoDeOperador(agent.PedidoDeOperador{
+			Phone:       payload.Phone,
+			Items:       payload.Items,
+			IDTipoPago:  payload.IDTipoPago,
+			IDConductor: payload.IDConductor,
+			Operador:    payload.Operador,
+			MaxHoras:    payload.MaxHoras,
+		})
+		if !res.OK {
+			// 409: no es un error del panel, es que el pedido no corresponde crearlo ahora.
+			w.WriteHeader(http.StatusConflict)
+		}
+		writeJSON(w, res)
+	})
+
 	mux.HandleFunc("POST /internal/chat-control", func(w http.ResponseWriter, r *http.Request) {
 		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
 			w.WriteHeader(http.StatusUnauthorized)
