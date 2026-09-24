@@ -199,32 +199,82 @@ func (a *Agent) revisarCoberturaAfirmada(from, reply string) string {
 // zonas que informa el backend, nunca quemadas) y pide la ubicación para confirmar.
 func mensajeCoberturaEnPositivo(zonas []georoutes.ZonaCobertura) string {
 	base := "¡Claro que sí! 😊 "
-	if texto := zonasEnTexto(zonas); texto != "" {
-		base += "Atendemos en " + texto + ". "
+	if texto := ZonasEnTexto(zonas); texto != "" {
+		// "urbanas y rurales" es la frase que faltaba: la geocerca cubre el cantón completo, y
+		// sin decirlo el cliente de una parroquia rural asume que solo se atiende el centro.
+		base += "Atendemos en las parroquias urbanas y rurales de " + texto + ". "
 	}
 	return base + "Para confirmarte si llegamos justo a tu dirección, compárteme tu ubicación " +
 		"por WhatsApp 📎 y lo verifico al instante."
 }
 
-// zonasEnTexto arma "Azuay (Baños, Bellavista y más)" con lo que informe el backend. Devuelve
-// "" si no hay zonas: en ese caso el mensaje sale sin nombrar ninguna, en vez de inventarla.
-func zonasEnTexto(zonas []georoutes.ZonaCobertura) string {
+// ejemplosPorZona es cuántas parroquias se nombran por zona EN EL MENSAJE AL CLIENTE. Seis, no
+// dos: con dos, y ordenadas como las manda el backend (alfabéticamente), SIEMPRE salían las
+// mismas —"BANOS, BELLAVISTA y más"— y un cliente de Sinincay o de Turi no se veía en la lista
+// aunque su parroquia esté cubierta. Tampoco se recitan las 33: es un chat, no un catastro.
+const ejemplosPorZona = 6
+
+// ejemplosParaElModelo es el mismo dato para el PROMPT, y es más corto a propósito: el modelo lee
+// una lista larga como un catálogo cerrado y deduce "no está => no hay cobertura" (caso La Gloria,
+// 11/09). El cliente la lee para reconocer la suya. Dos lectores, dos tamaños; suben por separado.
+// Ver renderCobertura en catalogo.go.
+const ejemplosParaElModelo = 3
+
+// ZonasEnTexto arma "CUENCA (BANOS, EL BATAN, LLACAO... y más)" con lo que informe el backend.
+// Devuelve "" si no hay zonas: en ese caso el mensaje sale sin nombrar ninguna, en vez de
+// inventarla. Exportada porque cmd/bot arma el mismo texto para el rechazo por coordenadas y
+// tenerlo dos veces significaba mejorar uno y olvidar el otro.
+func ZonasEnTexto(zonas []georoutes.ZonaCobertura) string {
 	partes := make([]string, 0, len(zonas))
 	for _, z := range zonas {
 		if strings.TrimSpace(z.Zona) == "" {
 			continue
 		}
 		texto := z.Zona
-		if len(z.Parroquias) > 0 {
-			ejemplos := z.Parroquias
-			if len(ejemplos) > 2 {
-				ejemplos = ejemplos[:2]
+		if ejemplos := parroquiasDeMuestra(z.Parroquias, ejemplosPorZona); len(ejemplos) > 0 {
+			texto += " (" + strings.Join(ejemplos, ", ")
+			if len(z.Parroquias) > len(ejemplos) {
+				texto += " y más"
 			}
-			texto += " (" + strings.Join(ejemplos, ", ") + " y más)"
+			texto += ")"
 		}
 		partes = append(partes, texto)
 	}
 	return strings.Join(partes, ", ")
+}
+
+// parroquiasDeMuestra elige n parroquias REPARTIDAS por toda la lista, no las n primeras.
+//
+// El backend las devuelve ordenadas alfabéticamente, así que cortar por el principio deja
+// siempre el mismo puñado del arranque del alfabeto y esconde el resto. Tomando una cada k se
+// recorre la lista entera y aparecen nombres de todo el rango —urbanas y rurales mezcladas—, que
+// es lo que hace que el cliente reconozca la suya. Es determinista: la misma lista da siempre
+// los mismos ejemplos, así que el mensaje no cambia entre turnos.
+func parroquiasDeMuestra(parroquias []string, n int) []string {
+	limpias := make([]string, 0, len(parroquias))
+	for _, p := range parroquias {
+		if p = strings.TrimSpace(p); p != "" {
+			limpias = append(limpias, p)
+		}
+	}
+	if n <= 0 || len(limpias) == 0 {
+		return nil
+	}
+	if len(limpias) <= n {
+		return limpias
+	}
+	muestra := make([]string, 0, n)
+	// Paso en punto fijo (x1000) para repartir sin acumular error de redondeo: con 33 y n=6
+	// salen los índices 0, 5, 11, 16, 22, 27 en vez de 0..5.
+	paso := len(limpias) * 1000 / n
+	for i := 0; i < n; i++ {
+		idx := i * paso / 1000
+		if idx >= len(limpias) {
+			idx = len(limpias) - 1
+		}
+		muestra = append(muestra, limpias[idx])
+	}
+	return muestra
 }
 
 // revisarNegativaDeCobertura reemplaza la respuesta del modelo cuando niega cobertura sin que

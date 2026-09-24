@@ -9,8 +9,8 @@ package main
 import (
 	"fmt"
 	"log"
-	"strings"
 
+	"wp-llm-gas/internal/agent"
 	"wp-llm-gas/internal/config"
 	"wp-llm-gas/internal/conversation"
 	"wp-llm-gas/internal/georoutes"
@@ -57,7 +57,7 @@ func fueraDeCobertura(cfg config.Config, store conversation.Store, gr *georoutes
 
 	msg := "Uy 😔 revisé tu ubicación y por ahora no llegamos a esa zona."
 	if zonas := zonasParaTexto(store, gr); zonas != "" {
-		msg += " Atendemos en " + zonas + "."
+		msg += " Atendemos en las parroquias urbanas y rurales de " + zonas + "."
 	}
 	msg += " ¡Ojalá pronto podamos llegar hasta allá! 🙏"
 	_ = replyClient(cfg, store, from, msg)
@@ -81,24 +81,17 @@ func fueraDeCobertura(cfg config.Config, store conversation.Store, gr *georoutes
 	return true
 }
 
-// zonasParaTexto arma "AZUAY (Baños, Bellavista y más)" con lo que el backend informe.
+// zonasParaTexto arma "CUENCA (BANOS, EL BATAN, LLACAO... y más)" con lo que el backend informe.
 // Best-effort: si no hay zonas disponibles, devuelve "" y el mensaje sale sin esa parte.
+//
+// Delega en agent.ZonasEnTexto: este texto se armaba aquí Y allí con dos implementaciones
+// paralelas, así que la mejora (más parroquias, repartidas por toda la lista) habría entrado en
+// una y no en la otra. El cliente ve el mismo listado lo rechace la geocerca o lo pregunte al
+// modelo.
 func zonasParaTexto(store conversation.Store, gr *georoutes.Client) string {
 	hay, zonas, err := gr.GetCoverageZones()
 	if err != nil || !hay || len(zonas) == 0 {
 		return ""
 	}
-	partes := make([]string, 0, len(zonas))
-	for _, z := range zonas {
-		ej := z.Parroquias
-		if len(ej) > 2 {
-			ej = ej[:2]
-		}
-		if len(ej) > 0 {
-			partes = append(partes, fmt.Sprintf("%s (%s y más)", z.Zona, strings.Join(ej, ", ")))
-		} else {
-			partes = append(partes, z.Zona)
-		}
-	}
-	return strings.Join(partes, "; ")
+	return agent.ZonasEnTexto(zonas)
 }

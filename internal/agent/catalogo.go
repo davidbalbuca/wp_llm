@@ -203,13 +203,27 @@ func renderCobertura(zonas []georoutes.ZonaCobertura) string {
 			"la verificará.\n"
 	}
 	var b strings.Builder
-	b.WriteString("\nCOBERTURA: Sí atendemos. ")
+	b.WriteString("\nCOBERTURA: Sí atendemos, en las parroquias URBANAS Y RURALES de cada zona. ")
 	for _, z := range zonas {
-		ejemplos := z.Parroquias
-		if len(ejemplos) > 3 {
-			ejemplos = ejemplos[:3]
+		// Al MODELO se le dan POCOS ejemplos (3) a propósito, y repartidos por toda la lista.
+		//
+		// Pocos: una lista larga aquí la lee como un catálogo cerrado y deduce "no está => no hay
+		// cobertura". Fue el caso de Israel (11/09, barrio La Gloria): rechazado por no aparecer
+		// en una lista donde un barrio nunca iba a aparecer. Por eso el número que ve el modelo
+		// NO sube con el que ve el cliente (ejemplosPorZona, en ZonasEnTexto): son dos lectores
+		// distintos. El cliente reconoce su parroquia en una lista larga; el modelo, en cambio,
+		// la usa para descartar.
+		//
+		// Repartidos: el backend las manda alfabéticamente, así que cortar las 3 primeras le
+		// mostraba siempre el arranque del alfabeto y las rurales (Sinincay, Turi, Quingeo) no
+		// existían para él.
+		ejemplos := parroquiasDeMuestra(z.Parroquias, ejemplosParaElModelo)
+		plural := "parroquias urbanas y rurales"
+		if len(z.Parroquias) == 1 {
+			plural = "parroquia"
 		}
-		fmt.Fprintf(&b, "Zona %s (parroquias como %s, entre otras). ", z.Zona, strings.Join(ejemplos, ", "))
+		fmt.Fprintf(&b, "Zona %s, %d %s (algunas: %s). ",
+			z.Zona, len(z.Parroquias), plural, strings.Join(ejemplos, ", "))
 	}
 	b.WriteString("\nREGLA DURA: NO tienes forma de saber si un lugar CONCRETO (barrio, " +
 		"urbanización, calle, referencia como \"por el ex CREA\") está cubierto: solo conoces la " +
