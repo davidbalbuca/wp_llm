@@ -39,7 +39,17 @@ const intervaloBusqueda = 7 * time.Second
 // topeBusqueda es una red de seguridad del bot, no un plazo del negocio: si el backend quedara
 // devolviendo "buscando" para siempre (un parámetro absurdo en el panel, por ejemplo), esta
 // goroutine no puede quedarse viva indefinidamente.
-const topeBusqueda = 30 * time.Minute
+//
+// Tiene que estar MUY por encima de lo que dura el flujo real, porque los dos relojes corren a
+// la vez y gana el que venza primero. Estaba en 30 minutos, que es exactamente lo que el
+// backend busca hoy (BUSQUEDA_ESPERA_SEGUNDOS=1800): si ganaba este, el cliente recibía el
+// corte seco "no hay repartidor, intenta más tarde" en vez de la última ronda con disculpas y
+// [Reprogramar / Cancelar] — justo la venta que las rondas existen para rescatar.
+//
+// 90 minutos deja margen para triplicar el plazo del panel sin volver a tocar el bot, y sigue
+// siendo un techo: una goroutine colgada muere en hora y media, no vive para siempre. Hay un
+// test que falla si alguien sube las rondas y este tope se queda corto.
+const topeBusqueda = 90 * time.Minute
 
 // esperaBackend abre la búsqueda en el backend y le pregunta el estado hasta que se resuelve.
 // Corre en su propia goroutine. Best-effort: nunca tumba el proceso.

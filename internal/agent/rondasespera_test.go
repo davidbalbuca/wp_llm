@@ -373,3 +373,33 @@ func codigoSinComentariosDelAgente(t *testing.T, archivo string) string {
 	}
 	return b.String()
 }
+
+// EL TOPE DEL BOT NO PUEDE COMPETIR CON EL PLAZO DEL BACKEND.
+//
+// topeBusqueda es una red de seguridad: existe por si el backend quedara devolviendo "buscando"
+// para siempre. No es un plazo del negocio y no debe cortarle la conversación a nadie.
+//
+// Estaba en 30 min, que es EXACTAMENTE lo que ahora busca el backend
+// (BUSQUEDA_ESPERA_SEGUNDOS=1800). Los dos relojes vencían a la vez: si ganaba el del bot, el
+// cliente recibía "no hay repartidor, intenta más tarde" en vez de la última ronda con
+// disculpas y [Reprogramar / Cancelar] — perdiendo la venta que todo este trabajo buscaba
+// rescatar.
+//
+// La red de seguridad tiene que estar CLARAMENTE por encima del total del negocio.
+func TestElTopeDelBotEstaPorEncimaDelPlazoDelNegocio(t *testing.T) {
+	// El total que puede durar la conversación: una ronda por cada pregunta que se le hace.
+	totalNegocio := duracionDeLaRonda(config.Config{}) * time.Duration(rondasConEspera+1)
+
+	if topeBusqueda <= totalNegocio {
+		t.Errorf("el tope del bot (%v) no supera el total del flujo (%v): los dos relojes "+
+			"compiten y el cliente puede recibir el corte seco del bot en vez de la última "+
+			"ronda con disculpas", topeBusqueda, totalNegocio)
+	}
+	// Y con margen de verdad, no por un minuto: el backend tiene su propio barrido cada minuto
+	// y las consultas del bot van cada 7 s, así que la última ronda puede salir algo después
+	// del plazo exacto.
+	if topeBusqueda < totalNegocio+10*time.Minute {
+		t.Errorf("el tope del bot (%v) queda muy justo sobre el total (%v): un retraso normal "+
+			"del backend bastaría para que el bot corte antes", topeBusqueda, totalNegocio)
+	}
+}
