@@ -395,6 +395,52 @@ func main() {
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
+	// Lo que el panel necesita para PRELLENAR el formulario del pedido a mano: la ubicacion y el
+	// ultimo pedido tal como los tiene EL BOT. Importa que salga de aqui y no de la base del
+	// backend: la disponibilidad se comprueba en el mismo punto donde despues se va a crear el
+	// pedido, asi no se verifica en un lugar y se crea en otro.
+	mux.HandleFunc("GET /internal/pedido-operador-datos", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		phone := strings.TrimSpace(r.URL.Query().Get("phone"))
+		if phone == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		salida := map[string]any{}
+		_, tieneCuenta := store.GetAccount(phone)
+		salida["tiene_cuenta"] = tieneCuenta
+		if loc, ok := store.GetLocation(phone); ok {
+			salida["latitude"] = loc.Latitude
+			salida["longitude"] = loc.Longitude
+		}
+		if calle, ok := store.GetDireccionTexto(phone); ok {
+			salida["direccion"] = calle
+		}
+		if ult, ok := store.GetLastOrder(phone); ok {
+			lineas := []map[string]any{}
+			if len(ult.Items) > 0 {
+				for _, it := range ult.Items {
+					lineas = append(lineas, map[string]any{"color": it.Color, "cantidad": it.Cantidad})
+				}
+			} else if ult.Cantidad > 0 {
+				lineas = append(lineas, map[string]any{"color": ult.Color, "cantidad": ult.Cantidad})
+			}
+			salida["ultimo_pedido"] = map[string]any{
+				"producto": ult.Producto,
+				"fecha":    ult.Fecha,
+				"lineas":   lineas,
+			}
+		}
+		if ts, ok := store.LastClientMessageAt(phone); ok {
+			salida["ultimo_mensaje"] = ts
+			salida["horas_desde_ultimo_mensaje"] = time.Since(time.Unix(ts, 0)).Hours()
+		}
+		writeJSON(w, salida)
+	})
+
 	// PEDIDO CREADO A MANO por un operador desde el chat (gestion manual: el cliente espero, no
 	// hubo repartidor, se lo llamo por telefono y sigue queriendo el gas). Lo crea el BOT para que
 	// sepa que ese pedido existe y pueda seguir el seguimiento. Ver internal/agent/pedido_operador.go:
