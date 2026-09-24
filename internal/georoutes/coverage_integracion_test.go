@@ -40,4 +40,30 @@ func TestIntegracionCobertura(t *testing.T) {
 		t.Fatalf("CheckColorAlternatives: %v", err)
 	}
 	t.Logf("alternativas de NARANJA: %v", alts)
+
+	// Equivalencias por nombre, SIN ubicación: es la consulta que el bot necesita cuando el
+	// cliente pregunta por el cambio antes de compartir el pin (caso 593980787206, 24/09).
+	eq, err := c.GetColorEquivalences()
+	if err != nil {
+		t.Fatalf("GetColorEquivalences: %v", err)
+	}
+	t.Logf("equivalencias: %d pares, por_color=%v", len(eq.Pares), eq.PorColor)
+	// La simetría es lo que se rompe en silencio: la tabla guarda el par una sola vez, con el id
+	// menor primero, así que sin ella la mitad de las consultas daría vacío y el bot diría "no
+	// hacemos ese cambio" de un cambio que sí se hace.
+	for color, equivalentes := range eq.PorColor {
+		for _, otro := range equivalentes {
+			vuelta := eq.PorColor[otro]
+			var simetrico bool
+			for _, v := range vuelta {
+				if v == color {
+					simetrico = true
+				}
+			}
+			if !simetrico {
+				t.Errorf("%s->%s existe pero %s->%s no: la equivalencia no es simétrica",
+					color, otro, otro, color)
+			}
+		}
+	}
 }
