@@ -575,6 +575,13 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// existe pero todavía no tiene a nadie asignado. Ver repartidorprometido.go.
 	reply = a.revisarRepartidorPrometido(from, reply)
 
+	// Candado del CAMBIO DE COLOR: el modelo no puede prometer un intercambio de cilindros que
+	// el negocio no hace. El 24/09 le dijo dos veces a un cliente con envases AZULES que se los
+	// cambiaba por BLANCOS —cambio que no está en la tabla del panel— y un operador tuvo que
+	// entrar al chat a explicárselo. Se verifica contra el backend; si no está configurado, se
+	// dice la verdad y se deriva. Ver cambiocolor.go.
+	reply = a.revisarCambioDeColorPrometido(t, from, text, reply)
+
 	// Candado del MENÚ: que existan botones no sirve de nada si el modelo decide no mandarlos.
 	// Si preguntó el color o la cantidad en texto plano, el menú lo manda el CÓDIGO —con el
 	// mismo texto del modelo como cuerpo, para no perderle el tono—. Ver menuseguro.go.

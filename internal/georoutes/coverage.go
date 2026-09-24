@@ -88,3 +88,31 @@ func (c *Client) CheckColorAlternatives(latitude, longitude float64, idproducto,
 	}
 	return data.Alternativas, nil
 }
+
+// Equivalencias son los cambios de color que el negocio acepta, por NOMBRE. PorColor va en
+// ambos sentidos (lo normaliza el backend), así que se consulta con el color que el cliente
+// tenga sin importar cómo se guardó el par.
+type Equivalencias struct {
+	Pares []struct {
+		ColorA string `json:"color_a"`
+		ColorB string `json:"color_b"`
+	} `json:"pares"`
+	PorColor map[string][]string `json:"por_color"`
+}
+
+// GetColorEquivalences trae los cambios de color configurados (GET /getColorEquivalences/).
+//
+// Hermano de CheckColorAlternatives, que responde otra pregunta: esa dice si hay CONDUCTOR con
+// stock de un equivalente y por eso necesita lat/lng. Esta dice si el cambio ESTÁ CONFIGURADO,
+// que es lo que el cliente pregunta ANTES de compartir su ubicación (caso 593980787206).
+func (c *Client) GetColorEquivalences() (Equivalencias, error) {
+	var data Equivalencias
+	res, err := c.get("/getColorEquivalences/")
+	if err != nil {
+		return data, err
+	}
+	if err := json.Unmarshal(res, &data); err != nil {
+		return data, fmt.Errorf("respuesta de equivalencias no válida del backend: %w", err)
+	}
+	return data, nil
+}

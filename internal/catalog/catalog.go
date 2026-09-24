@@ -19,6 +19,9 @@ type Context struct {
 	Payments []georoutes.Payment
 	// Zonas de cobertura. nil si el backend no las dio (el prompt lo distingue de "sí hay, son estas").
 	Zonas []georoutes.ZonaCobertura
+	// Cambios de color que el negocio acepta. Mapa VACÍO = no hay ninguno configurado, que es
+	// distinto de "no se pudo consultar": el candado de color solo afirma con datos en mano.
+	Equivalencias georoutes.Equivalencias
 }
 
 // Client obtiene y cachea el catálogo del backend (vía el cliente georoutes).
@@ -86,5 +89,15 @@ func (c *Client) fetch() (*Context, error) {
 	} else if err != nil {
 		log.Printf("[catalog] sin zonas de cobertura: %v", err)
 	}
-	return &Context{Business: business, Products: products, Payments: payments, Zonas: zonas}, nil
+	// Equivalencias de color, también secundarias. Si la consulta falla se quedan en cero y el
+	// candado de color trata el cambio como no configurado: deriva a un operador en vez de
+	// prometer. Errar hacia "que lo revise una persona" es lo barato; prometer de más es lo caro.
+	var equivalencias georoutes.Equivalencias
+	if eq, err := c.gr.GetColorEquivalences(); err == nil {
+		equivalencias = eq
+	} else {
+		log.Printf("[catalog] sin equivalencias de color: %v", err)
+	}
+	return &Context{Business: business, Products: products, Payments: payments, Zonas: zonas,
+		Equivalencias: equivalencias}, nil
 }
