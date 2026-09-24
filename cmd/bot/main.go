@@ -469,6 +469,9 @@ func main() {
 			IDConductor int                            `json:"idconductor"`
 			Operador    string                         `json:"operador"`
 			MaxHoras    float64                        `json:"max_horas"`
+			// Los escribe el operador cuando el cliente no tiene cuenta todavia.
+			Identificacion string `json:"identificacion"`
+			Nombres        string `json:"nombres"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Phone) == "" {
 			w.WriteHeader(http.StatusBadRequest)
@@ -481,6 +484,9 @@ func main() {
 			IDConductor: payload.IDConductor,
 			Operador:    payload.Operador,
 			MaxHoras:    payload.MaxHoras,
+
+			Identificacion: payload.Identificacion,
+			Nombres:        payload.Nombres,
 		})
 		if !res.OK {
 			// 409: no es un error del panel, es que el pedido no corresponde crearlo ahora.
@@ -826,6 +832,13 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	inboundAudit := strings.TrimSpace(inc.Text)
 	if inc.HasLocation {
 		inboundAudit = fmt.Sprintf("📍 ubicación: %.6f, %.6f", inc.Latitude, inc.Longitude)
+		// SIEMPRE se guarda, incluso con el chat tomado por una persona. Antes solo se guardaba
+		// en el camino del bot (mas abajo), y el control humano corta el turno antes de llegar
+		// ahi: en esos chats la ubicacion que el cliente YA nos dio se perdia. Justo son los
+		// chats donde despues se crea el pedido a mano desde el panel, que la necesita
+		// (593980787206, 24/09). Guardar un dato no le escribe nada al cliente: los mensajes de
+		// cobertura siguen saliendo solo cuando contesta el bot.
+		store.SetLocation(inc.From, inc.Latitude, inc.Longitude)
 	}
 	if inboundAudit != "" {
 		store.LogMessage(inc.From, "user", inboundAudit)
@@ -875,7 +888,7 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	// Mensaje de ubicación: lo guardamos y avisamos a la IA (en nombre del cliente)
 	// que ya compartió su ubicación, para que pueda continuar/cerrar el pedido.
 	if inc.HasLocation {
-		store.SetLocation(inc.From, inc.Latitude, inc.Longitude)
+		// Ya se guardo arriba (vale tambien en control humano); aqui solo sigue el flujo del bot.
 		log.Printf("[webhook] ubicación de %s: %f, %f", inc.From, inc.Latitude, inc.Longitude)
 		// Ubicación NUEVA: el rechazo anterior ya no aplica (pudo moverse a nuestra zona).
 		// fueraDeCobertura la vuelve a marcar si esta también cae fuera.

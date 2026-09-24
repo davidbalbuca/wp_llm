@@ -39,6 +39,11 @@ type PedidoDeOperador struct {
 	IDConductor int
 	// Operador es quién lo creó; queda guardado en el pedido.
 	Operador string
+	// Identificacion y Nombres: los completa el operador en el formulario cuando el cliente
+	// todavia no tiene cuenta. Pasa siempre en los chats que atiende una persona, porque ahi el
+	// bot nunca corre el registro: el equipo le pide la cedula por el chat para facturar.
+	Identificacion string
+	Nombres        string
 	// MaxHoras es la ventana que el panel ya validó. En cero se usa la que diga el backend.
 	MaxHoras float64
 }
@@ -68,7 +73,21 @@ func (a *Agent) CrearPedidoDeOperador(p PedidoDeOperador) ResultadoPedidoOperado
 	// el operador NO completa los datos personales desde el panel.
 	account, hayCuenta := a.store.GetAccount(from)
 	if !hayCuenta {
-		return noSePudo("este cliente no tiene datos completos: no se le puede crear el pedido")
+		// Sin cuenta se crea con lo que el operador escribio, por el MISMO camino que el pedido
+		// del bot (get-or-create en el backend: si ya existe, no lo duplica).
+		identificacion := strings.TrimSpace(p.Identificacion)
+		nombres := strings.TrimSpace(p.Nombres)
+		if identificacion == "" || nombres == "" {
+			return noSePudo("este cliente no tiene cuenta: escribe su cédula y su nombre")
+		}
+		nueva, err := a.gr.WppGetOrCreateClient(identificacion, nombres, from)
+		if err != nil {
+			log.Printf("[pedido-operador] %s no se pudo crear la cuenta: %v", from, err)
+			return noSePudo("no se pudo registrar al cliente: " + err.Error())
+		}
+		account = conversation.Account{Username: nueva.Username, Password: nueva.Password}
+		a.store.SetAccount(from, account)
+		a.store.SetProfile(from, conversation.Profile{Identificacion: identificacion, Nombres: nombres})
 	}
 	loc, hayUbicacion := a.store.GetLocation(from)
 	if !hayUbicacion {
