@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -17,6 +18,10 @@ import (
 const (
 	anthropicURL     = "https://api.anthropic.com/v1/messages"
 	anthropicVersion = "2023-06-01"
+	// anthropicURLEnv: si está puesta, se habla con ese endpoint en vez de la API pública
+	// (proxy local). Adrede NO se llama ANTHROPIC_BASE_URL: esa variable ya viene puesta en
+	// algunos entornos de desarrollo y secuestraría al bot sin avisar.
+	anthropicURLEnv = "ANTHROPIC_API_URL"
 	// Reintentos ante 429 y 5xx/529. Backoff lineal (2s,4s,6s): 4 intentos cubren ~12s. El 03/09
 	// un bache de ~90s tumbó a 6 clientes con solo 3 intentos (~6s), demasiado corto.
 	anthropicIntentos = 4
@@ -30,7 +35,16 @@ type anthropicProvider struct {
 	maxTokens int
 	// cacheTTL: "" = 5 min por defecto, "1h" = la hora (ver marcarCache).
 	cacheTTL string
-	http     *http.Client
+	// oauth: la credencial es un token OAuth (sk-ant-oat01-…, el que emite el login de
+	// Claude Code) y no una API key de la Console. Viaja por Authorization: Bearer y exige
+	// el beta oauth-2025-04-20; con x-api-key la API responde 401. Solo para pruebas
+	// locales: estos tokens caducan y aquí no hay refresh token, así que en producción
+	// va una API key (sk-ant-api03-…).
+	oauth bool
+	// url: endpoint de /v1/messages. Por defecto la API pública; ANTHROPIC_API_URL lo
+	// reapunta al proxy local.
+	url  string
+	http *http.Client
 }
 
 // NewAnthropic crea el proveedor de Claude.
@@ -44,11 +58,18 @@ func NewAnthropic(apiKey, modelo string, maxTokens int, cacheTTL string) (Provid
 	if cacheTTL != "1h" {
 		cacheTTL = "" // cualquier otra cosa: los 5 minutos por defecto de la API
 	}
+	destino := anthropicURL
+	if v := strings.TrimSpace(os.Getenv(anthropicURLEnv)); v != "" {
+		destino = v
+		log.Printf("[llm] anthropic apunta a %s (%s)", destino, anthropicURLEnv)
+	}
 	return &anthropicProvider{
 		apiKey:    apiKey,
 		modelo:    modelo,
 		maxTokens: maxTokens,
 		cacheTTL:  cacheTTL,
+		oauth:     strings.HasPrefix(strings.TrimSpace(apiKey), "sk-ant-oat01-"),
+		url:       destino,
 		// El webhook ya respondió 200; este timeout solo acota cuánto esperamos al modelo.
 		http: &http.Client{Timeout: 90 * time.Second},
 	}, nil
@@ -188,15 +209,29 @@ func esReintentable(err error) bool {
 
 func (a *anthropicProvider) enviar(ctx context.Context, cuerpo []byte) (anthRespuesta, error) {
 	var datos anthRespuesta
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, anthropicURL, bytes.NewReader(cuerpo))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.url, bytes.NewReader(cuerpo))
 	if err != nil {
 		return datos, err
 	}
 	req.Header.Set("content-type", "application/json")
-	req.Header.Set("x-api-key", a.apiKey)
 	req.Header.Set("anthropic-version", anthropicVersion)
+	if a.oauth {
+		req.Header.Set("authorization", "Bearer "+a.apiKey)
+	} else {
+		req.Header.Set("x-api-key", a.apiKey)
+	}
+
+	// Los betas van todos en la misma cabecera separados por coma: con Set() el segundo
+	// pisaría al primero y perderíamos el de OAuth (401) o el de caché de 1h.
+	var betas []string
+	if a.oauth {
+		betas = append(betas, "oauth-2025-04-20")
+	}
 	if a.cacheTTL == "1h" {
-		req.Header.Set("anthropic-beta", "extended-cache-ttl-2025-04-11")
+		betas = append(betas, "extended-cache-ttl-2025-04-11")
+	}
+	if len(betas) > 0 {
+		req.Header.Set("anthropic-beta", strings.Join(betas, ","))
 	}
 
 	res, err := a.http.Do(req)

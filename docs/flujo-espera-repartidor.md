@@ -81,6 +81,29 @@ Cada consulta **hace avanzar la búsqueda**: reintenta asignar si toca, avisa a 
 si toca, y cierra la etapa si venció. Además hay un barrido (`barrer_busquedas`) que corre
 cada minuto para las búsquedas que nadie está consultando.
 
+## Los relojes no pueden competir
+
+Hay un tercer reloj además de los dos de la tabla: **`topeBusqueda`** (90 min, en
+`espera_busqueda.go`). Es una red de seguridad del bot —existe por si el backend quedara
+devolviendo "buscando" para siempre— y **no** es un plazo del negocio.
+
+Estaba en 30 minutos, exactamente lo mismo que el backend busca hoy. Los dos vencían al mismo
+minuto y ganaba el que llegara primero: si ganaba el del bot, el cliente recibía el corte seco
+*"no hay repartidor, intenta más tarde"* en lugar de la última ronda con disculpas y
+[Reprogramar / Cancelar]. Justo la venta que las rondas existen para rescatar.
+
+> **Regla:** la red de seguridad del bot va muy por encima del total del negocio
+> (rondas x duración). Hay un test que falla si alguien sube las rondas y se olvida del techo.
+
+Los demás relojes del bot se revisaron y **no** interfieren:
+
+| Reloj | Valor | Por qué no choca |
+|---|---|---|
+| `VentanaConversacionSeguida` | 30 min | no limpia si hay espera viva (`GetPendingWait`) |
+| `ventanaPedidoActivo` | 6 h | muy por encima |
+| `SessionGap` / memoria | 24 h | muy por encima |
+| `OFERTA_SEGUNDOS` (backend) | 300 | con cliente esperando manda el reloj de SU búsqueda |
+
 ## La regla que hay que respetar al tocar esto
 
 > **Borrar la espera del bot es cerrar la búsqueda del backend.**

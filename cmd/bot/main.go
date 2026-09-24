@@ -42,7 +42,17 @@ func lockCliente(phone string) *sync.Mutex {
 // timeoutTurno acota lo que puede tardar UN turno. Si el proveedor del modelo se cuelga, el
 // turno muere, el cliente recibe una disculpa y la cola de su teléfono queda libre: un turno
 // zombi no puede dejar al cliente sin respuesta para siempre.
-const timeoutTurno = 30 * time.Second
+//
+// Es una RED DE SEGURIDAD, no el tiempo que se espera normalmente. Estuvo en 30s hasta el
+// 24-sep, cuando las respuestas reales ya llegaban a 22s: ocho segundos de margen. El cliente
+// 593984573546 escribió su dirección con referencias y no recibió nada — "ERROR tras 30.025s"
+// y "signal: killed". No falló el modelo, dejamos de esperarlo.
+//
+// 75s deja margen de sobra sobre el caso normal y sigue por debajo de los otros dos relojes de
+// la cascada (cliente HTTP 90s en internal/llm/anthropic.go, salida del proxy 100s), así que el
+// turno sigue siendo el primero en vencer y el corte lo decide la cola, no el transporte. Los
+// tests de cola_test.go fijan las dos fronteras.
+const timeoutTurno = 75 * time.Second
 
 // --- Anti-duplicados de mensajes ---
 // Ignora un mensaje de texto IDÉNTICO del mismo teléfono dentro de una ventana corta (el cliente

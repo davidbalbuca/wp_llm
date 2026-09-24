@@ -304,7 +304,8 @@ func (a *Agent) registrarNoAsignado(from string) {
 // legítima y evita que un aviso perdido del backend bloquee al cliente para siempre.
 const ventanaPedidoActivo = 6 * time.Hour
 
-// startWaitForDriver corre en segundo plano: reintenta la asignación cada 30s durante 5 min. En
+// startWaitForDriver corre en segundo plano: reintenta la asignación cada 30 s durante lo que
+// dure una ronda (BOT_ESPERA_RONDA_MIN, 10 min por defecto; antes eran 5 quemados). En
 // WhatsApp NO sirve el push (token placeholder), por eso el bot reintenta activamente. Al asignarse
 // o al expirar, envía el mensaje directo por WhatsApp. Best-effort: nunca tumba el proceso.
 func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
