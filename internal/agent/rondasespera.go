@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"wp-llm-gas/internal/config"
+	"wp-llm-gas/internal/conversation"
 )
 
 // NO PERDER AL CLIENTE POR PREGUNTARLE UNA SOLA VEZ.
@@ -105,6 +106,39 @@ func duracionDeLaRonda(cfg config.Config) time.Duration {
 		return cfg.EsperaRonda
 	}
 	return 10 * time.Minute
+}
+
+// tocaOtraRonda dice si ya puede ofrecerse la ronda SIGUIENTE. Función pura —recibe los dos
+// instantes y la duración— por el mismo motivo que duracionDeLaRonda: así se comprueba sin
+// esperar minutos reales.
+//
+// EL FRENO ES EL TIEMPO, no "que el cliente haya contestado". Con lo segundo —lo único que
+// había cuando la búsqueda la lleva el backend— un cliente ATENTO se castigaba a sí mismo:
+// Edison (25/09) contestó "Esperar" dos veces y agotó sus TRES rondas en 56 segundos en vez de
+// en los 30 minutos que le tocaban. Al contestar se limpiaba EsperandoRespuesta y, 7 segundos
+// después (lo que tarda el bot en volver a preguntarle al backend), el estado seguía en
+// SIN_CONDUCTOR y se le ofrecía la siguiente. Quien ignoraba el mensaje conservaba sus rondas.
+//
+// Los dos frenos se SUMAN, no se sustituyen: EsperandoRespuesta sigue evitando que se le repita
+// el menú mientras no conteste, y este evita que contestar se lo gaste.
+//
+// La primera ronda (ultimaRonda cero) no espera: es el instante en que el backend acaba de decir
+// que no hay nadie, y ahí hay que preguntarle ya.
+func tocaOtraRonda(ultimaRonda, ahora time.Time, duracion time.Duration) bool {
+	if ultimaRonda.IsZero() {
+		return true
+	}
+	return !ahora.Before(ultimaRonda.Add(duracion))
+}
+
+// ultimaRondaDe convierte el unix guardado en la espera a un instante. El cero significa "aún no
+// se le ha ofrecido ninguna ronda" y NO la medianoche de 1970: sin esto, time.Unix(0,0) daría una
+// fecha lejanísima y tocaOtraRonda dejaría pasar siempre, que es justo el bug que se arregla.
+func ultimaRondaDe(w conversation.PendingWait) time.Time {
+	if w.UltimaRondaAt <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(w.UltimaRondaAt, 0)
 }
 
 // BORRAR LA ESPERA DEL BOT ES CERRAR LA BÚSQUEDA DEL BACKEND.

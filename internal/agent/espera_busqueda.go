@@ -154,6 +154,13 @@ func (a *Agent) ofrecerEsperaAlCliente(from string, estado *georoutes.BusquedaRe
 	if !ok || w.EsperandoRespuesta {
 		return
 	}
+	// Y que haya pasado la ronda. Los dos frenos se SUMAN: el de arriba evita repetirle el menú
+	// mientras no conteste, y este evita que CONTESTAR se lo gaste. Sin él, quien respondía
+	// "Esperar" recibía la ronda siguiente 7 segundos después —lo que tarda el bot en volver a
+	// consultarle el estado al backend— y agotaba las tres en menos de un minuto (Edison, 25/09).
+	if !tocaOtraRonda(ultimaRondaDe(w), time.Now(), duracionDeLaRonda(a.cfg)) {
+		return
+	}
 	ronda := w.RondaEspera
 
 	minutos := int(a.cfg.EsperaRonda.Minutes())
@@ -177,9 +184,11 @@ func (a *Agent) ofrecerEsperaAlCliente(from string, estado *georoutes.BusquedaRe
 
 	// El estado se guarda DESPUÉS de que el menú salió: si el envío falla, la ronda no avanza y
 	// en la próxima vuelta se vuelve a intentar. Al revés, un fallo de WhatsApp le gastaría una
-	// ronda al cliente sin que él haya visto nada.
+	// ronda al cliente sin que él haya visto nada. Por lo mismo el reloj se sella aquí: lo que
+	// cuenta es cuándo el cliente VIO la pregunta.
 	w.EsperandoRespuesta = true
 	w.RondaEspera = ronda + 1
+	w.UltimaRondaAt = time.Now().Unix()
 	a.store.SetPendingWait(from, w)
 
 	a.store.LogMessage(from, "system", cuerpo)

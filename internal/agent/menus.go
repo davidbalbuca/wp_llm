@@ -49,8 +49,12 @@ func (a *Agent) ResponderMenuEspera(from, texto string) (string, bool) {
 		// Carlos el 23/09 (ver rondasespera.go).
 		a.liberarRespuestaDeEspera(from)
 		a.esperarConductor(from) // arranca startWaitForDriver; su texto es para el modelo
-		respuesta := "¡Perfecto! 🚚 Ya estoy buscando un repartidor para ti. Te aviso por aquí apenas " +
-			"se asigne (o si en unos minutos no hay ninguno disponible). Quédate atento 😊"
+		// El plazo va EXPLÍCITO y sale de la config, no quemado. Decir solo "te aviso apenas se
+		// asigne" y volver a preguntarle a los pocos segundos se lee como un bot roto: le pasó a
+		// Edison el 25/09, que recibió la misma pregunta tres veces en 56 segundos.
+		respuesta := fmt.Sprintf("¡Perfecto! 🚚 Sigo buscando un repartidor para ti. Te aviso por "+
+			"aquí en cuanto se asigne; si no aparece ninguno, te escribo en unos %d minutos. "+
+			"Quédate atento 😊", int(duracionDeLaRonda(a.cfg).Minutes()))
 		// Al historial, por lo mismo que la rama de cancelar: si el cliente escribe mientras
 		// espera, el modelo tiene que saber que ya aceptó esperar y no volver a ofrecerle el menú.
 		a.store.AppendUser(from, texto)

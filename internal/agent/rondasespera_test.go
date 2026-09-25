@@ -131,6 +131,12 @@ func TestCadaOfrecimientoAvanzaLaRonda(t *testing.T) {
 		// El cliente contesta: sin esto la marca de "esperando respuesta" bloquea el siguiente
 		// ofrecimiento —que es justo lo que debe hacer— y el test mediría otra cosa.
 		ag.liberarRespuestaDeEspera(from)
+		// Y PASA EL TIEMPO de la ronda. Desde el 25/09 el freno entre rondas es el reloj, no solo
+		// la respuesta del cliente: contestar rápido ya no gasta las rondas (ver tocaOtraRonda).
+		// Se retrocede el sello en vez de dormir 15 minutos reales.
+		vieja, _ := store.GetPendingWait(from)
+		vieja.UltimaRondaAt = time.Now().Add(-16 * time.Minute).Unix()
+		store.SetPendingWait(from, vieja)
 	}
 	w, _ := store.GetPendingWait(from)
 	if w.RondaEspera != rondasConEspera+1 {

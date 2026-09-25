@@ -50,10 +50,14 @@ ANTHROPIC_MAX_TOKENS        # (default: 1024)
 ANTHROPIC_CACHE_TTL         # 5m (default) | 1h - cuanto vive el prompt cacheado
 BOT_CIERRE_INACTIVIDAD_MIN  # silencio tras el cual el bot se despide (default: 7)
 BOT_CIERRE_VENTANA_MAX_MIN  # techo: pasado esto ya no se despide (default: 60)
-BOT_ESPERA_RONDA_MIN        # (default: 15) cuánto dura CADA ronda de espera de repartidor. Al
+BOT_ESPERA_RONDA_MIN        # (default: 10) cuánto dura CADA ronda de espera de repartidor. Al
                             # cliente se le pregunta hasta 2 veces si quiere seguir esperando, y
                             # en la 3ª solo le quedan [Reprogramar / Cancelar]. Antes eran 5 min
                             # quemados y una sola pregunta: así se perdió a Carlos (23-sep).
+                            # Es el freno REAL entre rondas: hasta el 25-sep solo frenaba que el
+                            # cliente no hubiera contestado, así que quien respondía rápido
+                            # agotaba las tres en menos de un minuto (caso Edison). NO tiene nada
+                            # que ver con los 7 s con que el bot consulta el estado al backend.
 BOT_CENTRO_LAT              # centro de la zona de operación (default: -2.9001, Cuenca)
 BOT_CENTRO_LNG              # (default: -79.0059). Solo para recuperar Plus Codes de links de Maps
 KEY_GOOGLE_MAPS             # clave de Google GEOCODING (la MISMA del backend Django; NO es

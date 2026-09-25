@@ -341,6 +341,16 @@ type PendingWait struct {
 	// primeras puede seguir esperando, y en la ultima solo le quedan reprogramar o cancelar
 	// (ver rondasConEspera en el agente).
 	RondaEspera int `json:"ronda_espera,omitempty"`
+	// UltimaRondaAt es el unix en que se le ofrecio la ultima ronda. El freno entre rondas tiene
+	// que ser el TIEMPO (BOT_ESPERA_RONDA_MIN), no "que el cliente no haya contestado".
+	//
+	// Con lo segundo -lo unico que habia- un cliente ATENTO se castigaba a si mismo: Edison
+	// (25/09) contesto "Esperar" dos veces seguidas y agoto sus TRES rondas en 56 segundos, en
+	// vez de en los 30 minutos que le correspondian. Al contestar se limpiaba EsperandoRespuesta
+	// y, 7 segundos despues (lo que tarda el bot en volver a preguntarle al backend), el estado
+	// seguia en SIN_CONDUCTOR y se le ofrecia la ronda siguiente. Quien ignoraba el mensaje
+	// conservaba sus rondas.
+	UltimaRondaAt int64 `json:"ultima_ronda_at,omitempty"`
 }
 
 // Lineas devuelve las líneas de la espera: la lista si la hay, o la única de los campos
