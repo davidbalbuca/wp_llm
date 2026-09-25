@@ -215,6 +215,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Tras un reinicio, las goroutines de chequeo de entrega (pedidos del flujo manual) se pierden;
+	// se re-agendan desde el store para no dejar de preguntarle al cliente por su entrega.
+	ag.ReprogramarChequeosEntrega()
 
 	mux := http.NewServeMux()
 
@@ -1089,6 +1092,14 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		}
 		if reply, manejado := ag.ResponderMenuEspera(inc.From, inc.Text); manejado {
 			log.Printf("[webhook] respuesta al menu de espera resuelta para %s", inc.From)
+			_ = replyClient(cfg, store, inc.From, reply)
+			return
+		}
+		// Respuesta a "¿ya te entregaron tu pedido?" (pedidos del flujo manual, sin app de conductor
+		// que cierre la entrega). En código porque un Sí cierra el pedido en el backend y no puede
+		// depender de que el modelo lo interprete. Ver internal/agent/chequeo_entrega.go.
+		if reply, manejado := ag.ResponderChequeoEntrega(inc.From, inc.Text); manejado {
+			log.Printf("[webhook] respuesta al chequeo de entrega resuelta para %s", inc.From)
 			_ = replyClient(cfg, store, inc.From, reply)
 			return
 		}

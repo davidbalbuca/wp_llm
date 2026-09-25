@@ -96,6 +96,9 @@ type Agent struct {
 	// observable (atómica: se lee desde otra goroutine) para verificar en tests que aceptar
 	// "Esperar" REALMENTE arranca la búsqueda y no solo se lo dice al cliente.
 	esperasArrancadas atomic.Int64
+	// chequeosArrancados cuenta cuántas goroutines de chequeo de entrega se lanzaron. Señal
+	// observable (atómica) para verificar en tests que un pedido manual programa su chequeo.
+	chequeosArrancados atomic.Int64
 	// enviarMenu es quien manda el menú interactivo. En producción es nil y se usa
 	// whatsapp.SendMenu (ver mandarMenu); los tests lo sustituyen para LEER el cuerpo que le
 	// llega al cliente.

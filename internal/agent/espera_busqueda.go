@@ -252,6 +252,9 @@ func (a *Agent) avisarRepartidorAsignado(from string, w conversation.PendingWait
 	if res.IDPedido > 0 {
 		store.SetOrderPhone(res.IDPedido, from)
 		store.SetActivePedido(from, res.IDPedido)
+		// Igual que en el pedido directo: si el conductor es del flujo manual (sin app), el bot le
+		// preguntará al cliente por la entrega en ~30 min (chequeo_entrega.go).
+		a.programarChequeoEntrega(from, res.IDPedido, res.ConductorAsignado, res.ModoDatosConductor)
 	}
 	// Se guarda TAMBIÉN a dónde va, para que "repetir lo mismo" pueda decirlo.
 	// Aquí no se consultan las direcciones del backend (esto corre en una

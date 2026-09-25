@@ -146,6 +146,22 @@ CREATE TABLE IF NOT EXISTS pending_rating (
     created_at INTEGER NOT NULL
 );
 
+-- Pedidos del FLUJO MANUAL (posible conductor / verificado sin app) pendientes de que el bot le
+-- pregunte al cliente si ya se los entregaron. Se persiste (no solo en la goroutine en memoria)
+-- para sobrevivir un reinicio del bot: al arrancar se re-agendan los que aún no se preguntaron.
+--   preguntar_en: unix ts en que toca preguntar (~30 min tras confirmar el pedido).
+--   preguntado:   1 si la pregunta ya salió y se espera la respuesta Sí/No del cliente.
+CREATE TABLE IF NOT EXISTS pending_delivery (
+    phone           TEXT    PRIMARY KEY,
+    pedido_id       INTEGER NOT NULL,
+    conductor       TEXT,
+    modo_datos      TEXT,
+    preguntar_en    INTEGER NOT NULL,
+    preguntado      INTEGER NOT NULL DEFAULT 0,
+    espera_ya_llego INTEGER NOT NULL DEFAULT 0,
+    created_at      INTEGER NOT NULL
+);
+
 -- Mapa pedido_id -> teléfono de WhatsApp con el que se hizo el pedido. Sirve para contactar
 -- al cliente por el número correcto cuando el backend avisa que se entregó (calificación).
 CREATE TABLE IF NOT EXISTS order_phone (
@@ -1443,6 +1459,86 @@ func (s *sqliteStore) ClearPendingRating(phone string) {
 	if _, err := s.db.Exec(`DELETE FROM pending_rating WHERE phone = ?`, phone); err != nil {
 		log.Printf("[sqlite] ClearPendingRating %s: %v", phone, err)
 	}
+}
+
+// deliveryCheckTTL: un chequeo de entrega no vive más de un día. Si el cliente nunca respondió a la
+// pregunta, no tiene sentido perseguirlo indefinidamente (igual que la calificación).
+const deliveryCheckTTL = 24 * time.Hour
+
+func (s *sqliteStore) SetPendingDeliveryCheck(phone string, chk PendingDeliveryCheck) {
+	preguntado, esperaYaLlego := 0, 0
+	if chk.Preguntado {
+		preguntado = 1
+	}
+	if chk.EsperaYaLlego {
+		esperaYaLlego = 1
+	}
+	if _, err := s.db.Exec(`
+        INSERT INTO pending_delivery(phone, pedido_id, conductor, modo_datos, preguntar_en, preguntado, espera_ya_llego, created_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET
+            pedido_id=excluded.pedido_id, conductor=excluded.conductor, modo_datos=excluded.modo_datos,
+            preguntar_en=excluded.preguntar_en, preguntado=excluded.preguntado,
+            espera_ya_llego=excluded.espera_ya_llego`,
+		phone, chk.PedidoID, chk.Conductor, chk.ModoDatos, chk.PreguntarEn, preguntado,
+		esperaYaLlego, time.Now().Unix()); err != nil {
+		log.Printf("[sqlite] SetPendingDeliveryCheck %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) GetPendingDeliveryCheck(phone string) (PendingDeliveryCheck, bool) {
+	minTime := time.Now().Add(-deliveryCheckTTL).Unix()
+	if _, err := s.db.Exec(`DELETE FROM pending_delivery WHERE created_at < ?`, minTime); err != nil {
+		log.Printf("[sqlite] purga pending_delivery: %v", err)
+	}
+	var chk PendingDeliveryCheck
+	var preguntado, esperaYaLlego int
+	err := s.db.QueryRow(
+		`SELECT pedido_id, conductor, modo_datos, preguntar_en, preguntado, espera_ya_llego
+         FROM pending_delivery WHERE phone = ? AND created_at >= ?`, phone, minTime).
+		Scan(&chk.PedidoID, &chk.Conductor, &chk.ModoDatos, &chk.PreguntarEn, &preguntado, &esperaYaLlego)
+	if err == sql.ErrNoRows {
+		return PendingDeliveryCheck{}, false
+	}
+	if err != nil {
+		log.Printf("[sqlite] GetPendingDeliveryCheck %s: %v", phone, err)
+		return PendingDeliveryCheck{}, false
+	}
+	chk.Preguntado = preguntado != 0
+	chk.EsperaYaLlego = esperaYaLlego != 0
+	return chk, true
+}
+
+func (s *sqliteStore) ClearPendingDeliveryCheck(phone string) {
+	if _, err := s.db.Exec(`DELETE FROM pending_delivery WHERE phone = ?`, phone); err != nil {
+		log.Printf("[sqlite] ClearPendingDeliveryCheck %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) PendingDeliveryChecks() map[string]PendingDeliveryCheck {
+	out := make(map[string]PendingDeliveryCheck)
+	minTime := time.Now().Add(-deliveryCheckTTL).Unix()
+	rows, err := s.db.Query(
+		`SELECT phone, pedido_id, conductor, modo_datos, preguntar_en, preguntado
+         FROM pending_delivery WHERE created_at >= ?`, minTime)
+	if err != nil {
+		log.Printf("[sqlite] PendingDeliveryChecks: %v", err)
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var phone string
+		var chk PendingDeliveryCheck
+		var preguntado int
+		if err := rows.Scan(&phone, &chk.PedidoID, &chk.Conductor, &chk.ModoDatos,
+			&chk.PreguntarEn, &preguntado); err != nil {
+			log.Printf("[sqlite] PendingDeliveryChecks scan: %v", err)
+			continue
+		}
+		chk.Preguntado = preguntado != 0
+		out[phone] = chk
+	}
+	return out
 }
 
 func (s *sqliteStore) SetOrderPhone(pedidoID int, phone string) {

@@ -267,6 +267,28 @@ type PendingRating struct {
 	Conductor string `json:"conductor"`
 }
 
+// PendingDeliveryCheck marca que hay un pedido del FLUJO MANUAL (posible conductor / verificado sin
+// app) del que el bot debe preguntarle al cliente si ya se lo entregaron. En ese flujo NADIE marca
+// la entrega (no hay app de conductor que cierre el pedido): el único que sabe si llegó es el
+// cliente. El bot programa la pregunta ~30 min después de confirmar el pedido; cuando el cliente
+// responde Sí, el bot llama al backend para cerrarlo; si responde No, le pide que avise al llegar.
+//
+// Preguntado marca que la pregunta ya salió y el bot espera la respuesta [Sí/No] (igual que
+// PendingWait.EsperandoRespuesta): así el dispatcher sabe interpretar el próximo mensaje del
+// cliente como respuesta a ESTA pregunta y no como un turno normal del modelo.
+type PendingDeliveryCheck struct {
+	PedidoID    int    `json:"pedido_id"`
+	Conductor   string `json:"conductor"`
+	ModoDatos   string `json:"modo_datos"`    // "sin_tracking" | "solo_nombre" (por qué es manual)
+	PreguntarEn int64  `json:"preguntar_en"`  // unix ts en que toca preguntar (~30 min tras el pedido)
+	Preguntado  bool   `json:"preguntado"`    // ya se le preguntó y se espera respuesta Sí/No inmediata
+	// EsperaYaLlego se activa cuando el cliente respondió que AÚN no le entregan: el bot deja de
+	// esperar un Sí/No y queda a la escucha de un aviso futuro ("ya llegó"). Sin este segundo
+	// estado, un "ya llegó" posterior no tendría cómo cerrar el pedido y quedaría abierto para
+	// siempre — justo lo que este chequeo existe para evitar.
+	EsperaYaLlego bool `json:"espera_ya_llego"`
+}
+
 // OrderDraft es un pedido ya recopilado que quedó EN PAUSA esperando la verificación OTP
 // del cliente. Se guarda (transitorio) para poder RETOMAR el pedido automáticamente en
 // cuanto el cliente valida su código, sin depender de que la IA recuerde el historial.
@@ -506,6 +528,15 @@ type Store interface {
 	GetPendingRating(phone string) (PendingRating, bool)
 	// ClearPendingRating elimina el estado de calificación pendiente.
 	ClearPendingRating(phone string)
+	// SetPendingDeliveryCheck marca que hay un pedido del flujo manual del que preguntar la entrega.
+	SetPendingDeliveryCheck(phone string, chk PendingDeliveryCheck)
+	// GetPendingDeliveryCheck devuelve el chequeo de entrega pendiente (ok=false si no hay).
+	GetPendingDeliveryCheck(phone string) (PendingDeliveryCheck, bool)
+	// ClearPendingDeliveryCheck elimina el chequeo de entrega (confirmado o descartado).
+	ClearPendingDeliveryCheck(phone string)
+	// PendingDeliveryChecks devuelve TODOS los chequeos de entrega vivos (con su teléfono), para
+	// re-agendar las preguntas al arrancar el bot tras un reinicio.
+	PendingDeliveryChecks() map[string]PendingDeliveryCheck
 	// SetPendingColorSwap guarda la oferta de cambio de color pendiente de respuesta
 	// (specs/cobertura-y-color-alterno.md): el cliente pidió un color sin conductor y se le
 	// ofreció un equivalente que SÍ tiene. Vive hasta que responde o expira la sesión.

@@ -128,6 +128,17 @@ func (c *Client) RatingOrder(jwt string, idpedido, calificacion int, observacion
 	return err
 }
 
+// ConfirmarEntrega cierra un pedido del FLUJO MANUAL (posible conductor / verificado sin app) que
+// el CLIENTE confirma haber recibido. Va al endpoint aditivo /georoutes_admin/wppConfirmarEntrega/
+// (fuera del flujo georoutes, regla #7): el backend lo marca ENTREGADO solo si es un pedido del bot
+// asignado por WhatsApp y del propio cliente. Es idempotente (confirmar dos veces no falla).
+func (c *Client) ConfirmarEntrega(jwt string, idpedido int) error {
+	_, err := c.postAdmin("/wppConfirmarEntrega/", map[string]any{
+		"idpedido": idpedido,
+	}, jwt)
+	return err
+}
+
 // EstadoEnCamino es el id del estado EN CAMINO en el backend (georoutes/enums.py). Es el único
 // que cancelOrder acepta: un pedido entregado o ya cancelado lo rechaza.
 const EstadoEnCamino = 1

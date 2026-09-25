@@ -101,6 +101,12 @@ type Config struct {
 	// esperar hasta dos veces, asi que el total posible es tres veces esto. Antes eran 5 minutos
 	// escritos en el codigo y a Carlos (23/09) se le despidio a los ocho minutos de pedir.
 	EsperaRonda time.Duration
+
+	// ChequeoEntrega es cuánto espera el bot, tras confirmar un pedido del FLUJO MANUAL (posible
+	// conductor / verificado sin app), antes de preguntarle al cliente si ya se lo entregaron. En
+	// ese flujo nadie más marca la entrega, así que el cliente es la única fuente. 30 min por
+	// defecto: tiempo razonable para que una entrega urbana ya haya ocurrido.
+	ChequeoEntrega time.Duration
 }
 
 func required(k string) string {
@@ -191,6 +197,7 @@ func Load() Config {
 		// Misma variable que usa el backend Django, para no tener dos claves distintas de lo mismo.
 		GeocodingAPIKey:      os.Getenv("KEY_GOOGLE_MAPS"),
 		EsperaRonda:          time.Duration(optionalInt("BOT_ESPERA_RONDA_MIN", 10)) * time.Minute,
+		ChequeoEntrega:       time.Duration(optionalInt("BOT_CHEQUEO_ENTREGA_MIN", 30)) * time.Minute,
 		SMTPHost:             os.Getenv("SMTP_HOST"),
 		SMTPPort:             optional("SMTP_PORT", "587"),
 		SMTPUser:             os.Getenv("SMTP_USER"),

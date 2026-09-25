@@ -34,6 +34,10 @@ type envelope struct {
 // Client llama a la API georoutes bajo {backendURL}/georoutes/.
 type Client struct {
 	baseURL string
+	// rootURL es la raíz del backend SIN el prefijo /georoutes. Sirve para los pocos endpoints
+	// ADITIVOS que viven en la app de administración (/georoutes_admin/…, ej. confirmar la entrega
+	// de un pedido manual), fuera del flujo `georoutes` que no se toca (regla #7).
+	rootURL string
 	http    *http.Client
 
 	// Cuenta de servicio para leer el catálogo con JWT en prod (DEBUG=False). Vacías = catálogo
@@ -47,8 +51,10 @@ type Client struct {
 
 // NewClient crea el cliente apuntando a {backendURL}/georoutes.
 func NewClient(backendURL string) *Client {
+	root := strings.TrimRight(backendURL, "/")
 	return &Client{
-		baseURL: strings.TrimRight(backendURL, "/") + "/georoutes",
+		baseURL: root + "/georoutes",
+		rootURL: root,
 		http:    &http.Client{Timeout: 20 * time.Second},
 	}
 }
@@ -86,12 +92,24 @@ func (c *Client) serviceToken(force bool) (string, error) {
 // post envía JSON a path con un bearer opcional y devuelve el "resultado" crudo.
 // Si el HTTP no es 2xx, devuelve un error con el "mensaje" del backend (en español).
 func (c *Client) post(path string, payload any, bearer string) (json.RawMessage, error) {
+	return c.postURL(c.baseURL+path, payload, bearer)
+}
+
+// postAdmin envía a un endpoint ADITIVO bajo /georoutes_admin/ (fuera del flujo georoutes). Mismo
+// envoltorio de respuesta { codigo, mensaje, resultado } y mismo manejo de error que post().
+func (c *Client) postAdmin(path string, payload any, bearer string) (json.RawMessage, error) {
+	return c.postURL(c.rootURL+"/georoutes_admin"+path, payload, bearer)
+}
+
+// postURL es el núcleo compartido: POST JSON a una URL absoluta, con bearer opcional, devolviendo
+// el "resultado" o un error con el "mensaje" del backend (en español).
+func (c *Client) postURL(fullURL string, payload any, bearer string) (json.RawMessage, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+path, bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, fullURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

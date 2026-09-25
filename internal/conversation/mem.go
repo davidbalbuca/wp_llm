@@ -34,6 +34,7 @@ type memStore struct {
 	eligiendoHora      map[string]bool                    // se le mandó el menú de horas y no ha elegido
 	pendingRating      map[string]PendingRating           // pedidos entregados por calificar
 	pendingRatingAt    map[string]time.Time               // cuándo se creó cada pendiente (para RatingTTL)
+	pendingDelivery    map[string]PendingDeliveryCheck    // pedidos manuales por confirmar entrega
 	orderPhone         map[int]string                     // pedido_id -> teléfono de WhatsApp con el que se hizo
 	activePedido       map[string]int
 	activePedidoAt     map[string]time.Time       // cuándo se marcó activo (para detectar huérfanos)             // teléfono -> id del pedido activo (para cancelar)
@@ -69,6 +70,7 @@ func NewMemStore() Store {
 		eligiendoHora:      make(map[string]bool),
 		pendingRating:      make(map[string]PendingRating),
 		pendingRatingAt:    make(map[string]time.Time),
+		pendingDelivery:    make(map[string]PendingDeliveryCheck),
 		orderPhone:         make(map[int]string),
 		activePedido:       make(map[string]int),
 		activePedidoAt:     make(map[string]time.Time),
@@ -778,6 +780,35 @@ func (s *memStore) ClearPendingRating(phone string) {
 	defer s.mu.Unlock()
 	delete(s.pendingRating, phone)
 	delete(s.pendingRatingAt, phone)
+}
+
+func (s *memStore) SetPendingDeliveryCheck(phone string, chk PendingDeliveryCheck) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pendingDelivery[phone] = chk
+}
+
+func (s *memStore) GetPendingDeliveryCheck(phone string) (PendingDeliveryCheck, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	chk, ok := s.pendingDelivery[phone]
+	return chk, ok
+}
+
+func (s *memStore) ClearPendingDeliveryCheck(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.pendingDelivery, phone)
+}
+
+func (s *memStore) PendingDeliveryChecks() map[string]PendingDeliveryCheck {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]PendingDeliveryCheck, len(s.pendingDelivery))
+	for k, v := range s.pendingDelivery {
+		out[k] = v
+	}
+	return out
 }
 
 func (s *memStore) SetOrderPhone(pedidoID int, phone string) {

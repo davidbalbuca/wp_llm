@@ -674,6 +674,11 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 		// enlace válido; cuando muere (cancelado/entregado), se va con él. Es lo que permite
 		// detectar después un enlace de otro pedido en la respuesta del modelo.
 		a.store.SetSeguimientoActivo(from, a.urlSeguimiento(resultado.SeguimientoToken))
+		// Pedido del FLUJO MANUAL (conductor sin app): nadie más marcará la entrega, así que el bot
+		// le preguntará al cliente en ~30 min. Para el modo "normal" no hace nada (lo cierra la app
+		// del conductor). Ver chequeo_entrega.go.
+		a.programarChequeoEntrega(from, resultado.IDPedido, resultado.ConductorAsignado,
+			resultado.ModoDatosConductor)
 		// La tarjeta del grupo avanza a "Registrado", con el número de pedido: es el dato con el
 		// que el equipo lo busca en el panel.
 		notify.Default.EstadoCliente(from, nombres, conversation.EtapaRegistrado,
