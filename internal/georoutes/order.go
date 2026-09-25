@@ -29,6 +29,14 @@ type OrderResult struct {
 	// el backend SOLO para pedidos del bot (wpp_order). Vacío si el backend aún no lo envía
 	// (compat hacia atrás): en ese caso el bot simplemente no muestra el enlace.
 	SeguimientoToken string `json:"seguimiento_token"`
+	// ModoDatosConductor indica CUÁNTO se le puede mostrar al cliente sobre el conductor:
+	//   "normal"       -> verificado con GPS real: nombre, placa y enlace de seguimiento.
+	//   "sin_tracking" -> verificado sin GPS real (aceptó por WhatsApp): nombre y placa, SIN mapa.
+	//   "solo_nombre"  -> no verificado (posible conductor): solo el nombre + "va en camino".
+	// Vacío = compat hacia atrás: se trata como "normal".
+	ModoDatosConductor string `json:"modo_datos_conductor"`
+	// TieneTracking es true solo cuando hay posición real para el enlace de seguimiento.
+	TieneTracking bool `json:"tiene_tracking"`
 }
 
 // WppOrder crea el pedido del BOT con la ubicación compartida por WhatsApp, SIN iddireccion:

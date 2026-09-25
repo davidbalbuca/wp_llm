@@ -748,6 +748,18 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 	if resultado.Placa != "" {
 		mensaje += " Placa del vehículo: " + resultado.Placa + "."
 	}
+	// Según el modo de datos del conductor, matizar qué se le promete al cliente sobre el
+	// seguimiento. En 'sin_tracking' (conductor verificado que aceptó por WhatsApp) y 'solo_nombre'
+	// (posible conductor) NO hay mapa en vivo, así que se le avisa que llegará pronto sin prometer
+	// un enlace que no existe. El backend ya omite placa/seguimiento en esos casos; esto es el texto.
+	switch resultado.ModoDatosConductor {
+	case "sin_tracking":
+		mensaje += " (Este repartidor confirmó tu pedido y va en camino; por ahora no hay mapa en " +
+			"vivo para este pedido, avísale al cliente que llegará pronto.)"
+	case "solo_nombre":
+		mensaje += " (Un repartidor ya tomó tu pedido y va en camino; no hay mapa en vivo ni más " +
+			"datos por ahora, tranquiliza al cliente de que está en curso.)"
+	}
 	mensaje += fmt.Sprintf(" Valor a pagar: $%.2f", totalPagar)
 	if resultado.FormaPago != "" {
 		mensaje += " (" + resultado.FormaPago + ")"
