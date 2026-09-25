@@ -1090,6 +1090,14 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 			_ = replyClient(cfg, store, inc.From, reply)
 			return
 		}
+		// Y la respuesta a "¿a las 7 de la mañana o de la noche?". Va junto a la anterior por lo
+		// mismo: es un menú cerrado de dos opciones y la hora que sale de él es la que el cliente
+		// TOCÓ, no una que el modelo dedujo. Ver internal/agent/horaambigua.go.
+		if reply, manejado := ag.ResponderHoraAmbigua(inc.From, inc.Text); manejado {
+			log.Printf("[webhook] hora ambigua resuelta en código para %s", inc.From)
+			_ = replyClient(cfg, store, inc.From, reply)
+			return
+		}
 		if reply, manejado := ag.ResponderMenuEspera(inc.From, inc.Text); manejado {
 			log.Printf("[webhook] respuesta al menu de espera resuelta para %s", inc.From)
 			_ = replyClient(cfg, store, inc.From, reply)

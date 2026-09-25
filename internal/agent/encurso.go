@@ -26,6 +26,11 @@ var marcaHoraria = regexp.MustCompile(`\d{1,2}\s*[:.]\s*\d{2}` + // 18:30, 18.30
 	`|\d{1,2}\s*h\s*\d{0,2}\b` + // 6h30, 6h (la frontera final evita que "8 hola" cuente)
 	`|\d{1,2}\s*(am|pm|a\.m|p\.m)\b` + // 7pm, 7 am — la frontera evita "1 AMarillo" = 1 AM
 	`|\b(a las|para las|a la|tipo)\s+\d{1,2}` + // a las 3, para las 18
+	`|\b(medio ?d[ií]a|media ?noche)\b` + // al mediodía, a medianoche
+	// "7 de la noche", "siete de la tarde": la franja del día convierte esa hora a 24h
+	// (ver franjaDelDia). Sin esto, "a las 7 de la noche" quedaba en 07:00 — doce horas
+	// antes— porque el ajuste solo miraba "pm"/"am" escritos (caso 593986074612, 25/09).
+	`|\b(de|en|por) la (tarde|noche|ma[ñn]ana|madrugada)\b` +
 	`|\by (media|cuarto)\b`) // seis y media
 
 // anotarDelMensaje mira EL MENSAJE ACTUAL del cliente (nunca el historial) y guarda en la ficha

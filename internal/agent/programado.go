@@ -335,13 +335,64 @@ func (a *Agent) horaPedidaPorCliente(from string) string {
 	return p.Hora
 }
 
+// franjaDelDia dice si el texto sitúa la hora en la mitad de la tarde/noche o en la de la
+// mañana. Es lo que convierte "las 7 de la noche" en 19:00 y no en 07:00.
+//
+// Hace falta porque el ajuste de 12h miraba solo "pm"/"am" EN LETRAS, y en español casi nadie
+// las escribe. El 25/09 un cliente pidió su gas "a las 7 de la noche" y quedó agendado a las
+// 07:00 —doce horas antes— sin que nada fallara a la vista: 07:00 cae dentro del horario de
+// atención, así que ninguna validación posterior lo atrapaba.
+func franjaDelDia(t string) (tarde, manana bool) {
+	// Basta la palabra: en un mensaje que ya trae una hora, "noche" y "tarde" no significan otra
+	// cosa. Cubre "de la tarde", "en la noche", "por la tardecita"...
+	tarde = strings.Contains(t, "tarde") || strings.Contains(t, "noche") ||
+		strings.Contains(t, "pm") || strings.Contains(t, "p.m")
+	manana = strings.Contains(t, "mañana") || strings.Contains(t, "manana") ||
+		strings.Contains(t, "madrugada") || strings.Contains(t, "am") || strings.Contains(t, "a.m")
+	// "mañana a las 7 de la noche": la franja manda sobre el día.
+	if tarde {
+		manana = false
+	}
+	return tarde, manana
+}
+
+// horaEnPalabras convierte "siete de la noche" en 7, o -1. Reutiliza numerosEscritos —la misma
+// lista con la que se leen las cantidades— y solo se usa si no hay dígitos que leer.
+func horaEnPalabras(t string) int {
+	for _, palabra := range strings.Fields(t) {
+		palabra = strings.Trim(palabra, ".,;:!¡?¿")
+		if n, ok := numerosEscritos[palabra]; ok && n >= 1 && n <= 12 {
+			return n
+		}
+	}
+	return -1
+}
+
+// ajustarFranja aplica la mitad del día a una hora de 1..12. Fuera de ese rango no se toca: un
+// "18 de la tarde" ya viene en formato 24h y sumarle 12 lo rompería.
+func ajustarFranja(h int, tarde, manana bool) int {
+	switch {
+	case tarde && h < 12:
+		return h + 12
+	case manana && h == 12:
+		return 0 // "12 de la mañana" es medianoche
+	}
+	return h
+}
+
 // extraerHora saca una hora "HH:MM" de un texto de chat, o "". Cubre "18:30", "6:30 pm",
-// "a las 7", "6h30", "18h". Los minutos por defecto son 00 cuando no se dicen.
+// "a las 7", "6h30", "18h", "7 de la noche", "siete de la tarde" y "al mediodía". Los minutos
+// por defecto son 00 cuando no se dicen.
 func extraerHora(texto string) string {
 	t := strings.ToLower(texto)
-	// pm/am para el ajuste de 12h
-	pm := strings.Contains(t, "pm") || strings.Contains(t, "p.m")
-	am := strings.Contains(t, "am") || strings.Contains(t, "a.m")
+	// Mediodía y medianoche son horas exactas: no hay número que leer.
+	if strings.Contains(t, "mediodia") || strings.Contains(t, "mediodía") {
+		return "12:00"
+	}
+	if strings.Contains(t, "medianoche") {
+		return "00:00"
+	}
+	pm, am := franjaDelDia(t)
 
 	// Recorre el texto buscando el primer número que parezca hora (0..23), con minutos opcionales
 	// tras ':' o 'h'.
@@ -366,13 +417,16 @@ func extraerHora(texto string) string {
 				m = mm
 			}
 		}
-		// Ajuste 12h -> 24h si el cliente dijo pm/am.
-		if pm && h < 12 {
-			h += 12
-		} else if am && h == 12 {
-			h = 0
+		// Ajuste 12h -> 24h según la mitad del día (pm/am escritos o "de la tarde"/"de la noche").
+		return fmt.Sprintf("%02d:%02d", ajustarFranja(h, pm, am), m)
+	}
+
+	// Sin dígitos, la hora puede venir en palabras ("siete de la noche"). Se exige la franja
+	// porque un número suelto escrito no es una hora: "dos cilindros" no son las 02:00.
+	if pm || am {
+		if h := horaEnPalabras(t); h > 0 {
+			return fmt.Sprintf("%02d:00", ajustarFranja(h, pm, am))
 		}
-		return fmt.Sprintf("%02d:%02d", h, m)
 	}
 	return ""
 }

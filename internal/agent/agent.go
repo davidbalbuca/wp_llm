@@ -591,6 +591,18 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// existe pero todavía no tiene a nadie asignado. Ver repartidorprometido.go.
 	reply = a.revisarRepartidorPrometido(from, reply)
 
+	// Candado de la HORA AMBIGUA: "a las 7" no dice si son las 07:00 o las 19:00, y con el
+	// horario del negocio (07:00-19:00) las dos son válidas, así que no se puede desempatar por
+	// horario. Se pregunta con dos botones en vez de adivinar: acertar la mitad de las veces
+	// significa media entrega a la hora equivocada. Ver horaambigua.go.
+	if !t.menuSent {
+		if h, ambigua := horaAmbigua(text); ambigua {
+			if a.preguntarPorLaHoraAmbigua(t, from, h) {
+				reply = ""
+			}
+		}
+	}
+
 	// Candado del CAMBIO DE COLOR: el modelo no puede prometer un intercambio de cilindros que
 	// el negocio no hace. El 24/09 le dijo dos veces a un cliente con envases AZULES que se los
 	// cambiaba por BLANCOS —cambio que no está en la tabla del panel— y un operador tuvo que
