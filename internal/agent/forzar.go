@@ -81,11 +81,39 @@ func (a *Agent) forzarRegistroSiHaceFalta(t *turno, from string) (string, bool) 
 		return "¡Anotado tu pedido de " + describeItems(lineas) + "! 🙌 En este momento " +
 			"los repartidores están un poco lejos. ¿Deseas que busque uno para ti? Puede tardar hasta " +
 			"5 minutos. Escríbeme \"sí\" para esperar o \"no\" si prefieres que lo dejemos.", true
+	case t.ultimoPedido.faltaDato != "":
+		// FALTA UN DATO, que es un fallo RECUPERABLE EN ESTE MISMO TURNO: no hay nada roto, solo
+		// una pregunta sin hacer. Se pide el dato y se sigue.
+		//
+		// Antes caía en el `default` de abajo y el cliente recibía "Disculpa, no pude completar
+		// tu pedido. Ya avisé al equipo" — una disculpa por un problema inexistente, y una
+		// promesa que además disparaba al candado del aviso al equipo y creaba un ticket sobre
+		// el error de ESTE candado (Edison, 25/09, ticket #51; y otros dos clientes).
+		//
+		// El texto NO menciona al equipo ni pide disculpas: los candados están para que el bot
+		// no afirme falsedades, no para disculparse de lo que no ha pasado.
+		return a.pedirElDatoQueFalta(from, t.ultimoPedido.faltaDato), true
 	default:
-		// No se pudo (cobertura, catálogo, etc.): registrarPedido ya avisó/derivó si tocaba.
+		// Aquí sí falló algo de verdad (cobertura, catálogo, backend caído). registrarPedido ya
+		// avisó/derivó por su cuenta, así que el aviso al equipo es cierto.
 		return "Disculpa 🙏, no pude completar tu pedido ahora mismo. Ya avisé al equipo para que te " +
 			"contacte y lo resuelva. ¿Me confirmas tu ubicación 📎 mientras tanto?", true
 	}
+}
+
+// pedirElDatoQueFalta redacta la pregunta por el dato que impidió registrar el pedido.
+//
+// La cédula NO se pide directamente: se pasa por el camino de protección de datos que ya existe
+// (consentimiento.go), porque pedir una cédula sin autorización es justo lo que ese candado
+// impide. Si el cliente ya autorizó, ese camino deja pasar la pregunta tal cual.
+func (a *Agent) pedirElDatoQueFalta(from, falta string) string {
+	if falta == "cedula" {
+		// revisarPeticionDeCedula decide: si no hay permiso, lo reemplaza por el menú de
+		// consentimiento; si lo hay, devuelve este texto intacto.
+		return a.revisarPeticionDeCedula(&turno{}, from,
+			"¡Ya casi! 😊 Para emitir tu factura necesito tu número de cédula.")
+	}
+	return "¡Ya casi! 😊 Solo me falta tu nombre completo para dejar tu pedido listo."
 }
 
 // tienePedidoVivo dice si el cliente TIENE AHORA un pedido en marcha: uno registrado en el

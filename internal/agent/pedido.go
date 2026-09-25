@@ -18,8 +18,17 @@ import (
 
 // resultadoPedido es el desenlace de un registrar_pedido, para quien lo llame desde codigo.
 type resultadoPedido struct {
-	ok          bool // el pedido se creo en el backend
-	enEspera    bool // se creo pero no habia repartidor: quedo en cola (PendingWait)
+	ok       bool // el pedido se creo en el backend
+	enEspera bool // se creo pero no habia repartidor: quedo en cola (PendingWait)
+	// faltaDato dice QUE dato del cliente falto ("cedula" o "nombre"); vacio si el fallo fue
+	// otro. Un fallo por esto es RECUPERABLE EN EL MISMO TURNO: no es algo roto que haya que
+	// derivar, es una pregunta que falta hacer.
+	//
+	// Sin distinguirlo, el candado del fantasma metia este caso en el mismo saco que "no hay
+	// cobertura" o "el catalogo no responde" y contestaba "Disculpa, no pude completar tu
+	// pedido. Ya avise al equipo" — una disculpa por un problema inexistente y un aviso que
+	// nadie habia dado. Paso con Edison el 25/09 (ticket #51) y con otros dos clientes.
+	faltaDato   string
 	IDPedido    int
 	Conductor   string
 	Placa       string
@@ -478,6 +487,14 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 		}
 	}
 	if identificacion == "" || nombres == "" {
+		// QUE dato falta se deja anotado para quien llame desde codigo: este fallo se arregla
+		// preguntandolo, no disculpandose ni derivando (ver resultadoPedido.faltaDato y el
+		// candado del fantasma en forzar.go).
+		falta := "nombre"
+		if identificacion == "" {
+			falta = "cedula" // la cedula va primero: sin ella no se puede ni verificar al cliente
+		}
+		t.ultimoPedido = resultadoPedido{faltaDato: falta}
 		return "Faltan datos del cliente (cédula o nombre). Pídeselos antes de registrar el pedido."
 	}
 
