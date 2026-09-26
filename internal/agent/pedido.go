@@ -133,9 +133,23 @@ func lineasDeArgs(args map[string]any) []conversation.ItemPedido {
 // marca el pedido CANCELADO_CLIENTE, devuelve el stock al conductor y le avisa. Limpia el estado
 // del pedido activo y el historial para arrancar fresco.
 func (a *Agent) cancelarPedido(from string) string {
+	texto, _ := a.cancelarPedidoConMotivo(from)
+	return texto
+}
+
+// cancelarPedidoConMotivo hace el trabajo y devuelve, además del texto que guía al modelo, POR QUÉ
+// terminó así. El MOTIVO es lo que decide si hubo avería; el texto solo redacta.
+//
+// Antes iban fundidos en una frase y el modelo la ascendió a diagnóstico: con "No encuentro la
+// cuenta del cliente… lo revisa el equipo" abrió el ticket #56 titulado "Error técnico" para un
+// cliente que nunca había pedido nada, y mandó a un operador a confirmar la cancelación de un
+// pedido inexistente. Ver motivocancelacion.go.
+func (a *Agent) cancelarPedidoConMotivo(from string) (string, motivoCancelacion) {
 	account, ok := a.store.GetAccount(from)
 	if !ok || account.Username == "" {
-		return "No encuentro la cuenta del cliente para cancelar el pedido. Discúlpate y dile que en un momento lo revisa el equipo."
+		// Sin cuenta no puede haber pedido: el cliente no completó ninguno. Estado NORMAL.
+		return "El cliente no tiene cuenta todavía, así que NO hay ningún pedido que cancelar. No es " +
+			"un error técnico: acláraselo con amabilidad y ofrécele tomar su pedido.", cancelacionSinCuenta
 	}
 	pedidoID, ok := a.store.GetActivePedido(from)
 	if !ok || pedidoID <= 0 {
@@ -145,8 +159,9 @@ func (a *Agent) cancelarPedido(from string) string {
 		// camino es el peor desenlace: se queda sin poder cancelar por este canal.
 		id, hay := a.pedidoVigenteEnBackend(from, account)
 		if !hay {
-			return "El cliente no tiene un pedido activo para cancelar. Aclárale con amabilidad que no encuentras un " +
-				"pedido en curso a su nombre, y ofrécele hacer uno nuevo cuando quiera."
+			return "El cliente no tiene un pedido activo para cancelar. No es un error técnico: aclárale con " +
+				"amabilidad que no hay un pedido en curso a su nombre, y ofrécele hacer uno nuevo cuando " +
+				"quiera.", cancelacionSinPedido
 		}
 		log.Printf("[cancelar] %s: sin pedido activo en memoria, pero el backend tiene el #%d en camino", from, id)
 		pedidoID = id
@@ -154,7 +169,9 @@ func (a *Agent) cancelarPedido(from string) string {
 	// JWT fresco: el pedido pudo hacerse hace rato, re-autenticamos antes de cancelar.
 	tokens, err := a.gr.Login(account.Username, account.Password)
 	if err != nil {
-		return "No se pudo cancelar el pedido en este momento (motivo: " + err.Error() + "). Discúlpate y pídele que intente de nuevo en un momento."
+		// Aquí SÍ hay un pedido real y no se pudo tocar: es avería.
+		return "No se pudo cancelar el pedido en este momento (motivo: " + err.Error() +
+			"). Discúlpate y pídele que intente de nuevo en un momento.", cancelacionFalloBackend
 	}
 	if err := a.gr.CancelOrder(tokens.Access, pedidoID); err != nil {
 		// "El pedido ya fue cancelado" NO es un fallo: el objetivo del cliente ya se cumplió (lo
@@ -165,15 +182,17 @@ func (a *Agent) cancelarPedido(from string) string {
 			a.store.ClearActivePedido(from)
 			a.store.ClearPedidoEnCurso(from)
 			return "El pedido del cliente YA estaba cancelado (lo canceló el conductor). No es un error: " +
-				"confírmale con amabilidad que su pedido está cancelado y ofrécele hacer uno nuevo cuando quiera."
+				"confírmale con amabilidad que su pedido está cancelado y ofrécele hacer uno nuevo cuando " +
+				"quiera.", cancelacionHecha
 		}
-		return "No se pudo cancelar el pedido (motivo: " + err.Error() + "). Discúlpate y dile que en un momento lo revisa el equipo."
+		return "No se pudo cancelar el pedido (motivo: " + err.Error() +
+			"). Discúlpate y dile que en un momento lo revisa el equipo.", cancelacionFalloBackend
 	}
 	a.store.ClearActivePedido(from)
 	a.store.ClearPedidoEnCurso(from)
 	// El historial NO se borra: la memoria del chat dura la ventana de 24h.
 	return "Pedido cancelado con éxito. Confírmale al cliente con amabilidad que su pedido fue cancelado y que " +
-		"puede hacer uno nuevo cuando lo desee."
+		"puede hacer uno nuevo cuando lo desee.", cancelacionHecha
 }
 
 // pedidoVigenteEnBackend le pregunta al backend si el cliente tiene un pedido EN CAMINO, para

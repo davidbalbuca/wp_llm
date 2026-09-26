@@ -625,6 +625,13 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 		reply = a.rescatarTurnoColgado(from, reply)
 	}
 
+	// EL PORTERO DE HECHOS, la última palabra. Los once candados de arriba ARREGLAN cada uno su
+	// caso; este audita lo que quedó: si el mensaje todavía afirma un hecho operativo (pedido
+	// registrado, entrega agendada, equipo avisado, pedido cancelado, repartidor en ruta) que el
+	// ESTADO no sostiene, no sale. Va después de rescatarTurnoColgado porque ese también reescribe.
+	// Ver porterodehechos.go y specs/afirmaciones-respaldadas-por-estado.md.
+	reply = a.revisarHechosAfirmados(t, from, reply)
+
 	// Turno del modelo para el HISTORIAL. Si en este turno se envió un menú interactivo,
 	// guardamos la PREGUNTA del menú (cuerpo + opciones), NO un texto vacío ni el fallback:
 	// así el modelo recuerda qué preguntó y no repite el menú. El historial solo guarda texto,
@@ -919,8 +926,15 @@ func (a *Agent) nombreDe(from string) string {
 // crearTicketSoporte reporta una escalación del agente por el ÚNICO camino de fallos
 // (notify.ReportarFallo): ticket + marca en el chat + correo + Telegram. Devuelve el id del
 // ticket (0 si no se pudo crear).
+//
+// Al resumen se le ADJUNTA SIEMPRE el estado real del cliente leído de la base. Es un solo punto
+// —todos los tickets pasan por aquí— y por eso el sello no se puede olvidar en un camino nuevo.
+//
+// Sin esto, el ticket es la redacción de un LLM ascendida a orden de trabajo: el #56 mandó a un
+// operador a confirmar la cancelación de "5 cilindros amarillos" que nunca existieron. Ver
+// ticketconestado.go.
 func (a *Agent) crearTicketSoporte(from, motivo, resumen string) int64 {
-	return notify.ReportarFallo(a.cfg, a.store, from, motivo, resumen)
+	return notify.ReportarFallo(a.cfg, a.store, from, motivo, a.resumenConEstado(from, resumen))
 }
 
 // HandleVerification procesa el código OTP que el cliente envió por WhatsApp.

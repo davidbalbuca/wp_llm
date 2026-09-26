@@ -81,20 +81,27 @@ func TestSeCancelaElPedidoVivoAunqueElBotNoLoRecuerde(t *testing.T) {
 	}
 }
 
-// Sin pedido en ninguna parte: el turno se deja al modelo, como antes. El interceptor no debe
-// inventarse una cancelación ni responder por algo que no existe.
-func TestSinPedidoEnNingunaParteNoSeTomaElTurno(t *testing.T) {
+// Sin pedido en ninguna parte —ni anotado ni en el backend— NO se inventa una cancelación: no se
+// llama a cancelOrder y se le dice al cliente la verdad, en código.
+//
+// Antes este test exigía que el turno fuera al modelo. Eso cambió el 26/09 tras el ticket #56: al
+// ceder, el modelo llamaba a la herramienta igual y convertía "no hay cuenta" en un "error
+// técnico" con un pedido inventado. Lo que no cambia —y es lo que este test cuida— es que sin
+// pedido vigente NADIE toca cancelOrder.
+func TestSinPedidoEnNingunaParteNoSeCancelaNada(t *testing.T) {
 	const from = "593999800002"
 	// idPedido 0 => el backend responde lista vacía para cualquier filtro.
 	ag, store, seCancelo := backendConPedidoVigente(t, 0)
 	store.SetAccount(from, conversation.Account{Username: "u", Password: "p"})
-	// Se fuerza la lista vacía cambiando el filtro que el fake reconoce: aquí basta con que el
-	// cliente no tenga pedidos; el fake devuelve el id 0, que el cliente Go descarta.
-	if _, manejado := ag.ResponderCancelacion(from, "cancelar mi pedido"); manejado {
-		t.Error("se tomó el turno sin haber nada que cancelar: debe atenderlo el modelo")
+	msg, manejado := ag.ResponderCancelacion(from, "cancelar mi pedido")
+	if !manejado {
+		t.Error("el turno debe resolverse en código en vez de cederse (ticket #56)")
 	}
 	if *seCancelo {
 		t.Error("se llamó a cancelOrder sin pedido vigente")
+	}
+	if afirmaCancelado(msg) {
+		t.Errorf("se le confirma una cancelación que no ocurrió: %q", msg)
 	}
 }
 

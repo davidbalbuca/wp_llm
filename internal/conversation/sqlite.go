@@ -776,6 +776,14 @@ func (s *sqliteStore) ListTickets(estado string, limit int) []Ticket {
 }
 
 func (s *sqliteStore) CloseTicket(id int64, solucion string) bool {
+	// SIN SOLUCIÓN NO SE CIERRA. Un ticket cerrado en blanco borra la única pista de qué se hizo, y
+	// lo que se aprende de un fallo está justamente ahí. El 26/09 la tabla tenía 55 tickets: 53
+	// abiertos y 2 cerrados, los dos sin nada escrito, así que de esos dos no quedó nada.
+	// Ver specs/tickets-que-nadie-cierra.md.
+	if strings.TrimSpace(solucion) == "" {
+		log.Printf("[sqlite] CloseTicket %d rechazado: hay que escribir qué se hizo", id)
+		return false
+	}
 	res, err := s.db.Exec(
 		`UPDATE tickets SET estado = ?, solucion = ?, closed_at = ? WHERE id = ? AND estado = ?`,
 		TicketCerrado, solucion, time.Now().Unix(), id, TicketAbierto)

@@ -21,6 +21,7 @@ import (
 	"log"
 	"strings"
 
+	"wp-llm-gas/internal/conversation"
 	"wp-llm-gas/internal/notify"
 )
 
@@ -134,7 +135,23 @@ func (a *Agent) ResponderCancelacion(from, texto string) (string, bool) {
 	// una confusión, y eso lo explica mejor el modelo.
 	msg, hubo := a.cancelarPedidoVivoSiLoHay(from)
 	if !hubo {
-		return "", false
+		// NO HAY PEDIDO. Antes se cedía el turno aquí y el modelo llamaba a cancelar_pedido por su
+		// cuenta; la herramienta le devolvía "No encuentro la cuenta del cliente…" y el modelo lo
+		// ascendió a avería: ticket #56 "Error técnico" a nombre de Carlos (593987295556), que
+		// NUNCA había pedido nada, con un pedido de "5 cilindros amarillos" que él compuso de la
+		// conversación. Un operador quedó encargado de confirmar una cancelación imposible.
+		//
+		// Solo se cede si puede haber OTRA cosa que cancelar —una entrega agendada—, porque eso el
+		// modelo (o el candado de programación) lo atiende mejor. Si no hay nada de nada, lo
+		// resuelve el código: es la verdad y no necesita interpretación.
+		if a.tieneEntregaAgendada(from) {
+			return "", false
+		}
+		msg = cancelacionSinPedido.mensajeAlCliente()
+		log.Printf("[cancelacion] %s: no tiene pedido ni entrega agendada; se le dice en código (sin ticket)", from)
+		a.store.AppendUser(from, texto)
+		a.store.AppendModel(from, msg)
+		return msg, true
 	}
 
 	// El turno queda en el HISTORIAL (igual que ConfirmarProgramado y repetir-pedido): sin esto
@@ -227,4 +244,21 @@ func (a *Agent) ResponderCancelarProgramacion(from, texto string) (string, bool)
 		"ayudarte 😊"
 	a.store.AppendModel(from, msg)
 	return msg, true
+}
+
+// tieneEntregaAgendada dice si el cliente tiene una entrega programada PENDIENTE.
+//
+// Se usa para decidir si "cancelar" puede referirse a otra cosa: con una entrega agendada, el
+// turno se le cede a quien sabe cancelarla; sin nada de nada, el código responde la verdad y no
+// hace falta que nadie interprete (ver ResponderCancelacion y el ticket #56).
+//
+// Lee de ListScheduled porque el Store no tiene un getter por teléfono, y filtra por estado
+// PENDIENTE: una entrega ya cumplida o cancelada no es "algo que cancelar".
+func (a *Agent) tieneEntregaAgendada(from string) bool {
+	for _, s := range a.store.ListScheduled(conversation.SchedulePendiente, 200) {
+		if s.Phone == from {
+			return true
+		}
+	}
+	return false
 }

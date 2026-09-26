@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -425,6 +426,11 @@ func (s *memStore) ListTickets(estado string, limit int) []Ticket {
 }
 
 func (s *memStore) CloseTicket(id int64, solucion string) bool {
+	// Mismo criterio que sqlite: sin decir qué se hizo, el ticket no se cierra. Los dos backends
+	// tienen que comportarse igual o los tests en memoria dejan pasar lo que prod rechaza.
+	if strings.TrimSpace(solucion) == "" {
+		return false
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range s.tickets {

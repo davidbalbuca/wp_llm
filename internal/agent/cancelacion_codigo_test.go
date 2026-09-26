@@ -123,17 +123,35 @@ func TestCancelacionNoActuaSobreLoAmbiguo(t *testing.T) {
 	}
 }
 
-// Sin pedido activo no se intercepta: "cancelar" puede referirse a otra cosa.
-func TestSinPedidoActivoLaCancelacionVaAlModelo(t *testing.T) {
+// Sin pedido activo NO se toca el backend — y se le dice al cliente EN CÓDIGO.
+//
+// Hasta el 26/09 este test exigía lo contrario: que el turno se cediera al modelo. Ese era el
+// hueco. El modelo llamaba a cancelar_pedido por su cuenta, la herramienta le devolvía prosa
+// ("No encuentro la cuenta del cliente…") y él la ascendió a diagnóstico: ticket #56 "Error
+// técnico" para Carlos, que NUNCA había pedido nada, con "5 cilindros amarillos" que compuso de
+// la conversación. Un operador quedó encargado de confirmar una cancelación imposible.
+// Ver specs/cancelar-sin-pedido-y-fallos-recuperables.md.
+//
+// Lo que este test protegía y SIGUE protegiendo: no llamar al backend cuando no hay nada que
+// cancelar.
+func TestSinPedidoActivoNoSeLlamaAlBackend(t *testing.T) {
 	const from = "593999000701"
 	ag, store, llamadas := backendQueCancela(t, false)
 	store.SetAccount(from, conversation.Account{Username: "u", Password: "p"}) // sin pedido activo
 
-	if _, manejado := ag.ResponderCancelacion(from, "cancelar pedido"); manejado {
-		t.Error("sin pedido activo no hay nada que cancelar en código")
+	msg, manejado := ag.ResponderCancelacion(from, "cancelar pedido")
+	if !manejado {
+		t.Error("el turno debe resolverse en código: cederlo es lo que produjo el ticket #56")
 	}
 	if *llamadas != 0 {
 		t.Error("se llamó al backend sin pedido que cancelar")
+	}
+	// Y sin tratarlo como avería: ni promesa de contacto, ni ticket.
+	if afirmaAvisoAlEquipo(msg) {
+		t.Errorf("se le promete un aviso al equipo sin motivo: %q", msg)
+	}
+	if n := len(store.ListTickets("abierto", 50)); n != 0 {
+		t.Errorf("se abrieron %d tickets por un cliente sin pedido", n)
 	}
 }
 

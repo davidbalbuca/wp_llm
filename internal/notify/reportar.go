@@ -16,7 +16,17 @@ import (
 // Best-effort de punta a punta: cada canal se degrada por su lado y nunca devuelve error. Devuelve
 // el id del ticket (0 si no se pudo crear). `nombre` vacío se resuelve del perfil del store.
 func ReportarFallo(cfg config.Config, store conversation.Store, phone, motivo, detalle string) int64 {
-	log.Printf("[fallo] %s (%s): %s", motivo, phone, detalle)
+	// El teléfono se normaliza ANTES de escribir nada: es la clave con la que se agrupa el caso y
+	// con la que se le llama al cliente. Sin esto quedan tickets inatendibles ("+593") y un mismo
+	// cliente partido en dos identidades (0991803684 y 593991803684 son la misma persona, y sus
+	// 10 tickets estaban repartidos entre las dos). Ver telefonoticket.go.
+	if norm := normalizarTelefonoEC(phone); norm != "" {
+		phone = norm
+	}
+	// La clase decide de quién es el trabajo: una persona esperando, un bug, o falta de cobertura
+	// (que no es un caso de soporte sino un dato). Ver claseticket.go.
+	clase := clasificar(motivo)
+	log.Printf("[fallo] clase=%s %s (%s): %s", clase, motivo, phone, detalle)
 
 	var tid int64
 	yaAbierto := false
