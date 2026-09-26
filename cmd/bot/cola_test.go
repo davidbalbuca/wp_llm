@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"wp-llm-gas/internal/llm"
 )
 
 // Los mensajes del MISMO cliente se procesan en orden, uno tras otro: el segundo espera a que
@@ -90,11 +92,21 @@ func TestLockClienteEsElMismoPorTelefono(t *testing.T) {
 	}
 }
 
-// Un turno colgado no puede bloquear la cola para siempre: timeoutTurno lo acota. Este test
-// fija el contrato del valor (si alguien lo sube a minutos, el cliente siguiente esperaría eso).
+// Un turno colgado no puede bloquear la cola para siempre: timeoutTurno lo acota.
+//
+// A quién bloquea: la cola es POR TELÉFONO (ver lockCliente y TestClientesDistintosNoSeBloquean),
+// así que un turno lento NO afecta a otros clientes — solo al SIGUIENTE mensaje de ese mismo
+// cliente, que espera sin recibir señal. Por eso el techo existe: es el silencio máximo que
+// puede sufrir quien escribe dos veces seguidas.
+//
+// 2 minutos es el tope de este test; el límite que manda hoy es el del proxy (100s, ver
+// TestLosRelojesDelBotNoPasanAlDelProxy). Subió de 75s a 85s el 26-sep con el p95 real por turno
+// (68s, ver timeoutTurno); más allá, el cliente que insiste esperaría demasiado callado.
 func TestTimeoutTurnoAcotado(t *testing.T) {
-	if timeoutTurno <= 0 || timeoutTurno > 90*time.Second {
-		t.Fatalf("timeoutTurno = %s; debe ser > 0 y <= 90s para que un turno colgado no bloquee la cola", timeoutTurno)
+	const techo = 2 * time.Minute
+	if timeoutTurno <= 0 || timeoutTurno > techo {
+		t.Fatalf("timeoutTurno = %s; debe ser > 0 y <= %s: es el silencio máximo que sufre el "+
+			"cliente que escribe otra vez mientras su turno sigue vivo", timeoutTurno, techo)
 	}
 }
 
@@ -130,20 +142,44 @@ func TestTimeoutTurnoNoAhogaUnaRespuestaNormal(t *testing.T) {
 //
 // Son tres, en cascada:
 //
-//	turno del bot        timeoutTurno            <- el que debe ganar
-//	cliente HTTP         90s  (internal/llm/anthropic.go)
-//	salida del proxy     100s (claude_proxy/cmd/proxy/main.go)
+//	turno del bot         85s (timeoutTurno, main.go)        <- el que debe ganar
+//	cliente HTTP         95s (llm.TimeoutClienteHTTP)
+//	salida del proxy    100s (claude_proxy/cmd/proxy/main.go)
 //
 // Si timeoutTurno superara al del cliente HTTP, el error que vería el cliente cambiaría de
 // "el turno tardó demasiado" a uno de transporte, y el reintento del proveedor quedaría
 // atrapado dentro de un turno ya vencido.
 func TestElTurnoVenceAntesQueElClienteHTTP(t *testing.T) {
-	// Declarado en internal/llm/anthropic.go: &http.Client{Timeout: 90 * time.Second}.
-	const timeoutClienteHTTP = 90 * time.Second
-
-	if timeoutTurno >= timeoutClienteHTTP {
+	// Se LEE la constante real (llm.TimeoutClienteHTTP), no se copia su valor. Cuando este test
+	// llevaba el 90s escrito a mano, subir timeoutTurno lo dejó comparando contra un número que
+	// ya no existía: el test seguía en verde o en rojo por el motivo equivocado.
+	if timeoutTurno >= llm.TimeoutClienteHTTP {
 		t.Fatalf("timeoutTurno = %s >= cliente HTTP (%s): el turno tiene que vencer PRIMERO, "+
-			"si no el corte lo decide el transporte y no la cola", timeoutTurno, timeoutClienteHTTP)
+			"si no el corte lo decide el transporte y no la cola",
+			timeoutTurno, llm.TimeoutClienteHTTP)
+	}
+}
+
+// EL TECHO DE TODA LA CASCADA ES EL PROXY, y está fuera de este repo.
+//
+// claude_proxy corre en producción con timeoutSalida compilado (100s). Si los relojes del bot lo
+// superan, el orden se INVIERTE: cortaría el proxy y el error que ve el cliente pasaría de "el
+// turno tardó demasiado" a un fallo de transporte, con el "signal: killed" del CLI como causa en
+// vez de consecuencia.
+//
+// Este test existe porque ese número vive en otro repositorio y nadie lo ve al editar este. Al
+// subir timeoutSalida allí, subir aquí también: el p95 por turno medido en prod (68s) pide más
+// margen del que 85s deja.
+func TestLosRelojesDelBotNoPasanAlDelProxy(t *testing.T) {
+	// claude_proxy/cmd/proxy/main.go: timeoutSalida. Verificado en prod el 26-sep.
+	const timeoutSalidaProxy = 100 * time.Second
+
+	if llm.TimeoutClienteHTTP >= timeoutSalidaProxy {
+		t.Fatalf("cliente HTTP = %s >= salida del proxy (%s): el proxy cortaría primero y el "+
+			"fallo pasaría a ser de transporte", llm.TimeoutClienteHTTP, timeoutSalidaProxy)
+	}
+	if timeoutTurno >= timeoutSalidaProxy {
+		t.Fatalf("timeoutTurno = %s >= salida del proxy (%s)", timeoutTurno, timeoutSalidaProxy)
 	}
 }
 

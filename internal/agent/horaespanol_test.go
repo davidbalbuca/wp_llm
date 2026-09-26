@@ -206,3 +206,38 @@ func TestMientrasSePreguntaLaHoraNoSeAnotaNingunaHora(t *testing.T) {
 		t.Errorf("la hora se coló como cantidad: %d cilindros", p.Cantidad)
 	}
 }
+
+// UN NÚMERO SUELTO NO ES UNA HORA: ES LA RESPUESTA A OTRO MENÚ.
+//
+// INCIDENTE 26/09 (593964011403): el bot le mostró el menú de CANTIDAD ([1 2 3 4]), el cliente
+// tocó "1" y este candado lo leyó como "la 1" y le preguntó "¿mañana o noche?". El cliente
+// insistió "1 cilindro!" y volvió a recibir la misma pregunta; acabó contestando "1 de la
+// mañana" y el pedido quedó agendado a las 01:00 —fuera del horario 07:00–19:00— seguido de un
+// "Noooooooooo".
+//
+// El candado que evita adivinar la hora no puede, a cambio, adivinar QUE se está hablando de una
+// hora. Se exige marcaHoraria, que ya existía justo para esta distinción.
+func TestIncidente_LaCantidadDelMenuNoEsUnaHora(t *testing.T) {
+	// El menú de cantidad, tal como lo ofrece el bot.
+	for _, texto := range []string{"1", "2", "3", "4", "1 cilindro!", "2 cilindros"} {
+		if h, ambigua := horaAmbigua(texto); ambigua {
+			t.Errorf("%q se tomó por la hora %d; era la cantidad", texto, h)
+		}
+	}
+	// Otras respuestas a menús y datos que tampoco son horas.
+	for _, texto := range []string{"Sí", "No", "Blanco", "Amarillo", "0900690256", "Bolivar Sánchez"} {
+		if h, ambigua := horaAmbigua(texto); ambigua {
+			t.Errorf("%q se tomó por la hora %d", texto, h)
+		}
+	}
+	// Y la hora ambigua de verdad SIGUE preguntándose: el arreglo no puede apagar el candado.
+	for _, c := range []struct {
+		in string
+		h  int
+	}{{"a las 7", 7}, {"para las 5", 5}, {"tipo 8", 8}, {"a las 11", 11}} {
+		h, ambigua := horaAmbigua(c.in)
+		if !ambigua || h != c.h {
+			t.Errorf("%q: hora=%d ambigua=%v; esperaba %d ambigua", c.in, h, ambigua, c.h)
+		}
+	}
+}

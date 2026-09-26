@@ -48,11 +48,36 @@ func lockCliente(phone string) *sync.Mutex {
 // 593984573546 escribió su dirección con referencias y no recibió nada — "ERROR tras 30.025s"
 // y "signal: killed". No falló el modelo, dejamos de esperarlo.
 //
-// 75s deja margen de sobra sobre el caso normal y sigue por debajo de los otros dos relojes de
-// la cascada (cliente HTTP 90s en internal/llm/anthropic.go, salida del proxy 100s), así que el
-// turno sigue siendo el primero en vencer y el corte lo decide la cola, no el transporte. Los
-// tests de cola_test.go fijan las dos fronteras.
-const timeoutTurno = 75 * time.Second
+// EL PLAZO ES DEL TURNO, NO DE UNA LLAMADA. Un turno con function calling gasta DOS o TRES
+// llamadas al modelo —una para pedir la herramienta, otra para redactar con su resultado— y
+// todas comparten este mismo reloj. Medirlo contra lo que tarda UNA llamada es el error que
+// dejó sin respuesta al cliente 593964011403 el 26-sep (ticket #55): la primera llamada de su
+// turno tardó 28.3s y la segunda fue cortada a los 46.7s. 28.3 + 46.7 = 75.0, el plazo exacto.
+// Ninguna de las dos era anormal; lo anormal era pedirles que cupieran juntas en el mismo
+// tiempo que se le da a una.
+//
+// Medido en producción (48h, agrupando las llamadas de cada turno): mediana 12.8s, p90 38s,
+// p95 68s. Con el plazo en 75s, UNO DE CADA VEINTE turnos rozaba el límite — y el que lo pasó
+// dejó al cliente sin respuesta. El margen hay que medirlo contra el p95 DEL TURNO (68s), no
+// contra el de una llamada (17s), que es lo que hacía este número parecer holgado.
+//
+// 85s: 1.25x el p95 real. El tope también protege al cliente —la cola es POR TELÉFONO (ver
+// lockCliente), así que mientras su turno vive, el SIGUIENTE mensaje de ese mismo cliente espera
+// sin recibir señal— pero el techo de verdad lo pone el reloj de abajo.
+//
+// LA CASCADA MANDA. El turno tiene que vencer PRIMERO para que el corte lo decida la cola y no
+// el transporte, así que ninguno de estos números puede pasar al de abajo:
+//
+//	turno del bot        85s  (aquí)                        <- el que debe ganar
+//	cliente HTTP         95s  (internal/llm/anthropic.go)
+//	salida del proxy    100s  (claude_proxy/cmd/proxy/main.go) <- EL TECHO REAL
+//
+// El proxy en prod corre con 100s compilados y NO se puede recompilar desde este checkout (le
+// falta internal/claudebin, el motor embebido de 81 MB que no está versionado). Subir el turno
+// por encima de 100s invertiría el orden: cortaría el proxy y el fallo pasaría de "el turno
+// tardó" a un error de transporte. Cuando el proxy suba a 180s, estos dos pueden ir a 120/150 —
+// el p95 por turno (68s) pide ese margen, y con 85s un turno excepcionalmente lento aún cae.
+const timeoutTurno = 85 * time.Second
 
 // --- Anti-duplicados de mensajes ---
 // Ignora un mensaje de texto IDÉNTICO del mismo teléfono dentro de una ventana corta (el cliente

@@ -25,6 +25,12 @@ const (
 	// Reintentos ante 429 y 5xx/529. Backoff lineal (2s,4s,6s): 4 intentos cubren ~12s. El 03/09
 	// un bache de ~90s tumbó a 6 clientes con solo 3 intentos (~6s), demasiado corto.
 	anthropicIntentos = 4
+	// TimeoutClienteHTTP acota UNA llamada al modelo. Está POR ENCIMA de timeoutTurno (85s,
+	// cmd/bot/main.go) y POR DEBAJO de la salida del proxy (100s): el turno debe vencer PRIMERO,
+	// para que el corte lo decida la cola y no el transporte. Los tres se mueven juntos;
+	// cola_test.go fija la frontera leyendo esta constante (antes la copiaba a mano y quedó
+	// desfasada al subir el turno, comparando contra un número que ya no existía).
+	TimeoutClienteHTTP = 95 * time.Second
 )
 
 // anthropicProvider habla directo con la API de Mensajes de Anthropic (sin SDK, para no sumar
@@ -71,7 +77,7 @@ func NewAnthropic(apiKey, modelo string, maxTokens int, cacheTTL string) (Provid
 		oauth:     strings.HasPrefix(strings.TrimSpace(apiKey), "sk-ant-oat01-"),
 		url:       destino,
 		// El webhook ya respondió 200; este timeout solo acota cuánto esperamos al modelo.
-		http: &http.Client{Timeout: 90 * time.Second},
+		http: &http.Client{Timeout: TimeoutClienteHTTP},
 	}, nil
 }
 

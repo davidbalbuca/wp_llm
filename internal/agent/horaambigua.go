@@ -27,6 +27,15 @@ import (
 // 12 en adelante ("a las 15") tampoco, porque ya viene en formato de 24 horas.
 func horaAmbigua(texto string) (hora int, ambigua bool) {
 	t := strings.ToLower(texto)
+	// PRIMERO: ¿el cliente está hablando de una HORA? Un número suelto NO es una hora, es casi
+	// siempre la respuesta a otro menú. El 26/09 este candado leyó el "1" del menú de CANTIDAD
+	// ([1 2 3 4]) como "la 1", preguntó mañana/noche dos veces —el cliente insistió "1
+	// cilindro!"— y acabó agendando a las 01:00, fuera del horario (caso 593964011403). Se
+	// reutiliza marcaHoraria, que existe justo para esta distinción: exige "a las 1", "1 pm",
+	// "1:00"… no el "1" a secas.
+	if !marcaHoraria.MatchString(t) {
+		return 0, false
+	}
 	if tarde, manana := franjaDelDia(t); tarde || manana {
 		return 0, false
 	}
