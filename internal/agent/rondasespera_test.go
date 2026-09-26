@@ -90,12 +90,21 @@ func TestLaUltimaRondaSeDisculpa(t *testing.T) {
 
 // Los minutos que se le DICEN al cliente son los que de verdad va a esperar. Prometer "5
 // minutos" y tardar 15 es peor que decir 15: el cliente cuenta el tiempo.
-func TestElMensajeDiceLosMinutosDeVerdad(t *testing.T) {
-	for _, min := range []int{5, 15, 20} {
+// EL CLIENTE NO VE LOS MINUTOS. BOT_ESPERA_RONDA_MIN es un parámetro interno nuestro, no una
+// promesa al cliente (decisión 25-sep: "al cliente solo debemos decir que está buscando"). El
+// mensaje NO debe contener el número de minutos, sea cual sea el valor configurado.
+func TestElMensajeNoDiceLosMinutosAlCliente(t *testing.T) {
+	for _, min := range []int{5, 15, 20, 30} {
 		cuerpo := cuerpoDeLaRonda(0, min)
-		if !afirmaSecuencia(cuerpo, [][]string{{itoaTest(min), "minutos"}}, 2) {
-			t.Errorf("con %d minutos de espera el mensaje no los nombra:\n%q", min, cuerpo)
+		if afirmaSecuencia(cuerpo, [][]string{{itoaTest(min), "minutos"}}, 2) ||
+			strings.Contains(cuerpo, itoaTest(min)) {
+			t.Errorf("el mensaje de espera NO debe mostrarle los %d minutos al cliente:\n%q", min, cuerpo)
 		}
+	}
+	// Pero SÍ debe decirle que se está buscando (no dejarlo sin contexto).
+	cuerpo := cuerpoDeLaRonda(0, 15)
+	if !strings.Contains(strings.ToLower(cuerpo), "buscando") {
+		t.Errorf("el mensaje debe decir que se está buscando repartidor:\n%q", cuerpo)
 	}
 }
 
@@ -228,7 +237,9 @@ func TestElHorarioNoCortaUnaEsperaYaEmpezada(t *testing.T) {
 // LA VARIABLE DE ENTORNO LLEGA AL MENSAJE. Es lo único que hace configurable la espera: si el
 // mensaje se arma con un número fijo, cambiar BOT_ESPERA_RONDA_MIN no sirve de nada y encima el
 // cliente oye un plazo distinto del real.
-func TestElMensajeUsaLosMinutosConfigurados(t *testing.T) {
+// El mensaje que sale por WhatsApp (a través de ofrecerEsperaAlCliente) NO expone los minutos
+// configurados: al cliente solo se le dice que se está buscando y se le pregunta si quiere esperar.
+func TestElMensajeQueSaleNoExponeLosMinutos(t *testing.T) {
 	const from = "593959545415"
 	store := conversation.NewMemStore()
 	store.SetPendingWait(from, esperaDePrueba())
@@ -239,15 +250,18 @@ func TestElMensajeUsaLosMinutosConfigurados(t *testing.T) {
 
 	ag.ofrecerEsperaAlCliente(from, nil)
 
-	if !afirmaSecuencia(cuerpo, [][]string{{"20", "minutos"}}, 2) {
-		t.Errorf("con BOT_ESPERA_RONDA_MIN=20 el mensaje no dice 20 minutos:\n%q", cuerpo)
+	if strings.Contains(cuerpo, "20") || strings.Contains(strings.ToLower(cuerpo), "minutos") {
+		t.Errorf("el mensaje al cliente NO debe exponer los minutos de espera:\n%q", cuerpo)
+	}
+	if !strings.Contains(strings.ToLower(cuerpo), "buscando") {
+		t.Errorf("el mensaje debe decir que se está buscando:\n%q", cuerpo)
 	}
 }
 
-// Y que el backend MANDE. Si el backend dice cuánto va a esperar de verdad (espera_segundos),
-// ese número gana sobre el del bot: decirle al cliente un plazo y que el sistema use otro es
-// mentirle, aunque sea sin querer.
-func TestElPlazoDelBackendGanaSobreElDelBot(t *testing.T) {
+// Aunque el backend mande un plazo (espera_segundos), ese número tampoco se le muestra al cliente:
+// es un parámetro interno. El backend sigue mandando su plazo para la lógica de la espera; solo
+// que ya no se refleja en el texto.
+func TestElPlazoDelBackendTampocoSeMuestra(t *testing.T) {
 	const from = "593959545416"
 	store := conversation.NewMemStore()
 	store.SetPendingWait(from, esperaDePrueba())
@@ -258,8 +272,8 @@ func TestElPlazoDelBackendGanaSobreElDelBot(t *testing.T) {
 
 	ag.ofrecerEsperaAlCliente(from, &georoutes.BusquedaResult{EsperaSegundos: 600}) // 10 min
 
-	if !afirmaSecuencia(cuerpo, [][]string{{"10", "minutos"}}, 2) {
-		t.Errorf("el backend dijo 10 minutos y el mensaje no los usa:\n%q", cuerpo)
+	if strings.Contains(cuerpo, "10") || strings.Contains(strings.ToLower(cuerpo), "minutos") {
+		t.Errorf("el plazo del backend NO debe mostrarse al cliente:\n%q", cuerpo)
 	}
 }
 

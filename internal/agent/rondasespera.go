@@ -1,9 +1,7 @@
 package agent
 
 import (
-	"fmt"
 	"log"
-	"strconv"
 	"time"
 
 	"wp-llm-gas/internal/config"
@@ -51,18 +49,19 @@ func opcionesDeLaRonda(ronda int) []string {
 
 // cuerpoDeLaRonda arma el texto que acompaña a los botones.
 //
-// Los minutos que se nombran son los que de verdad va a esperar: prometer cinco y tardar quince
-// es peor que decir quince desde el principio, porque el cliente cuenta el tiempo.
+// NO se le dice al cliente cuántos minutos puede tardar: ese número (BOT_ESPERA_RONDA_MIN) es un
+// parámetro interno nuestro, no una promesa al cliente. Al cliente solo se le dice que estamos
+// buscando y se le pregunta si desea esperar. El parámetro `minutos` se conserva en la firma por
+// compatibilidad con las llamadas, pero ya no se muestra.
 func cuerpoDeLaRonda(ronda, minutos int) string {
+	_ = minutos // ya no se le muestra al cliente (es un parámetro interno)
 	switch {
 	case ronda == 0:
-		return fmt.Sprintf("Estamos buscando al chofer ideal para ti 🚚. Nuestro sistema puede "+
-			"tardar hasta %s minutos en conectar con el camión más cercano en tu zona. "+
-			"¿Deseas esperar?", strconv.Itoa(minutos))
+		return "Estamos buscando al chofer ideal para ti 🚚. Estamos conectándote con el camión " +
+			"más cercano en tu zona. ¿Deseas esperar?"
 	case ronda < rondasConEspera:
-		return fmt.Sprintf("Seguimos sin un repartidor libre en tu zona 😕 Podemos seguir "+
-			"buscando %s minutos más; a esta hora suelen ir liberándose. ¿Seguimos buscando?",
-			strconv.Itoa(minutos))
+		return "Seguimos buscando un repartidor libre en tu zona 😊 A esta hora suelen ir " +
+			"liberándose. ¿Seguimos buscando?"
 	default:
 		// Última ronda: se pide disculpas de verdad. Esta persona esperó por algo que no llegó.
 		return "Te pedimos muchas disculpas 🙏 Hemos buscado un buen rato y no encontramos un " +
