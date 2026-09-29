@@ -28,6 +28,10 @@ type Disponibilidad struct {
 	Disponible   bool                  `json:"disponible"`
 	Conductores  []ConductorDisponible `json:"conductores"`
 	VentanaHoras int                   `json:"ventana_horas"`
+	// Bloqueo es POR QUÉ no se puede, cuando el motivo no son los conductores: el cliente ya
+	// tiene un pedido en curso, o en ese chat no hay nada pendiente que atender. Vacío = el
+	// motivo es el de siempre (nadie con ese color en la zona).
+	Bloqueo string `json:"bloqueo"`
 }
 
 // DisponibilidadPedidoOperador pregunta al backend si AHORA hay repartidor para esa ubicación y

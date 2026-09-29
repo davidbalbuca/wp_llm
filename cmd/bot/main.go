@@ -476,6 +476,12 @@ func main() {
 			salida["ultimo_mensaje"] = ts
 			salida["horas_desde_ultimo_mensaje"] = time.Since(time.Unix(ts, 0)).Hours()
 		}
+		// ¿El cliente dejó un pedido A MEDIAS en el chat? (dijo color/cantidad y no llegó a
+		// confirmarse). Es una de las cosas que cuentan como "pendiente" para dejar crear el
+		// pedido a mano: sin nada pendiente, el botón no debe estar disponible.
+		if ficha, ok := store.GetPedidoEnCurso(phone); ok && (ficha.Cantidad > 0 || len(ficha.Items) > 0) {
+			salida["ficha_en_chat"] = true
+		}
 		writeJSON(w, salida)
 	})
 
@@ -1331,9 +1337,20 @@ func notifyOrderCancelled(cfg config.Config, store conversation.Store, pedidoID 
 		log.Printf("[order-cancelled] pedido %d sin teléfono de contacto; se ignora", pedidoID)
 		return
 	}
+	// El aviso puede llegar TARDE: mientras el pedido viejo se ofrecía, un operador pudo haberle
+	// creado otro desde el chat y ese ya va en camino. Entonces ni se limpia el pedido activo (es
+	// el nuevo) ni se le dice nada al cliente: hablaríamos de un pedido ya reemplazado. Pasó el
+	// 29/09 con el 314: el aviso llegó 3 minutos después de crearse el 315 y se le echó la culpa
+	// al conductor nuevo, que no había cancelado nada.
+	if activo, hay := store.GetActivePedido(phone); hay && activo != pedidoID {
+		log.Printf("[order-cancelled] pedido %d cancelado, pero el cliente %s ya tiene el %d en curso; no se le avisa",
+			pedidoID, phone, activo)
+		return
+	}
 	store.ClearActivePedido(phone)
 	// El historial NO se borra: la memoria del chat dura la ventana de 24h (regla general).
-	msg := "😔 Tu pedido fue cancelado por el conductor. Disculpa las molestias. Cuando quieras, puedes hacer un nuevo pedido."
+	msg := fmt.Sprintf("😔 Tu pedido #%d fue cancelado por el conductor. Disculpa las molestias. "+
+		"Cuando quieras, puedes hacer un nuevo pedido.", pedidoID)
 	if err := avisarCliente(cfg, store, phone, msg); err != nil {
 		reportarFallo(cfg, store, phone, "No se pudo avisar la CANCELACIÓN del pedido",
 			fmt.Sprintf("Pedido #%d. El mensaje no salió: %v", pedidoID, err))

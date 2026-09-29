@@ -124,6 +124,11 @@ func (a *Agent) CrearPedidoDeOperador(p PedidoDeOperador) ResultadoPedidoOperado
 		}
 	}
 	if !disp.Disponible {
+		// El backend dice el motivo cuando no son los conductores (pedido en curso, nada
+		// pendiente): se le muestra tal cual al operador en vez del texto genérico.
+		if motivo := strings.TrimSpace(disp.Bloqueo); motivo != "" {
+			return noSePudo(motivo)
+		}
 		return noSePudo("no hay repartidor disponible con ese color en la zona")
 	}
 	// Si el operador eligió uno, tiene que seguir estando entre los que pueden.
