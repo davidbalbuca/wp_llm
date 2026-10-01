@@ -37,6 +37,31 @@ type OrderResult struct {
 	ModoDatosConductor string `json:"modo_datos_conductor"`
 	// TieneTracking es true solo cuando hay posición real para el enlace de seguimiento.
 	TieneTracking bool `json:"tiene_tracking"`
+	// Tiempo es el tiempo de RUTA que calcula el backend con OSRM (posición del conductor →
+	// cliente), en formato "HH:MM:SS". Lo devuelve realizar_pedido_producto y viaja tal cual en
+	// wppOrder. Vacío o "00:00:00" cuando no hay conductor con posición (p. ej. aceptó por
+	// WhatsApp sin GPS): en ese caso no se le promete un tiempo al cliente.
+	Tiempo string `json:"tiempo"`
+}
+
+// MinutosEntregaConMargen convierte el "HH:MM:SS" de OSRM en minutos y le SUMA el margen de
+// preparación del pedido (el conductor no sale en el instante cero: carga el cilindro, arranca).
+// Decisión del negocio: mostrar al cliente el tiempo de ruta + 5 min. Devuelve (minutos, true) si
+// hay un tiempo real; (0, false) si el backend no calculó ninguno ("", "00:00:00" o ilegible), y
+// entonces al cliente NO se le promete un tiempo.
+func (r *OrderResult) MinutosEntregaConMargen(margenMin int) (int, bool) {
+	var h, m, s int
+	if n, err := fmt.Sscanf(strings.TrimSpace(r.Tiempo), "%d:%d:%d", &h, &m, &s); n != 3 || err != nil {
+		return 0, false
+	}
+	total := h*60 + m
+	if s > 0 {
+		total++ // cualquier fracción de minuto cuenta como uno más: nunca prometer de menos
+	}
+	if total <= 0 {
+		return 0, false // "00:00:00" = sin conductor con posición real
+	}
+	return total + margenMin, true
 }
 
 // WppOrder crea el pedido del BOT con la ubicación compartida por WhatsApp, SIN iddireccion:

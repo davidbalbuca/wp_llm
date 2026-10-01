@@ -119,6 +119,9 @@ func (a *Agent) mensajeDelPedido(t *turno, from string) string {
 		if res.Conductor != "" {
 			mensaje += fmt.Sprintf(" Tu repartidor es %s.", res.Conductor)
 		}
+		if res.MinutosEntrega > 0 {
+			mensaje += fmt.Sprintf(" Llega en unos %d minutos aprox.", res.MinutosEntrega)
+		}
 		return mensaje + " Te aviso apenas esté llegando. 🙌"
 	case res.enEspera:
 		if w, ok := a.store.GetPendingWait(from); ok {

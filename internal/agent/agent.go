@@ -625,6 +625,13 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 		reply = a.rescatarTurnoColgado(from, reply)
 	}
 
+	// UN SOLO SALUDO. Si el código acaba de presentarse (bienvenida.go), el modelo NO puede saludar
+	// otra vez: 70 clientes del histórico recibieron dos saludos seguidos, varios contradictorios
+	// ("¡Hola, Doris!" + "¡Buenas noches, Doris!" nueve segundos después). Se resuelve quitándolo en
+	// código y no pidiéndoselo al prompt, porque el prompt es la mitad del problema: behavior.md le
+	// ORDENA saludar. Ver saludounico.go.
+	reply = a.revisarSaludoDuplicado(from, reply)
+
 	// EL PORTERO DE HECHOS, la última palabra. Los once candados de arriba ARREGLAN cada uno su
 	// caso; este audita lo que quedó: si el mensaje todavía afirma un hecho operativo (pedido
 	// registrado, entrega agendada, equipo avisado, pedido cancelado, repartidor en ruta) que el

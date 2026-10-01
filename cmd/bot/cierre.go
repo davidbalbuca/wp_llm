@@ -59,6 +59,13 @@ func revisarCierres(cfg config.Config, store conversation.Store) {
 	}
 
 	ahora := time.Now()
+	// FUERA DEL HORARIO DE ATENCIÓN NO SE ESCRIBE. Este barrido corre cada minuto, las 24 h, y no
+	// miraba el reloj del negocio: 6 de los 44 cierres del corpus salieron fuera de hora, uno a las
+	// 00:00:10 a alguien que había escrito a las 23:52. Un mensaje automático de madrugada no
+	// recupera a nadie; molesta.
+	if !dentroDelHorario(ahora, cfg) {
+		return
+	}
 	for _, chat := range store.ListConversations(100) {
 		if derivados[chat.Phone] {
 			continue
@@ -115,6 +122,16 @@ func mereceCierre(store conversation.Store, chat conversation.ConversationSummar
 	if strings.HasPrefix(chat.LastMessage, "Parece que te ocupaste") {
 		return false
 	}
+	// NI DOS VECES EN LA MISMA SESIÓN. El guard de arriba solo mira el ÚLTIMO mensaje, así que si el
+	// cliente contesta y vuelve a callarse, se despide otra vez. A 593995041865 le salió dos veces
+	// el 22/09 con 24 minutos de diferencia (22:57 y 23:21). Despedirse de alguien del que ya te
+	// despediste hace un rato es lo que hace que el bot parezca un robot estropeado.
+	//
+	// Se mira el historial reciente en vez de guardar una marca nueva: el dato ya está ahí, y una
+	// marca más sería un estado que alguien tendría que limpiar.
+	if seDespidioHaceRato(store, chat.Phone, ahora, ventanaMax) {
+		return false
+	}
 
 	// Flujos que tienen sus propios avisos y sus propios tiempos. Despedirse en medio de
 	// cualquiera de ellos se cruzaría con el mensaje que el sistema ya le va a mandar.
@@ -133,4 +150,53 @@ func mereceCierre(store conversation.Store, chat conversation.ConversationSummar
 
 	// Y que la conversación haya arrancado de verdad.
 	return len(store.GetConversation(chat.Phone, mensajesMinimos)) >= mensajesMinimos
+}
+
+// dentroDelHorario dice si AHORA es hora de escribirle a un cliente por iniciativa nuestra.
+//
+// Los mensajes automáticos (este cierre) solo salen dentro del horario de atención. El barrido
+// corre cada minuto las 24 h y no miraba el reloj: 6 de los 44 cierres del corpus del 28/09 se
+// mandaron fuera de hora, uno a las 00:00:10 a alguien que había escrito a las 23:52.
+//
+// Un mensaje que el CLIENTE provoca sí puede salir a cualquier hora —le estamos contestando—. Este
+// no: lo decide el bot, y a medianoche solo molesta.
+func dentroDelHorario(ahora time.Time, cfg config.Config) bool {
+	ini, okIni := horaDelDia(cfg.BotHorarioInicio)
+	fin, okFin := horaDelDia(cfg.BotHorarioFin)
+	if !okIni || !okFin {
+		return true // horario mal configurado: no se bloquea nada (el cierre no es crítico)
+	}
+	m := ahora.Hour()*60 + ahora.Minute()
+	return m >= ini && m < fin
+}
+
+// horaDelDia convierte "07:00" en minutos desde medianoche. ok=false si no tiene ese formato.
+func horaDelDia(hhmm string) (int, bool) {
+	var h, m int
+	if n, err := fmt.Sscanf(strings.TrimSpace(hhmm), "%d:%d", &h, &m); n != 2 || err != nil {
+		return 0, false
+	}
+	if h < 0 || h > 23 || m < 0 || m > 59 {
+		return 0, false
+	}
+	return h*60 + m, true
+}
+
+// seDespidioHaceRato dice si ya se le mandó la despedida dentro de la ventana de esta sesión.
+//
+// La ventana es la MISMA que el techo del cierre (CierreVentanaMax), a propósito: si pasó más que
+// eso, la conversación de antes ya se dio por muerta y esta es nueva —ahí despedirse otra vez es
+// correcto—. Lo que no vale es repetirlo dentro de la misma sesión.
+func seDespidioHaceRato(store conversation.Store, phone string, ahora time.Time,
+	ventana time.Duration) bool {
+
+	for _, m := range store.GetConversation(phone, 30) {
+		if !strings.HasPrefix(m.Content, "Parece que te ocupaste") {
+			continue
+		}
+		if ahora.Sub(time.Unix(m.CreatedAt, 0)) <= ventana {
+			return true
+		}
+	}
+	return false
 }

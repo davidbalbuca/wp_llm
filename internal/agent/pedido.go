@@ -37,6 +37,10 @@ type resultadoPedido struct {
 	Cantidad    int
 	TotalPagar  float64 // valor a pagar (incluye envio/instalacion/servicio)
 	Seguimiento string  // URL pública de seguimiento en vivo (vacía si el backend no la envió)
+	// MinutosEntrega es el tiempo estimado de llegada YA con el margen de preparación sumado
+	// (tiempo de ruta OSRM del backend + BotMargenEntregaMin). 0 = el backend no calculó un tiempo
+	// real (sin conductor con GPS), y entonces NO se le promete un tiempo al cliente.
+	MinutosEntrega int
 	// Lineas es el pedido completo cuando tuvo varios colores (Fase C1). Con un solo color va
 	// vacía y valen Producto/Color/Cantidad, como siempre.
 	Lineas []lineaPedido
@@ -758,17 +762,21 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 	// servicio, ver Product.PrecioTotal) sumando TODAS las líneas, NO con resultado.Total: el
 	// backend en wppOrder devuelve solo total_productos (el cilindro suelto, sin los rubros).
 	totalPagar := totalPagarDe(lineas)
+	// Tiempo estimado de llegada: tiempo de ruta del backend (OSRM) + margen de preparación. 0 si
+	// el backend no calculó un tiempo real (sin conductor con GPS): ahí no se promete nada.
+	minutosEntrega, _ := resultado.MinutosEntregaConMargen(a.cfg.MargenEntregaMin)
 	t.ultimoPedido = resultadoPedido{
-		ok:          true,
-		IDPedido:    resultado.IDPedido,
-		Conductor:   resultado.ConductorAsignado,
-		Placa:       resultado.Placa,
-		Producto:    producto.Nombre,
-		Color:       color.Nombre,
-		Cantidad:    cantidad,
-		TotalPagar:  totalPagar,
-		Seguimiento: seguimiento,
-		Lineas:      lineas,
+		ok:             true,
+		IDPedido:       resultado.IDPedido,
+		Conductor:      resultado.ConductorAsignado,
+		Placa:          resultado.Placa,
+		Producto:       producto.Nombre,
+		Color:          color.Nombre,
+		Cantidad:       cantidad,
+		TotalPagar:     totalPagar,
+		Seguimiento:    seguimiento,
+		MinutosEntrega: minutosEntrega,
+		Lineas:         lineas,
 	}
 
 	// Confirmación COMPLETA para el modelo (conductor + placa + valor a pagar + seguimiento). Se le
@@ -806,6 +814,12 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 		mensaje += " (" + resultado.FormaPago + ")"
 	}
 	mensaje += "."
+	// Tiempo estimado de llegada (ruta OSRM del backend + margen de preparación). Solo se da si el
+	// backend calculó un tiempo real; si no, no se promete nada (mejor callar que inventar un ETA).
+	if minutosEntrega > 0 {
+		mensaje += fmt.Sprintf(" Tiempo estimado de llegada: alrededor de %d minutos (DÍSELO al "+
+			"cliente como aproximado, p. ej. \"llega en unos %d min\").", minutosEntrega, minutosEntrega)
+	}
 	if seguimiento != "" {
 		// El enlace debe ir TAL CUAL, en su propia línea; el modelo no debe reescribirlo ni omitirlo.
 		mensaje += " ENLACE DE SEGUIMIENTO EN VIVO (dáselo al cliente TAL CUAL, en su propia línea, " +

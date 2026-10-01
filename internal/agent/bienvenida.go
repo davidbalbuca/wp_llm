@@ -73,10 +73,21 @@ func (a *Agent) empiezaConversacion(from string) bool {
 //
 // Corto porque es lo PRIMERO que se lee: un párrafo largo se salta entero y entonces no sirvió.
 func textoBienvenida(nombre string) string {
-	saludo := "¡Hola! 👋"
+	return textoBienvenidaA(nombre, time.Now())
+}
+
+// textoBienvenidaA es la misma cosa con el reloj inyectado, para poder probar las franjas sin
+// esperar a que sea de noche.
+//
+// El saludo lleva la FRANJA DEL DÍA porque si no, el modelo la corrige: a las 20:00 el código decía
+// "¡Hola, Doris!" y el modelo contestaba "¡Buenas noches, Doris!" nueve segundos después (28/09).
+// Diciéndolo bien la primera vez no hay nada que corregir — y el candado de saludounico.go quita lo
+// que sobre.
+func textoBienvenidaA(nombre string, ahora time.Time) string {
+	saludo := franjaDeSaludo(ahora) + "! 👋"
 	if nombre != "" {
 		// Solo el primer nombre: "¡Hola, David Espinoza Fajardo!" suena a carta del banco.
-		saludo = "¡Hola, " + primerNombre(nombre) + "! 👋"
+		saludo = franjaDeSaludo(ahora) + ", " + primerNombre(nombre) + "! 👋"
 	}
 	return saludo + " Soy *Ubi* 🔥\n\n" +
 		"Te conecto con el repartidor de gas más cercano a ti, en minutos. " +
@@ -89,4 +100,20 @@ func primerNombre(nombre string) string {
 		return nombre[:i]
 	}
 	return nombre
+}
+
+// franjaDeSaludo da el saludo que corresponde a la hora, sin el cierre ni el emoji.
+//
+// Los cortes son los de uso corriente en Ecuador: la mañana hasta las 12, la tarde hasta las 19
+// (que es justo el fin del horario de atención), y la noche el resto. Quien escribe a las 22:00
+// espera "buenas noches", no "hola".
+func franjaDeSaludo(ahora time.Time) string {
+	switch h := ahora.Hour(); {
+	case h < 12:
+		return "¡Buenos días"
+	case h < 19:
+		return "¡Buenas tardes"
+	default:
+		return "¡Buenas noches"
+	}
 }

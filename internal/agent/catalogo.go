@@ -91,6 +91,19 @@ func defaultPaymentID(payments []georoutes.Payment) (int, bool) {
 	return 0, false
 }
 
+// nombresDePago arma la lista de formas de pago para MOSTRÁRSELA al cliente ("Efectivo",
+// "Efectivo, Transferencia"). Es la lista real de la tabla TipoPago (getPayments), no el texto
+// libre del negocio. Devuelve "" si no hay ninguna.
+func nombresDePago(payments []georoutes.Payment) string {
+	var nombres []string
+	for _, pago := range payments {
+		if n := strings.TrimSpace(pago.Nombre); n != "" {
+			nombres = append(nombres, n)
+		}
+	}
+	return strings.Join(nombres, ", ")
+}
+
 // str convierte de forma segura un valor de args (any) a string.
 func str(v any) string {
 	if s, ok := v.(string); ok {
@@ -128,7 +141,12 @@ func renderServiceInfo(contexto *catalog.Context, disponible bool) string {
 	var texto strings.Builder
 	negocio := contexto.Business
 	if negocio.Nombre != "" {
-		fmt.Fprintf(&texto, "Negocio: %s\n", negocio.Nombre)
+		// El nombre del negocio lo edita el dueño en el panel (Parametro NEGOCIO_NOMBRE, servido por
+		// businessInfo). Cuando está, MANDA sobre el nombre por defecto del prompt: así el negocio se
+		// presenta con su marca sin recompilar el bot (UBIA-66, "Geoware" era el nombre quemado). Si
+		// está vacío, el prompt sigue con su valor por defecto.
+		fmt.Fprintf(&texto, "Negocio: %s. Cuando te presentes o nombres a la distribuidora, usa "+
+			"SIEMPRE este nombre (\"%s\"), no otro.\n", negocio.Nombre, negocio.Nombre)
 	}
 	if negocio.Telefono != "" {
 		fmt.Fprintf(&texto, "Teléfono/WhatsApp: %s\n", negocio.Telefono)
@@ -161,8 +179,17 @@ func renderServiceInfo(contexto *catalog.Context, disponible bool) string {
 		}
 	}
 
+	// Formas de pago. Dos fuentes: el texto libre del negocio (businessInfo, si el dueño lo escribió)
+	// y la LISTA REAL de la tabla TipoPago (getPayments), que es la que de verdad se usa al registrar
+	// el pedido. Antes solo se mostraba el texto libre —vacío en prod—, así que el bot no sabía decirle
+	// al cliente cómo pagar aunque la tabla tuviera "Efectivo". Se prefiere el texto libre si existe
+	// (permite matices como "efectivo o transferencia, contra entrega"); si no, se listan los métodos
+	// reales para que el bot NUNCA se quede sin qué responder cuando el cliente pregunta.
 	if negocio.FormasPago != "" {
 		fmt.Fprintf(&texto, "\nFormas de pago: %s\n", negocio.FormasPago)
+	} else if nombres := nombresDePago(contexto.Payments); nombres != "" {
+		fmt.Fprintf(&texto, "\nFormas de pago aceptadas: %s. Es el pago al recibir el pedido "+
+			"(contra entrega).\n", nombres)
 	}
 	if negocio.Seguridad != "" {
 		fmt.Fprintf(&texto, "Seguridad (fuga de gas): %s\n", negocio.Seguridad)

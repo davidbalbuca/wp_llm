@@ -102,6 +102,11 @@ type Config struct {
 	// escritos en el codigo y a Carlos (23/09) se le despidio a los ocho minutos de pedir.
 	EsperaRonda time.Duration
 
+	// MargenEntregaMin es el margen (en MINUTOS) que se le SUMA al tiempo de ruta que calcula el
+	// backend (OSRM, conductor -> cliente) antes de decírselo al cliente. El conductor no sale en
+	// el instante cero: carga el cilindro y arranca. Decisión del negocio: tiempo de ruta + 5 min.
+	MargenEntregaMin int
+
 	// ChequeoEntrega es cuánto espera el bot, tras confirmar un pedido del FLUJO MANUAL (posible
 	// conductor / verificado sin app), antes de preguntarle al cliente si ya se lo entregaron. En
 	// ese flujo nadie más marca la entrega, así que el cliente es la única fuente. 30 min por
@@ -197,6 +202,7 @@ func Load() Config {
 		// Misma variable que usa el backend Django, para no tener dos claves distintas de lo mismo.
 		GeocodingAPIKey:      os.Getenv("KEY_GOOGLE_MAPS"),
 		EsperaRonda:          time.Duration(optionalInt("BOT_ESPERA_RONDA_MIN", 10)) * time.Minute,
+		MargenEntregaMin:     optionalInt("BOT_MARGEN_ENTREGA_MIN", 5),
 		ChequeoEntrega:       time.Duration(optionalInt("BOT_CHEQUEO_ENTREGA_MIN", 30)) * time.Minute,
 		SMTPHost:             os.Getenv("SMTP_HOST"),
 		SMTPPort:             optional("SMTP_PORT", "587"),

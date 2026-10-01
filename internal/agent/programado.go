@@ -110,7 +110,13 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	}
 	ini := parseHoraHHMM(a.cfg.BotHorarioInicio)
 	fin := parseHoraHHMM(a.cfg.BotHorarioFin)
-	if mins < ini || mins >= fin {
+	// Horario de entregas CERRADO en ambos extremos [ini, fin]: la hora de cierre es válida para
+	// AGENDAR. Antes era `mins >= fin` (exclusivo), así que "7 de la noche" == 19:00 == la hora de
+	// cierre que el bot anuncia ("atendemos de 07:00 a 19:00, apenas me digas una hora la agendo")
+	// se rechazaba por "fuera de horario": ofrecer un límite y negarlo al tomarlo (C6, 30-sep). El
+	// gate de pedidos INMEDIATOS (dentroDeHorario, `mins < fin`) sigue siendo exclusivo a propósito:
+	// mira la hora ACTUAL, y a las 19:00 en punto ya no hay margen para despachar ahora.
+	if mins < ini || mins > fin {
 		return fmt.Sprintf("Esa hora está fuera del horario de entregas (%s a %s). Pídele al cliente una hora "+
 			"dentro del horario.", a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
 	}

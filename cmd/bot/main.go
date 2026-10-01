@@ -991,9 +991,12 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		}
 	}
 
-	// Mensaje no-texto y sin ubicación (imagen, audio, etc.): pedimos texto.
+	// Mensaje no-texto y sin ubicación (imagen, audio, sticker). No se despacha con una frase sobre
+	// nuestras limitaciones: se le ofrece la salida, y si tiene un pedido en curso se deriva a una
+	// persona. Era el 2.º mensaje del ranking de abandono —15 clientes, 8 no volvieron— y uno de
+	// esos audios llegó justo cuando el conductor estaba en su puerta. Ver medianosoportada.go.
 	if messageForAgent == "" {
-		_ = replyClient(cfg, store, inc.From, "Por ahora solo puedo leer mensajes de texto y ubicaciones. Por favor, escribe tu consulta. 🙂")
+		responderMediaNoSoportada(cfg, store, inc.From)
 		return
 	}
 
