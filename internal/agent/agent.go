@@ -555,6 +555,13 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// salir el enlace del pedido VIVO; ver seguimientolink.go.
 	reply = a.revisarEnlaceDeSeguimiento(from, reply)
 
+	// Y la CARA POSITIVA: si en este turno se confirmó un pedido que trae enlace en vivo y el
+	// modelo lo omitió al redactar, se anexa en código. El 01/10 el pedido #321 se creó bien y el
+	// backend mandó el token, pero el modelo no lo copió y el cliente no recibió el seguimiento.
+	if t.ultimoPedido.ok && t.ultimoPedido.Seguimiento != "" {
+		reply = a.garantizarEnlaceDeSeguimiento(from, reply, t.ultimoPedido.Seguimiento)
+	}
+
 	// Candado de COBERTURA: el modelo no puede rechazar a un cliente por el NOMBRE de su
 	// barrio. El 11/09 le dijo a Israel que no llegábamos a La Gloria (un barrio de Cuenca,
 	// donde sí atendemos) y lo perdió. La cobertura se decide por coordenadas, y esa negativa

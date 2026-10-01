@@ -68,3 +68,38 @@ func (a *Agent) revisarEnlaceDeSeguimiento(from, reply string) string {
 	}
 	return limpio
 }
+
+// anexarEnlaceSiFalta es la CARA POSITIVA del candado: cuando en ESTE turno se confirmó un pedido
+// que trae enlace de seguimiento en vivo, el cliente tiene que recibirlo. El 01/10 el pedido #321
+// (Samantha, 593995626224) se confirmó bien y el backend sí mandó el token, pero el modelo redactó
+// la confirmación ("¡Listo! 🎉 … va en camino … llega en unos 9 min") y se COMIÓ el enlace: el
+// cliente solo lo recibió minutos después por el aviso del operador. Es el mismo pecado de siempre
+// (el modelo omite un dato de estado real al redactar), así que se garantiza en código.
+//
+// enlace es el del pedido recién creado (t.ultimoPedido.Seguimiento). Si ya está en el texto, o no
+// hay enlace, no toca nada. El enlace va en su propia línea, con la invitación a seguir al repartidor.
+func anexarEnlaceSiFalta(texto, enlace string) (string, bool) {
+	enlace = strings.TrimSpace(enlace)
+	if enlace == "" {
+		return texto, false
+	}
+	// Ya salió (el modelo sí lo copió): nada que hacer. Se compara sin la puntuación final que el
+	// modelo a veces le pega, igual que en limpiarEnlaceDeSeguimiento.
+	for _, yaPuesto := range enlaceSeguimientoRe.FindAllString(texto, -1) {
+		if strings.TrimRight(yaPuesto, ".,;:") == enlace {
+			return texto, false
+		}
+	}
+	anexo := "\n\n📍 Sigue a tu repartidor en vivo aquí:\n" + enlace
+	return strings.TrimRight(texto, " \t\n") + anexo, true
+}
+
+// garantizarEnlaceDeSeguimiento se llama tras los demás candados del enlace: si el turno confirmó un
+// pedido con enlace y la respuesta final no lo trae, lo anexa.
+func (a *Agent) garantizarEnlaceDeSeguimiento(from, reply, enlacePedidoNuevo string) string {
+	nuevo, anexado := anexarEnlaceSiFalta(reply, enlacePedidoNuevo)
+	if anexado {
+		log.Printf("[seguimiento] %s: el modelo omitió el enlace del pedido recién creado; se anexa en código", from)
+	}
+	return nuevo
+}
