@@ -120,6 +120,10 @@ type Agent struct {
 // del menú sí llega, así que la confirmación viaja con él.
 func (a *Agent) mandarMenu(from, cuerpo string, opciones []string) error {
 	cuerpo = a.conCoberturaConfirmada(from, cuerpo)
+	// Y la PRESENTACIÓN, por lo mismo: cuando el turno acaba en menú, el texto no sale, así que
+	// la bienvenida tiene que viajar en el cuerpo o se queda sin entregar. Va DESPUÉS de la
+	// cobertura para que el orden sea "quién somos → tu zona → la pregunta". Ver bienvenidaunida.go.
+	cuerpo = a.conBienvenida(from, cuerpo)
 	if a.enviarMenu != nil {
 		return a.enviarMenu(from, cuerpo, opciones)
 	}
@@ -645,6 +649,13 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// ESTADO no sostiene, no sale. Va después de rescatarTurnoColgado porque ese también reescribe.
 	// Ver porterodehechos.go y specs/afirmaciones-respaldadas-por-estado.md.
 	reply = a.revisarHechosAfirmados(t, from, reply)
+
+	// LA PRESENTACIÓN, al final y solo si sigue pendiente: si el turno acabó en menú ya viajó en
+	// su cuerpo (mandarMenu la consumió) y aquí no queda nada. Va después del portero de hechos
+	// porque ese puede reescribir el mensaje entero. Ver bienvenidaunida.go.
+	if strings.TrimSpace(reply) != "" {
+		reply = a.conBienvenida(from, reply)
+	}
 
 	// Turno del modelo para el HISTORIAL. Si en este turno se envió un menú interactivo,
 	// guardamos la PREGUNTA del menú (cuerpo + opciones), NO un texto vacío ni el fallback:
