@@ -111,6 +111,9 @@ func (a *Agent) revisarMenuDeProducto(t *turno, from, reply string) string {
 // saludo ni su tono. Si el envío falla, se devuelve el texto tal cual: el cliente recibe la
 // pregunta escrita, como antes, en vez de quedarse sin respuesta.
 func (a *Agent) mandarMenuDelCandado(t *turno, from, cuerpo string, opciones []string, que string) string {
+	// SALUDO DUPLICADO: si el código recién se presentó, el cuerpo del menú NO puede saludar otra
+	// vez. Aplica el mismo candado que en mostrarMenu (agent.go:879). Ver saludounicomenu.go.
+	cuerpo = a.limpiarSaludoDelCuerpoDeMenu(from, cuerpo)
 	if err := a.mandarMenu(from, cuerpo, opciones); err != nil {
 		log.Printf("[menu-seguro] %s: el menú de %s falló (%v); sale como texto", from, que, err)
 		return cuerpo

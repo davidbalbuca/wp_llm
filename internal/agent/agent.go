@@ -876,6 +876,12 @@ func (a *Agent) mostrarMenu(t *turno, from string, args map[string]any) string {
 	if menuOfreceEscribirDireccion(opciones) {
 		return avisoMenuTrampa(from)
 	}
+	// SALUDO DUPLICADO: si el código recién se presentó, el menú NO puede saludar otra vez. Es el
+	// mismo problema de los 103 clientes que recibieron dos saludos, pero en el CUERPO DEL MENÚ:
+	// revisarSaludoDuplicado solo actúa sobre `reply`, y cuando el turno acaba en menú el cuerpo
+	// sale directo. Se quita aquí, antes de mandarlo. Caso real: 593995446872 (2-oct), todos los 7
+	// casos del 2-oct son menús con saludo repetido. Ver saludounico.go.
+	cuerpo = a.limpiarSaludoDelCuerpoDeMenu(from, cuerpo)
 	if err := a.mandarMenu(from, cuerpo, opciones); err != nil {
 		return soloInstruccion(t, "No pude enviar el menú (motivo: "+err.Error()+"). Preséntale las opciones por texto normal.")
 	}
