@@ -73,6 +73,32 @@ func TestQuitarSaludoConLasAperturasRealesDelModelo(t *testing.T) {
 	}
 }
 
+// CASO 04/10 (593984***145): el nombre de perfil era "J.L🪽". El patrón genérico solo acepta letras
+// en el nombre, cortaba en el punto y el cliente recibió "L🪽! 👋 No hay problema..." pegado a la
+// bienvenida. Con el nombre que el código ya conoce, el saludo se quita entero, tenga lo que tenga.
+func TestQuitarSaludoConNombresQueNoSonSoloLetras(t *testing.T) {
+	casos := []struct{ nombre, in, queda string }{
+		{"J.L🪽", "¡Buenos días, J.L🪽! 👋 No hay problema, hoy sí te ayudamos con gusto 😊",
+			"No hay problema"},
+		{"Mari_88", "¡Hola, Mari_88! 👋 ¿Qué color necesitas?", "¿Qué color necesitas?"},
+		{"Dra. Fanny", "¡Buenas tardes, Dra. Fanny! 👋 Te ayudo con tu pedido.", "Te ayudo con tu pedido."},
+	}
+	for _, c := range casos {
+		out := quitarSaludoDuplicado(c.in, primerNombre(c.nombre), c.nombre)
+		if !strings.HasPrefix(out, c.queda) {
+			t.Errorf("con el nombre %q quedó un jirón del saludo:\n  in:  %q\n  out: %q", c.nombre, c.in, out)
+		}
+	}
+}
+
+// Y si el modelo usa OTRO nombre (o no hay nombre), sigue funcionando el patrón genérico.
+func TestConOtroNombreSigueElPatronGenerico(t *testing.T) {
+	out := quitarSaludoDuplicado("¡Hola, Chri! 👋 Dime el color.", "Christian")
+	if out != "Dime el color." {
+		t.Errorf("con un nombre distinto al conocido no se quitó el saludo: %q", out)
+	}
+}
+
 // LO QUE NO SE TOCA: 22 de las 93 aperturas iban DIRECTO al grano, sin saludar. Ese es el
 // comportamiento correcto y el candado no puede alterarlo.
 func TestSinSaludoElTextoQuedaIntacto(t *testing.T) {

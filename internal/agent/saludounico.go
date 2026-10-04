@@ -31,6 +31,8 @@ import (
 	"log"
 	"regexp"
 	"strings"
+
+	"wp-llm-gas/internal/conversation"
 )
 
 // aperturaDeSaludo reconoce que un texto EMPIEZA con una fórmula de saludo.
@@ -66,11 +68,39 @@ var saludoDeCortesia = regexp.MustCompile(
 // emoji a propósito y llevan información.
 var emojiHuerfano = regexp.MustCompile(`^[\s😊🙌👋✨🔥📋]+`)
 
+// formulaDeSaludo es la apertura sin el nombre, para armar el recorte con el nombre EXACTO.
+const formulaDeSaludo = `^[¡!\s📋]*(?i:hola|buenos\s+d[íi]as|buenas\s+tardes|buenas\s+noches|qu[eé]\s+tal)`
+
+// aperturaConNombre reconoce el saludo dirigido a ESTE nombre, escrito tal cual. El patrón genérico
+// solo acepta letras en el nombre, y los nombres de perfil de WhatsApp traen de todo. CASO 04/10
+// (593984***145): el perfil es "J.L🪽"; el genérico cortaba en el punto ("¡Buenos días, J.") y el
+// cliente recibió "L🪽! 👋 No hay problema..." pegado a la bienvenida. El código ya sabe el nombre
+// —es el mismo que usó para presentarse—, así que lo recorta literal en vez de adivinarlo.
+func aperturaConNombre(nombre string) *regexp.Regexp {
+	return regexp.MustCompile(formulaDeSaludo + `[,\s]+` + regexp.QuoteMeta(nombre) +
+		`[!.…]*\s*(?:👋|🙌|😊|🔥|✨)?[\s,]*`)
+}
+
 // quitarSaludoDuplicado devuelve el texto sin la apertura de saludo. Si el texto ERA solo el
 // saludo, devuelve "" y el llamador decide (ver revisarSaludoDuplicado).
-func quitarSaludoDuplicado(texto string) string {
+//
+// nombres son los nombres con los que el código conoce al cliente (el primero y el completo): si
+// el saludo va dirigido a uno de ellos se recorta ese nombre literal, sea cual sea su forma. Sin
+// nombres, o si el saludo usa otro, queda el patrón genérico de siempre.
+func quitarSaludoDuplicado(texto string, nombres ...string) string {
 	t := strings.TrimSpace(texto)
-	rec := aperturaDeSaludo.FindString(t)
+	rec := ""
+	for _, n := range nombres {
+		if n = strings.TrimSpace(n); n == "" {
+			continue
+		}
+		if r := aperturaConNombre(n).FindString(t); len(r) > len(rec) {
+			rec = r
+		}
+	}
+	if rec == "" {
+		rec = aperturaDeSaludo.FindString(t)
+	}
 	if rec == "" {
 		return t // no empieza saludando: nada que quitar
 	}
@@ -141,6 +171,16 @@ func (a *Agent) yaSePresentoElCodigo(from string) bool {
 // aquí junto a quien lo busca; textoBienvenidaA es quien lo escribe.
 const marcaDePresentacion = "Soy *Ubi*"
 
+// nombresDelCliente devuelve cómo lo conoce el código: el primer nombre (el que usa la bienvenida)
+// y el completo (el modelo a veces usa ese). Vacío si no se sabe.
+func (a *Agent) nombresDelCliente(from string) []string {
+	nombre := strings.TrimSpace(conversation.NombreDe(a.store, from))
+	if nombre == "" {
+		return nil
+	}
+	return []string{primerNombre(nombre), nombre}
+}
+
 // revisarSaludoDuplicado es el candado. Solo actúa si el CÓDIGO ya se presentó justo antes: esa es
 // la única condición, y el código la comprueba él mismo en el historial.
 //
@@ -150,7 +190,7 @@ func (a *Agent) revisarSaludoDuplicado(from, reply string) string {
 	if strings.TrimSpace(reply) == "" || !a.yaSePresentoElCodigo(from) {
 		return reply
 	}
-	limpio := quitarSaludoDuplicado(reply)
+	limpio := quitarSaludoDuplicado(reply, a.nombresDelCliente(from)...)
 	if limpio == reply {
 		return reply // el modelo no saludó: perfecto, no hay nada que hacer
 	}
