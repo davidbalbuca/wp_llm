@@ -144,10 +144,15 @@ func (a *Agent) revisarPeticionDeCedula(t *turno, from, reply string) string {
 		if c.Acepta {
 			return reply // autorizó: la petición de cédula sale tal cual
 		}
-		// Se negó antes y el modelo le está pidiendo la cédula de nuevo. No puede salir.
-		log.Printf("[consentimiento] %s ya negó el permiso y el modelo volvió a pedirle la cédula; "+
-			"se bloquea", from)
-		return a.mensajeSinConsentimiento()
+		// Se negó antes y el modelo le está pidiendo la cédula de nuevo: la cédula NO se pide.
+		//
+		// Pero tampoco se le repite el rechazo. Que el modelo vuelva a pedir la cédula quiere decir
+		// que el cliente sigue intentando hacer su pedido. El 04/10 J.L (593984***145) tocó
+		// "No acepto", 25 s después "Sí, acepto", mandó su cédula y escribió "Esta es mi cédula":
+		// recibió cuatro veces el mismo "Sin esa autorización no puedo tomar tu pedido... si cambias
+		// de opinión, escríbeme y lo retomamos", sin ninguna forma de retomarlo. Se le ofrece de
+		// nuevo el permiso CON BOTONES; la compuerta sigue cerrada hasta que lo dé.
+		return a.ofrecerReconsiderar(t, from)
 	}
 	// Ya se le mandó el menú y no ha contestado. Se le RECUERDA con los botones otra vez, en vez
 	// de mandarle el menú completo de nuevo: repetir el mismo texto largo es lo que behavior.md
@@ -181,6 +186,24 @@ func (a *Agent) revisarPeticionDeCedula(t *turno, from, reply string) string {
 	return ""
 }
 
+// ofrecerReconsiderar le vuelve a mostrar los botones del permiso a quien se negó y sigue
+// intentando pedir. Deja marcada la espera, así su respuesta la resuelve el interceptor en código.
+func (a *Agent) ofrecerReconsiderar(t *turno, from string) string {
+	log.Printf("[consentimiento] %s se había negado y sigue intentando pedir; se le ofrece "+
+		"reconsiderar con los botones", from)
+	cuerpo := "Antes me indicaste que no nos dabas tu autorización para tratar tus datos 🙏 " +
+		"Si cambiaste de opinión y quieres seguir con tu pedido, confírmalo aquí. Puedes revisar " +
+		"cómo cuidamos tu información: " + urlPrivacidad
+	a.store.SetConsentimientoPendiente(from)
+	if err := a.mandarMenu(from, cuerpo, []string{BotonAceptoDatos, BotonNoAceptoDatos}); err != nil {
+		log.Printf("[consentimiento] %s: el menú para reconsiderar falló (%v); sale como texto", from, err)
+		return cuerpo + "\n\nRespóndeme *" + BotonAceptoDatos + "* o *" + BotonNoAceptoDatos + "*."
+	}
+	t.menuSent = true
+	t.lastMenuText = cuerpo + " [" + BotonAceptoDatos + " / " + BotonNoAceptoDatos + "]"
+	return ""
+}
+
 // pedirConsentimiento manda el menú y deja marcada la espera. Devuelve false si el menú no salió.
 func (a *Agent) pedirConsentimiento(from string) bool {
 	cuerpo := cuerpoConsentimiento()
@@ -208,26 +231,19 @@ func (a *Agent) pedirConsentimiento(from string) bool {
 // necesitan?"), devuelve manejado=false y lo atiende el modelo: ahí hay una duda legítima que
 // merece respuesta, y forzarle un sí/no sería maltratarlo.
 func (a *Agent) ResponderConsentimiento(from, texto string) (string, bool) {
-	if !a.store.ConsentimientoPendiente(from) {
-		return "", false
-	}
 	respuesta := normalizarRespuesta(texto)
 	if respuesta == "" {
 		return "", false
+	}
+	if !a.store.ConsentimientoPendiente(from) {
+		return a.cambioDeOpinion(from, texto, respuesta)
 	}
 	acepta, niega := a.respuestaAlMenuDeDatos(from, respuesta)
 
 	switch {
 	case acepta:
 		log.Printf("[consentimiento] %s ACEPTÓ las políticas de datos", from)
-		a.store.ClearConsentimientoPendiente(from)
-		a.store.SetConsentimiento(from, conversation.Consentimiento{
-			Acepta: true, Fecha: time.Now(),
-		})
-		msg := a.mensajeTrasAceptar(from)
-		a.store.AppendUser(from, texto)
-		a.store.AppendModel(from, msg)
-		return msg, true
+		return a.registrarAceptacion(from, texto), true
 
 	case niega:
 		log.Printf("[consentimiento] %s NO aceptó las políticas de datos; no se le pide la cédula", from)
@@ -250,6 +266,34 @@ func (a *Agent) ResponderConsentimiento(from, texto string) (string, bool) {
 
 	// Una pregunta, una duda, cualquier otra cosa: la atiende el modelo. La espera sigue en pie.
 	return "", false
+}
+
+// cambioDeOpinion resuelve el "Sí, acepto" de alguien que ANTES se negó y ya no tiene el menú
+// pendiente. El botón se queda en la pantalla del cliente: tocarlo después de un "No acepto" es
+// la forma más clara que tiene de corregirse, y el mensaje de la negativa le promete justo eso
+// ("si cambias de opinión, escríbeme y lo retomamos").
+//
+// Solo vale el LITERAL del botón, nunca un "sí" suelto: sin menú pendiente un "si" puede estar
+// contestando cualquier otra cosa, y grabar un permiso que nadie dio es el error que no se corrige.
+func (a *Agent) cambioDeOpinion(from, texto, respuesta string) (string, bool) {
+	c, hay := a.store.GetConsentimiento(from)
+	if !hay || c.Acepta || !aceptacionesLiterales[respuesta] {
+		return "", false
+	}
+	log.Printf("[consentimiento] %s se había negado y cambió de opinión: ACEPTÓ las políticas de datos", from)
+	return a.registrarAceptacion(from, texto), true
+}
+
+// registrarAceptacion graba el permiso y devuelve lo que se le contesta al cliente.
+func (a *Agent) registrarAceptacion(from, texto string) string {
+	a.store.ClearConsentimientoPendiente(from)
+	a.store.SetConsentimiento(from, conversation.Consentimiento{
+		Acepta: true, Fecha: time.Now(),
+	})
+	msg := a.mensajeTrasAceptar(from)
+	a.store.AppendUser(from, texto)
+	a.store.AppendModel(from, msg)
+	return msg
 }
 
 // Lo único que cuenta como respuesta cuando la pregunta salió CON BOTONES. Son los títulos que

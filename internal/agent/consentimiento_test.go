@@ -225,6 +225,92 @@ func TestUnaPreguntaSobreLasPoliticasLaAtiendeElModelo(t *testing.T) {
 	}
 }
 
+// CAMBIAR DE OPINIÓN. La conversación real del 04/10 (J.L, 593984***145): "No acepto", 25 s
+// después "Sí, acepto", luego la cédula y "Esta es mi cédula". Recibió cuatro veces el mismo
+// rechazo y se perdió el pedido, aunque ese mismo rechazo le decía "si cambias de opinión,
+// escríbeme y lo retomamos".
+func TestQuienSeNegoPuedeCambiarDeOpinionConElBoton(t *testing.T) {
+	ag, store, from := agenteConsentimiento(t)
+	store.SetConsentimientoPendiente(from)
+	store.AppendModel(from, cuerpoConsentimiento())
+
+	if _, manejado := ag.ResponderConsentimiento(from, BotonNoAceptoDatos); !manejado {
+		t.Fatal("el 'No acepto' no se resolvió en código")
+	}
+	respuesta, manejado := ag.ResponderConsentimiento(from, BotonAceptoDatos)
+	if !manejado {
+		t.Fatal("el 'Sí, acepto' de quien se había negado no se resolvió: quedaría bloqueado para siempre")
+	}
+	if c, hay := store.GetConsentimiento(from); !hay || !c.Acepta {
+		t.Fatal("el cambio de opinión no quedó registrado como aceptación")
+	}
+	if !strings.Contains(strings.ToLower(respuesta), "cédula") {
+		t.Errorf("tras aceptar no se le pidió la cédula: %q", respuesta)
+	}
+}
+
+// La continuación real del 04/10 en prod: tras la negativa, el cliente escribió "Si" (10:31), el
+// operador le pidió por escrito "me podrías ayudar con un acepto" y el cliente escribió "Acepto"
+// (10:33). Las dos veces recibió el mismo rechazo. El "Si" suelto no basta (podía contestar
+// cualquier cosa), pero el "Acepto" escrito es tan inequívoco como el botón.
+func TestTrasNegarseElAceptoEscritoAManoTambienVale(t *testing.T) {
+	for _, escrito := range []string{"Acepto", "acepto", "ACEPTO", "Si acepto", "Sí, acepto"} {
+		ag, store, from := agenteConsentimiento(t)
+		store.SetConsentimiento(from, conversation.Consentimiento{Acepta: false})
+
+		if _, manejado := ag.ResponderConsentimiento(from, "Si"); manejado {
+			t.Errorf("el 'Si' suelto se tomó como aceptación")
+		}
+		if _, manejado := ag.ResponderConsentimiento(from, escrito); !manejado {
+			t.Errorf("%q escrito a mano tras la negativa no se resolvió: el cliente sigue bloqueado", escrito)
+			continue
+		}
+		if c, _ := store.GetConsentimiento(from); !c.Acepta {
+			t.Errorf("%q no quedó registrado como aceptación", escrito)
+		}
+	}
+}
+
+// Sin menú pendiente solo vale el LITERAL del botón: un "si" suelto puede estar contestando otra
+// cosa, y grabar un permiso que nadie dio es el error que no se corrige.
+func TestTrasNegarseUnSiSueltoNoCuentaComoCambioDeOpinion(t *testing.T) {
+	ag, store, from := agenteConsentimiento(t)
+	store.SetConsentimiento(from, conversation.Consentimiento{Acepta: false})
+
+	if _, manejado := ag.ResponderConsentimiento(from, "si"); manejado {
+		t.Error("un 'si' suelto, sin menú pendiente, se tomó como cambio de opinión")
+	}
+	if c, _ := store.GetConsentimiento(from); c.Acepta {
+		t.Fatal("se grabó una aceptación a partir de un 'si' que pudo contestar cualquier cosa")
+	}
+}
+
+// Quien se negó y SIGUE intentando pedir (manda su cédula, el modelo se la pide) no recibe otra
+// vez el mismo rechazo: se le ofrecen de nuevo los botones, y su respuesta se resuelve en código.
+// La cédula sigue sin pedirse hasta que acepte.
+func TestAQuienSeNegoYSigueIntentandoSeLeOfreceReconsiderar(t *testing.T) {
+	ag, store, from := agenteConsentimiento(t)
+	store.SetConsentimiento(from, conversation.Consentimiento{Acepta: false})
+
+	salida := ag.revisarPeticionDeCedula(&turno{}, from, "Gracias, ¿me compartes tu número de cédula?")
+
+	if strings.Contains(strings.ToLower(salida), "numero de cedula") {
+		t.Fatalf("se le pidió la cédula a quien no autorizó: %q", salida)
+	}
+	if strings.Contains(salida, "Sin esa autorización no puedo tomar tu pedido") {
+		t.Errorf("se le repitió el rechazo en vez de ofrecerle reconsiderar: %q", salida)
+	}
+	if !store.ConsentimientoPendiente(from) {
+		t.Fatal("no quedó marcada la espera: su 'Sí, acepto' no se resolvería en código")
+	}
+	if _, manejado := ag.ResponderConsentimiento(from, BotonAceptoDatos); !manejado {
+		t.Fatal("tras ofrecerle reconsiderar, su 'Sí, acepto' no se resolvió")
+	}
+	if c, _ := store.GetConsentimiento(from); !c.Acepta {
+		t.Error("la aceptación al reconsiderar no quedó registrada")
+	}
+}
+
 // Sin menú pendiente el interceptor no toca nada: un "no" en medio de una conversación normal
 // ("no, mejor dos cilindros") no puede registrarse como una negativa de consentimiento.
 func TestSinMenuPendienteNoSeInterpretaNingunSiNiNo(t *testing.T) {
