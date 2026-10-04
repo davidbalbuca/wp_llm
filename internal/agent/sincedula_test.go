@@ -1,0 +1,79 @@
+package agent
+
+import (
+	"strings"
+	"testing"
+
+	"wp-llm-gas/internal/conversation"
+	"wp-llm-gas/internal/georoutes"
+)
+
+// SIN CÉDULA NI AUTORIZACIÓN (decisión del 04/10). El bot ya no pide cédula ni el permiso de
+// datos para tomar un pedido: el backend registra al cliente por su teléfono de WhatsApp. El
+// consentimiento se conserva apagado (BOT_PEDIR_CONSENTIMIENTO); ver consentimiento_test.go para
+// cómo funciona encendido.
+
+// Un cliente nuevo, sin cédula ni nombre escritos, con su nombre de perfil de WhatsApp: el pedido
+// NO se detiene pidiendo datos personales, sigue al siguiente paso (el catálogo).
+func TestSinCedulaElPedidoNoSeDetienePidiendoDatos(t *testing.T) {
+	const from = "593999900051"
+	esp := nuevoBackendEspia(t)
+	store := conversation.NewMemStore()
+	ag := agentDePrueba(nil, store)
+	ag.gr = georoutes.NewClient(esp.servidor.URL)
+	store.SetProfile(from, conversation.Profile{PerfilWhatsApp: "J.L🪽"})
+	store.SetLocation(from, -2.885136, -78.986911)
+
+	tur := &turno{}
+	salida := ag.registrarPedido(tur, from, map[string]any{"color": "BLANCO", "cantidad": 1})
+
+	bajo := strings.ToLower(salida)
+	if strings.Contains(bajo, "cédula") || strings.Contains(bajo, "cedula") || strings.Contains(bajo, "autoriz") {
+		t.Fatalf("se detuvo el pedido para pedir cédula o autorización: %q", salida)
+	}
+	if tur.ultimoPedido.faltaDato != "" {
+		t.Fatalf("quedó marcado un dato faltante (%q) aunque ya no hace falta", tur.ultimoPedido.faltaDato)
+	}
+}
+
+// Sin nombre en ningún lado (ni escrito ni de WhatsApp) se pide SOLO el nombre, nunca la cédula.
+func TestSinNingunNombreSePideSoloElNombre(t *testing.T) {
+	const from = "593999900052"
+	store := conversation.NewMemStore()
+	ag := agentDePrueba(nil, store)
+	store.SetLocation(from, -2.885136, -78.986911)
+
+	tur := &turno{}
+	salida := ag.registrarPedido(tur, from, map[string]any{"color": "BLANCO", "cantidad": 1})
+
+	if !strings.Contains(strings.ToLower(salida), "nombre") {
+		t.Fatalf("sin ningún nombre debía pedirse el nombre: %q", salida)
+	}
+	if strings.Contains(strings.ToLower(salida), "cédula") {
+		t.Errorf("se pidió la cédula: %q", salida)
+	}
+	if tur.ultimoPedido.faltaDato != "nombre" {
+		t.Errorf("faltaDato = %q, se esperaba \"nombre\"", tur.ultimoPedido.faltaDato)
+	}
+}
+
+// Con el consentimiento APAGADO no se intercepta nada, y una negativa grabada cuando estaba
+// encendido tampoco bloquea: si no, a quien se negó antes no habría forma de reabrirle el bot.
+func TestConsentimientoApagadoNoBloqueaNiIntercepta(t *testing.T) {
+	const from = "593999900053"
+	store := conversation.NewMemStore()
+	ag := agentDePrueba(nil, store) // PedirConsentimiento=false: el valor por defecto
+	store.SetConsentimiento(from, conversation.Consentimiento{Acepta: false})
+	store.SetConsentimientoPendiente(from)
+
+	if ag.consentimientoNiega(from) {
+		t.Error("con el consentimiento apagado, una negativa vieja sigue bloqueando el pedido")
+	}
+	if _, manejado := ag.ResponderConsentimiento(from, BotonAceptoDatos); manejado {
+		t.Error("con el consentimiento apagado, el interceptor tomó el turno")
+	}
+	const peticion = "Para tu factura, ¿me compartes tu número de cédula?"
+	if salida := ag.revisarPeticionDeCedula(&turno{}, from, peticion); salida != peticion {
+		t.Errorf("con el consentimiento apagado, el candado cambió el mensaje: %q", salida)
+	}
+}

@@ -63,8 +63,13 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 			nombres = perfil.Nombres
 		}
 	}
-	if identificacion == "" || nombres == "" {
-		return "Para programar necesito la cédula y el nombre completo del cliente. Pídeselos."
+	// Cédula opcional (04/10): sin ella el backend registra al cliente por su teléfono. El nombre,
+	// si no lo escribió, es el de su perfil de WhatsApp. Igual que en registrar_pedido.
+	if nombres == "" {
+		nombres = conversation.NombreDe(a.store, from)
+	}
+	if nombres == "" {
+		return "Para programar necesito el nombre del cliente. Pídeselo (solo el nombre)."
 	}
 
 	// COMPUERTA de protección de datos, igual que en registrar_pedido: agendar también guarda los
@@ -156,7 +161,13 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 		return "No hay una forma de pago configurada en el sistema. Pídele al cliente que intente más tarde."
 	}
 
-	a.store.SetProfile(from, conversation.Profile{Identificacion: identificacion, Nombres: nombres})
+	// Se actualiza el perfil SIN perder lo que ya tenía (el nombre de su perfil de WhatsApp, por ejemplo).
+	perfilActual, _ := a.store.GetProfile(from)
+	if identificacion != "" {
+		perfilActual.Identificacion = identificacion
+	}
+	perfilActual.Nombres = nombres
+	a.store.SetProfile(from, perfilActual)
 
 	// El cliente se registra AL AGENDAR, no solo al confirmar. Antes sus datos vivian unicamente
 	// en la base del bot hasta que confirmara: si algo fallaba en el camino (paso el 27/08 con

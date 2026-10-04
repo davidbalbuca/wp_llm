@@ -509,16 +509,18 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 			nombres = perfil.Nombres
 		}
 	}
-	if identificacion == "" || nombres == "" {
+	// La CÉDULA YA NO ES OBLIGATORIA (04/10): sin ella el backend registra al cliente por su
+	// teléfono. Se usa si la tiene (cliente viejo, o la dio para su factura). El NOMBRE, si el
+	// cliente no lo escribió, es el de su perfil de WhatsApp: lo ve el repartidor.
+	if nombres == "" {
+		nombres = conversation.NombreDe(a.store, from)
+	}
+	if nombres == "" {
 		// QUE dato falta se deja anotado para quien llame desde codigo: este fallo se arregla
 		// preguntandolo, no disculpandose ni derivando (ver resultadoPedido.faltaDato y el
 		// candado del fantasma en forzar.go).
-		falta := "nombre"
-		if identificacion == "" {
-			falta = "cedula" // la cedula va primero: sin ella no se puede ni verificar al cliente
-		}
-		t.ultimoPedido = resultadoPedido{faltaDato: falta}
-		return "Faltan datos del cliente (cédula o nombre). Pídeselos antes de registrar el pedido."
+		t.ultimoPedido = resultadoPedido{faltaDato: "nombre"}
+		return "Falta el nombre del cliente. Pídeselo (solo el nombre) antes de registrar el pedido."
 	}
 
 	// COMPUERTA de protección de datos. Va ANTES de persistir el perfil y antes de llamar al

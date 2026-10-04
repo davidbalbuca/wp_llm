@@ -135,7 +135,7 @@ func (a *Agent) telefonoDelNegocio() string {
 // del flujo es. Devuelve la respuesta que debe salir; si mandó el menú, marca t.menuSent para que
 // el llamador no envíe además el texto (duplicaría la pregunta).
 func (a *Agent) revisarPeticionDeCedula(t *turno, from, reply string) string {
-	if !pideLaCedula(reply) {
+	if !a.cfg.PedirConsentimiento || !pideLaCedula(reply) {
 		return reply
 	}
 	// Ya respondió antes: no se le vuelve a preguntar. Es lo que se pidió explícitamente —
@@ -231,6 +231,9 @@ func (a *Agent) pedirConsentimiento(from string) bool {
 // necesitan?"), devuelve manejado=false y lo atiende el modelo: ahí hay una duda legítima que
 // merece respuesta, y forzarle un sí/no sería maltratarlo.
 func (a *Agent) ResponderConsentimiento(from, texto string) (string, bool) {
+	if !a.cfg.PedirConsentimiento {
+		return "", false // apagado (BOT_PEDIR_CONSENTIMIENTO): no hay menú que resolver
+	}
 	respuesta := normalizarRespuesta(texto)
 	if respuesta == "" {
 		return "", false
@@ -460,6 +463,12 @@ func (a *Agent) mensajeTrasAceptar(from string) string {
 // por algo que no se le preguntó. Es lo que se pidió: "a los que ya están registrados no podemos
 // hacer nada, deben continuar igual".
 func (a *Agent) consentimientoNiega(from string) bool {
+	// Apagado (BOT_PEDIR_CONSENTIMIENTO=false): no se pide permiso, así que nada bloquea. Una
+	// negativa grabada cuando estaba encendido tampoco cuenta: ya no se le pregunta, y dejarla
+	// bloqueando sería cerrarle el bot a alguien sin forma de reabrirlo.
+	if !a.cfg.PedirConsentimiento {
+		return false
+	}
 	if c, hay := a.store.GetConsentimiento(from); hay {
 		return !c.Acepta
 	}

@@ -70,6 +70,11 @@ type Config struct {
 	// pedidos y no hay forma de probarlo sin clientes reales, asi que esto se enciende
 	// mirando los logs y se apaga en segundos si hace falta.
 	UsarBusquedaBackend bool
+	// PedirConsentimiento enciende el menú de autorización de datos antes de pedir la cédula
+	// (BOT_PEDIR_CONSENTIMIENTO). Apagado por defecto desde el 04/10: el bot ya no pide cédula ni
+	// autorización para tomar un pedido; el cliente se registra por su teléfono. El código del
+	// consentimiento se conserva para poder volver a encenderlo sin tocar código.
+	PedirConsentimiento bool
 	CierreVentanaMax    time.Duration
 	// Telegram: alertas de operación (test productivo). Sin token o chat queda APAGADO y el bot
 	// sigue igual. TelegramAvisarInicio permite dejar solo errores (los verdes son ruidosos).
@@ -209,6 +214,7 @@ func Load() Config {
 		HumanTakeoverTimeout: time.Duration(optionalInt("HUMAN_TAKEOVER_TIMEOUT_MIN", 15)) * time.Minute,
 		CierreInactividad:    time.Duration(optionalInt("BOT_CIERRE_INACTIVIDAD_MIN", 7)) * time.Minute,
 		UsarBusquedaBackend:  optionalBool("BOT_USAR_BUSQUEDA", false),
+		PedirConsentimiento:  optionalBool("BOT_PEDIR_CONSENTIMIENTO", false),
 		CierreVentanaMax:     time.Duration(optionalInt("BOT_CIERRE_VENTANA_MAX_MIN", 60)) * time.Minute,
 		BotHorarioInicio:     optional("BOT_HORARIO_INICIO", "07:00"),
 		BotHorarioFin:        optional("BOT_HORARIO_FIN", "19:00"),

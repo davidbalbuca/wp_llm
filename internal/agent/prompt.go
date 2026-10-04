@@ -173,15 +173,15 @@ func (a *Agent) construirSistema(from string) (fijo, volatil string) {
 		fmt.Fprintf(&b, " HOY NO SE TRABAJA: solo atendemos %s. NO llames a registrar_pedido. "+
 			"Dile con amabilidad que hoy no hay servicio, DILE QUE DÍAS Y EN QUÉ HORARIO "+
 			"atendemos, y PREGÚNTALE si quiere agendar su pedido para otro día. Si acepta, "+
-			"pídele color, cantidad, su ubicación de WhatsApp, cédula y nombre (si es cliente "+
-			"nuevo) y que ESCRIBA el día y la hora que prefiera dentro de ese horario; luego "+
+			"pídele color, cantidad y su ubicación de WhatsApp (NO pidas cédula) y que ESCRIBA "+
+			"el día y la hora que prefiera dentro de ese horario; luego "+
 			"llama a programar_entrega. NO le ofrezcas días ni horas como opciones ni uses "+
 			"mostrar_menu para eso.", a.textoDiasLaborables())
 	} else if !a.dentroDeHorario(ahora) {
 		b.WriteString(" ESTAMOS FUERA DE HORARIO: a esta hora NO hay conductores disponibles, así que NO llames " +
 			"a registrar_pedido. Explícaselo con amabilidad y ofrécele PROGRAMAR la entrega con la herramienta " +
-			"programar_entrega: pide color, cantidad, su ubicación de WhatsApp, cédula y nombre (si es cliente " +
-			"nuevo) y la hora deseada. Para la hora, DILE EL HORARIO DE ATENCIÓN y deja que el cliente escriba " +
+			"programar_entrega: pide color, cantidad, su ubicación de WhatsApp (NO pidas cédula) y la hora " +
+			"deseada. Para la hora, DILE EL HORARIO DE ATENCIÓN y deja que el cliente escriba " +
 			"la que prefiera (dentro de ese horario y de las próximas 24 horas): NO le ofrezcas horas como " +
 			"opciones ni uses mostrar_menu para eso.")
 	} else {

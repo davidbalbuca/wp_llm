@@ -77,8 +77,12 @@ func (a *Agent) CrearPedidoDeOperador(p PedidoDeOperador) ResultadoPedidoOperado
 		// del bot (get-or-create en el backend: si ya existe, no lo duplica).
 		identificacion := strings.TrimSpace(p.Identificacion)
 		nombres := strings.TrimSpace(p.Nombres)
-		if identificacion == "" || nombres == "" {
-			return noSePudo("este cliente no tiene cuenta: escribe su cédula y su nombre")
+		// Cédula opcional (04/10): sin ella el backend lo registra por su teléfono.
+		if nombres == "" {
+			nombres = conversation.NombreDe(a.store, from)
+		}
+		if nombres == "" {
+			return noSePudo("este cliente no tiene cuenta: escribe su nombre")
 		}
 		nueva, err := a.gr.WppGetOrCreateClient(identificacion, nombres, from)
 		if err != nil {

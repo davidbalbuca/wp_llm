@@ -200,9 +200,9 @@ func renderServiceInfo(contexto *catalog.Context, disponible bool) string {
 
 	texto.WriteString(renderCobertura(contexto.Zonas))
 
-	texto.WriteString("\nPara concretar un pedido necesitas del cliente: cédula, nombre completo, " +
-		"el color/marca deseado, la cantidad y su ubicación de WhatsApp (📎 → Ubicación). " +
-		"NUNCA pidas correo electrónico (no se necesita).\n")
+	texto.WriteString("\nPara concretar un pedido necesitas del cliente: el color/marca deseado, la cantidad y " +
+		"su ubicación de WhatsApp (📎 → Ubicación). NO pidas cédula ni correo (no se necesitan); " +
+		"el nombre es el de su WhatsApp, y solo si no lo sabes se lo preguntas.\n")
 	return texto.String()
 }
 

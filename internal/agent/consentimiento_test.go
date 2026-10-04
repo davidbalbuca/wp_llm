@@ -9,6 +9,7 @@ import (
 
 	"wp-llm-gas/internal/conversation"
 	"wp-llm-gas/internal/georoutes"
+	"wp-llm-gas/internal/llm"
 )
 
 // NADIE DA SU CÉDULA SIN HABER AUTORIZADO ANTES QUE LA TRATEMOS.
@@ -68,7 +69,16 @@ func agenteConsentimiento(t *testing.T) (*Agent, conversation.Store, string) {
 	t.Helper()
 	const from = "593999900001"
 	store := conversation.NewMemStore()
-	return agentDePrueba(nil, store), store, from
+	return agenteConConsentimiento(nil, store), store, from
+}
+
+// agenteConConsentimiento es el agente de prueba con el consentimiento ENCENDIDO
+// (BOT_PEDIR_CONSENTIMIENTO=true). Desde el 04/10 viene apagado por defecto; estos tests prueban
+// cómo funciona cuando se enciende, que se conserva para poder volver a usarlo.
+func agenteConConsentimiento(modelo llm.Provider, store conversation.Store) *Agent {
+	ag := agentDePrueba(modelo, store)
+	ag.cfg.PedirConsentimiento = true
+	return ag
 }
 
 func TestNoSePideLaCedulaSinConsentimiento(t *testing.T) {
@@ -372,7 +382,7 @@ func TestConNegativaLaCedulaNoLlegaAlBackend(t *testing.T) {
 	const from = "593999900010"
 	esp := nuevoBackendEspia(t)
 	store := conversation.NewMemStore()
-	ag := agentDePrueba(nil, store)
+	ag := agenteConConsentimiento(nil, store)
 	ag.gr = georoutes.NewClient(esp.servidor.URL)
 	store.SetConsentimiento(from, conversation.Consentimiento{Acepta: false})
 
@@ -388,7 +398,7 @@ func TestConNegativaNoSeRegistraElPedidoNiSeGuardaElPerfil(t *testing.T) {
 	const from = "593999900011"
 	esp := nuevoBackendEspia(t)
 	store := conversation.NewMemStore()
-	ag := agentDePrueba(nil, store)
+	ag := agenteConConsentimiento(nil, store)
 	ag.gr = georoutes.NewClient(esp.servidor.URL)
 	store.SetConsentimiento(from, conversation.Consentimiento{Acepta: false})
 	store.SetLocation(from, -2.9, -79.0)
@@ -423,7 +433,7 @@ func TestAlLlegarLaCedulaLaAceptacionSeRegistraEnElBackend(t *testing.T) {
 	const from = "593999900012"
 	esp := nuevoBackendEspia(t)
 	store := conversation.NewMemStore()
-	ag := agentDePrueba(nil, store)
+	ag := agenteConConsentimiento(nil, store)
 	ag.gr = georoutes.NewClient(esp.servidor.URL)
 	store.SetConsentimiento(from, conversation.Consentimiento{Acepta: true})
 
@@ -444,7 +454,7 @@ func TestLaAceptacionNoSeReenviaDosVeces(t *testing.T) {
 	const from = "593999900013"
 	esp := nuevoBackendEspia(t)
 	store := conversation.NewMemStore()
-	ag := agentDePrueba(nil, store)
+	ag := agenteConConsentimiento(nil, store)
 	ag.gr = georoutes.NewClient(esp.servidor.URL)
 	store.SetConsentimiento(from, conversation.Consentimiento{Acepta: true})
 
@@ -465,7 +475,7 @@ func TestLaNegativaNuncaSeMandaAlBackend(t *testing.T) {
 	const from = "593999900014"
 	esp := nuevoBackendEspia(t)
 	store := conversation.NewMemStore()
-	ag := agentDePrueba(nil, store)
+	ag := agenteConConsentimiento(nil, store)
 	ag.gr = georoutes.NewClient(esp.servidor.URL)
 	store.SetConsentimiento(from, conversation.Consentimiento{Acepta: false})
 

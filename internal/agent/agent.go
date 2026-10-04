@@ -224,14 +224,14 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 		Name: "registrar_pedido",
 		Description: "Registra un pedido de gas en el sistema (UN solo pedido, aunque lleve varios colores). " +
 			"Úsala solo cuando ya tienes el color/marca y la cantidad de CADA cilindro, el cliente compartió su " +
-			"ubicación de WhatsApp, y (si es un cliente NUEVO) su cédula y su nombre. Si el cliente pide MÁS DE UN " +
+			"ubicación de WhatsApp. NO hace falta su cédula: se registra por su número de WhatsApp. Si el cliente pide MÁS DE UN " +
 			"color, llámala UNA sola vez con 'items'; NUNCA la llames dos veces para un mismo pedido. " +
 			"No la uses para consultas; solo para concretar el pedido.",
 		Parameters: &genai.Schema{
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
-				"identificacion":    {Type: genai.TypeString, Description: "Cédula/identificación del cliente. Si ya está registrado (ver DATOS DEL CLIENTE), NO hace falta repetirla."},
-				"nombres_completos": {Type: genai.TypeString, Description: "Nombres y apellidos del cliente. Si ya está registrado, NO hace falta repetirlos."},
+				"identificacion":    {Type: genai.TypeString, Description: "OPCIONAL. Cédula del cliente SOLO si él la dio por su cuenta (p. ej. quiere factura con sus datos). NO la pidas."},
+				"nombres_completos": {Type: genai.TypeString, Description: "OPCIONAL. Nombre del cliente si lo escribió; si no, se usa el de su WhatsApp."},
 				"color":             {Type: genai.TypeString, Description: "Color/marca del cilindro. Debe coincidir con uno de los colores de la INFORMACIÓN DEL SERVICIO. Para varios colores usa 'items' en su lugar."},
 				"cantidad":          {Type: genai.TypeInteger, Description: "Cantidad de cilindros solicitados (del color de 'color')."},
 				"items": {Type: genai.TypeArray, Description: "SOLO cuando el cliente pide MÁS DE UN color en el mismo pedido: " +
@@ -254,9 +254,8 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 	// el bot lo saluda por su nombre y NO le vuelve a pedir nombre/correo (igual que la app).
 	verificarCliente := &genai.FunctionDeclaration{
 		Name: "verificar_cliente",
-		Description: "Verifica si un cliente ya está registrado en el sistema por su cédula/identificación. " +
-			"Llámala EN CUANTO el cliente te dé su cédula, ANTES de pedirle el nombre o el correo. Si el " +
-			"cliente ya existe, te devolverá su nombre para saludarlo y NO tendrás que pedirle nombre ni correo.",
+		Description: "Verifica si un cliente ya está registrado en el sistema por su cédula. NO pidas la cédula para " +
+			"usarla: llámala solo si el cliente DIO su cédula por su cuenta. Si existe, te devuelve su nombre.",
 		Parameters: &genai.Schema{
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
@@ -332,8 +331,8 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 	programar := &genai.FunctionDeclaration{
 		Name: "programar_entrega",
 		Description: "Agenda una ENTREGA PROGRAMADA cuando estamos fuera del horario laboral. Antes de llamarla " +
-			"necesitas: color, cantidad, la ubicación de WhatsApp YA compartida, la cédula y el nombre (si es " +
-			"cliente nuevo) y la hora deseada. Solo horas dentro del horario laboral y de las próximas 24 horas.",
+			"necesitas: color, cantidad, la ubicación de WhatsApp YA compartida y la hora deseada (NO pidas cédula). " +
+			"Solo horas dentro del horario laboral y de las próximas 24 horas.",
 		Parameters: &genai.Schema{
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
@@ -341,8 +340,8 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 				"cantidad":       {Type: genai.TypeInteger, Description: "Cantidad de cilindros"},
 				"hora":           {Type: genai.TypeString, Description: "Hora deseada en formato HH:MM (24 horas)"},
 				"dia":            {Type: genai.TypeString, Description: "'hoy' o 'manana' (si no se indica, se asume la próxima ocurrencia de esa hora)"},
-				"identificacion": {Type: genai.TypeString, Description: "Cédula del cliente (si es nuevo)"},
-				"nombres":        {Type: genai.TypeString, Description: "Nombre completo del cliente (si es nuevo)"},
+				"identificacion": {Type: genai.TypeString, Description: "OPCIONAL. Cédula solo si el cliente la dio por su cuenta. NO la pidas."},
+				"nombres":        {Type: genai.TypeString, Description: "OPCIONAL. Nombre si lo escribió; si no, se usa el de su WhatsApp."},
 			},
 			Required: []string{"color", "cantidad", "hora"},
 		},
