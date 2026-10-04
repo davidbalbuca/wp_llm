@@ -77,3 +77,27 @@ func TestConsentimientoApagadoNoBloqueaNiIntercepta(t *testing.T) {
 		t.Errorf("con el consentimiento apagado, el candado cambió el mensaje: %q", salida)
 	}
 }
+
+// "cancelar" con la búsqueda de repartidor abierta (todavía sin pedido creado) cancela la
+// BÚSQUEDA. El 04/10 en el simulador respondía "no tienes ningún pedido en curso" y la búsqueda
+// seguía viva, aunque el bot acababa de decirle "si quieres cancelarlo, escríbeme cancelar".
+func TestCancelarConLaBusquedaAbiertaCancelaLaBusqueda(t *testing.T) {
+	const from = "593999900054"
+	store := conversation.NewMemStore()
+	ag := agentDePrueba(nil, store)
+	store.SetPendingWait(from, conversation.PendingWait{
+		IDProducto: 1, IDColor: 2, Cantidad: 1, ColorNombre: "AMARILLO", IDBusqueda: 65,
+	})
+
+	salida, manejado := ag.ResponderCancelacion(from, "cancelar")
+
+	if !manejado {
+		t.Fatal("el 'cancelar' con la búsqueda abierta no se resolvió en código")
+	}
+	if strings.Contains(strings.ToLower(salida), "no tienes ningún pedido") {
+		t.Fatalf("se le dijo que no tenía pedido a quien estaba esperando repartidor: %q", salida)
+	}
+	if _, sigue := store.GetPendingWait(from); sigue {
+		t.Error("la búsqueda/espera sigue viva después de cancelarla")
+	}
+}

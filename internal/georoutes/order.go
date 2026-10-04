@@ -194,7 +194,11 @@ func (c *Client) GetOrderHistory(jwt string, estado *int) ([]OrderSummary, error
 	if err != nil {
 		return nil, err
 	}
-	if code != http.StatusOK || env.Codigo != 0 {
+	// El backend responde codigo 1 cuando sale bien y -1 cuando falla (CodigoRespuesta en
+	// core/georoutes/enums.py). Hasta el 04/10 aquí se exigía 0: TODA respuesta correcta se tomaba
+	// como error ("historial de pedidos: Historial cliente obtenido exitosamente (HTTP 200)") y,
+	// al pedir cancelar, a quien tenía un pedido en camino se le decía que no tenía ninguno.
+	if code != http.StatusOK || env.Codigo == codigoRespuestaError {
 		return nil, fmt.Errorf("historial de pedidos: %s (HTTP %d)", env.Mensaje, code)
 	}
 	var pedidos []OrderSummary

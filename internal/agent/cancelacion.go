@@ -144,6 +144,14 @@ func (a *Agent) ResponderCancelacion(from, texto string) (string, bool) {
 		// Solo se cede si puede haber OTRA cosa que cancelar —una entrega agendada—, porque eso el
 		// modelo (o el candado de programación) lo atiende mejor. Si no hay nada de nada, lo
 		// resuelve el código: es la verdad y no necesita interpretación.
+		// Sin pedido creado TODAVÍA, pero buscándole repartidor: eso es lo que quiere cancelar.
+		// El 04/10 (simulador) el bot le dijo "cancelar" a un cliente con la búsqueda abierta, le
+		// contestó "no tienes ningún pedido en curso" —aunque el mismo bot acababa de decirle "si
+		// quieres cancelarlo, escríbeme cancelar"— y la búsqueda siguió viva. Este interceptor
+		// corre ANTES que el del menú de espera, así que la búsqueda se cancela aquí.
+		if _, hayEspera := a.store.GetPendingWait(from); hayEspera {
+			return a.cancelarLaEspera(from, texto), true
+		}
 		if a.tieneEntregaAgendada(from) {
 			return "", false
 		}

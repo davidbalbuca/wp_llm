@@ -24,6 +24,10 @@ const (
 	botFirebaseToken = "whatsapp-bot"
 )
 
+// codigoRespuestaError es el `codigo` con que el backend marca un fallo (CodigoRespuesta.ERROR en
+// core/georoutes/enums.py). El éxito es 1, no 0.
+const codigoRespuestaError = -1
+
 // envelope es el envoltorio estándar de respuesta de la API georoutes.
 type envelope struct {
 	Codigo    int             `json:"codigo"`
