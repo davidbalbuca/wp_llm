@@ -120,6 +120,11 @@ type Agent struct {
 // del menú sí llega, así que la confirmación viaja con él.
 func (a *Agent) mandarMenu(from, cuerpo string, opciones []string) error {
 	cuerpo = a.conCoberturaConfirmada(from, cuerpo)
+	// Y la PRESENTACIÓN, por lo mismo: cuando el turno acaba en menú el texto de la respuesta no
+	// sale, así que la bienvenida tiene que viajar en el cuerpo o se queda sin entregar. Va DESPUÉS
+	// de la cobertura para que el orden sea "quién somos → tu zona → la pregunta".
+	// Ver bienvenidaunida.go.
+	cuerpo = a.conBienvenida(from, cuerpo)
 	if a.enviarMenu != nil {
 		return a.enviarMenu(from, cuerpo, opciones)
 	}
@@ -646,6 +651,13 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// Ver porterodehechos.go y specs/afirmaciones-respaldadas-por-estado.md.
 	reply = a.revisarHechosAfirmados(t, from, reply)
 
+	// LA PRESENTACIÓN, si sigue pendiente. Si el turno acabó en menú ya viajó en su cuerpo
+	// (mandarMenu la consumió) y aquí no queda nada. Va al final porque el portero de hechos y el
+	// rescate de turno colgado pueden reescribir el mensaje entero. Ver bienvenidaunida.go.
+	if strings.TrimSpace(reply) != "" {
+		reply = a.conBienvenida(from, reply)
+	}
+
 	// Turno del modelo para el HISTORIAL. Si en este turno se envió un menú interactivo,
 	// guardamos la PREGUNTA del menú (cuerpo + opciones), NO un texto vacío ni el fallback:
 	// así el modelo recuerda qué preguntó y no repite el menú. El historial solo guarda texto,
@@ -662,6 +674,10 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 
 	a.store.AppendUser(from, text)
 	a.store.AppendModel(from, modelTurn)
+	// La bandera de "ya me presenté" vale para ESTE turno y se apaga al cerrarlo: si se quedara
+	// encendida, el candado seguiría recortando saludos legítimos a mitad de la conversación —un
+	// "¡Hola, David! ¿Lo mismo de la última vez?" tiene todo el derecho a saludar (behavior.md:103).
+	a.store.LimpiarYaSePresento(from)
 	return Resultado{
 		Texto:       reply,
 		MenuEnviado: t.menuSent,

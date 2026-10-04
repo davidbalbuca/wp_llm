@@ -102,11 +102,23 @@ func mayusculaInicial(s string) string {
 
 // yaSePresentoElCodigo dice si la presentación del bot salió JUSTO ANTES de este turno.
 //
-// Se lee del historial en vez de recibirse por parámetro: `avisarCliente` ya hace AppendModel con
-// el saludo antes de llamar al modelo, así que el dato está ahí y no hace falta cambiar la firma de
-// HandleMessage ni pasar banderas por medio proyecto. La marca es el texto fijo de la
-// presentación —"Soy *Ubi*"— que solo escribe `textoBienvenidaA`, nunca el modelo.
+// MIRA PRIMERO LA BANDERA, y esa es la corrección del 03/10. Hasta entonces solo se leía del
+// HISTORIAL DEL MODELO, lo que obligaba a meter la presentación ahí (AppendModel) para que el
+// candado la viera. Al unir la bienvenida al primer mensaje eso explotó en producción: el modelo
+// LEÍA el párrafo y lo copiaba (bienvenida duplicada a 6 clientes) y, peor, la presentación
+// desplazaba a `lastMenuText` como último turno del modelo, que es el dato con el que recuerda QUÉ
+// PREGUNTÓ — así que volvía a pedir cosas ya dichas (Jefferson 5939396 repitió "1" dos veces y
+// "Blanco" una más). El historial del modelo es su memoria de trabajo, no el registro de lo
+// enviado: lo que el código escribe por su cuenta no tiene por qué estar ahí.
+//
+// Ahora el código marca una bandera de estado al presentarse (ver bienvenidaunida.go) y el
+// historial queda limpio. Se conserva la lectura del historial como RESPALDO porque los avisos que
+// sí salen solos (`avisarCliente`) hacen AppendModel con el saludo, y esos caminos seguirían
+// necesitándolo. La marca es el texto fijo —"Soy *Ubi*"— que solo escribe `textoBienvenidaA`.
 func (a *Agent) yaSePresentoElCodigo(from string) bool {
+	if a.store.YaSePresento(from) {
+		return true
+	}
 	hist := a.store.History(from)
 	// Se mira solo el ÚLTIMO turno del modelo: si el saludo fue hace diez mensajes, el modelo
 	// puede volver a saludar con toda la razón (una conversación nueva del mismo día).

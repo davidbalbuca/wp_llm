@@ -18,6 +18,8 @@ type memStore struct {
 	seguimiento        map[string]string // enlace de seguimiento del pedido ACTIVO
 	fueraCobertura     map[string]bool   // su ubicación se verificó y cayó fuera de zona
 	sectorCubierto     map[string]string // sector que devolvió la geocerca cuando SÍ hay cobertura
+	bienvenidaPend     map[string]string // presentación por entregar DENTRO del 1er mensaje
+	yaSePresento       map[string]bool   // el código se presentó en este turno (candado del saludo)
 	data               map[string][]*genai.Content
 	locations          map[string]Location
 	accounts           map[string]Account
@@ -883,6 +885,48 @@ func (s *memStore) LimpiarSectorCubierto(phone string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.sectorCubierto, phone)
+}
+
+func (s *memStore) SetBienvenidaPendiente(phone, texto string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.bienvenidaPend == nil {
+		s.bienvenidaPend = map[string]string{}
+	}
+	s.bienvenidaPend[phone] = texto
+}
+
+func (s *memStore) BienvenidaPendiente(phone string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.bienvenidaPend[phone]
+}
+
+func (s *memStore) LimpiarBienvenidaPendiente(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.bienvenidaPend, phone)
+}
+
+func (s *memStore) MarcarYaSePresento(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.yaSePresento == nil {
+		s.yaSePresento = map[string]bool{}
+	}
+	s.yaSePresento[phone] = true
+}
+
+func (s *memStore) YaSePresento(phone string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.yaSePresento[phone]
+}
+
+func (s *memStore) LimpiarYaSePresento(phone string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.yaSePresento, phone)
 }
 
 func (s *memStore) SetSeguimientoActivo(phone, url string) {

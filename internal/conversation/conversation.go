@@ -279,9 +279,9 @@ type PendingRating struct {
 type PendingDeliveryCheck struct {
 	PedidoID    int    `json:"pedido_id"`
 	Conductor   string `json:"conductor"`
-	ModoDatos   string `json:"modo_datos"`    // "sin_tracking" | "solo_nombre" (por qué es manual)
-	PreguntarEn int64  `json:"preguntar_en"`  // unix ts en que toca preguntar (~30 min tras el pedido)
-	Preguntado  bool   `json:"preguntado"`    // ya se le preguntó y se espera respuesta Sí/No inmediata
+	ModoDatos   string `json:"modo_datos"`   // "sin_tracking" | "solo_nombre" (por qué es manual)
+	PreguntarEn int64  `json:"preguntar_en"` // unix ts en que toca preguntar (~30 min tras el pedido)
+	Preguntado  bool   `json:"preguntado"`   // ya se le preguntó y se espera respuesta Sí/No inmediata
 	// EsperaYaLlego se activa cuando el cliente respondió que AÚN no le entregan: el bot deja de
 	// esperar un Sí/No y queda a la escucha de un aviso futuro ("ya llegó"). Sin este segundo
 	// estado, un "ya llegó" posterior no tendría cómo cerrar el pedido y quedaría abierto para
@@ -627,6 +627,25 @@ type Store interface {
 	SectorCubierto(phone string) string
 	// LimpiarSectorCubierto lo olvida (ubicación nueva sin verificar, o sesión nueva).
 	LimpiarSectorCubierto(phone string)
+	// SetBienvenidaPendiente guarda la presentación del bot para que viaje DENTRO del primer
+	// mensaje del turno en vez de salir como un WhatsApp aparte (pedido del dueño, 02/10).
+	//
+	// NO se guarda en el historial del modelo A PROPÓSITO: el primer intento lo hizo con
+	// AppendModel y el modelo copió el párrafo (6 clientes con la bienvenida duplicada) además de
+	// perder su lastMenuText y volver a preguntar datos ya dados. Ver bienvenidaunida.go.
+	SetBienvenidaPendiente(phone, texto string)
+	// BienvenidaPendiente devuelve esa presentación (vacía si no hay ninguna por entregar).
+	BienvenidaPendiente(phone string) string
+	// LimpiarBienvenidaPendiente la consume: la presentación es de UN mensaje, no de cada uno.
+	LimpiarBienvenidaPendiente(phone string)
+	// MarcarYaSePresento deja constancia de que el código se presentó en ESTE turno. Es el dato
+	// que usa el candado del doble saludo, y vive aparte del historial del modelo justamente para
+	// no contaminar su memoria de trabajo.
+	MarcarYaSePresento(phone string)
+	// YaSePresento dice si el código se presentó en este turno (lo consulta el candado).
+	YaSePresento(phone string) bool
+	// LimpiarYaSePresento olvida la marca: vale para un turno, no para la conversación entera.
+	LimpiarYaSePresento(phone string)
 	// SetSeguimientoActivo guarda el enlace de seguimiento del pedido activo. Va junto al pedido
 	// y muere con él: al cancelarse o entregarse, ClearActivePedido lo borra.
 	SetSeguimientoActivo(phone, url string)

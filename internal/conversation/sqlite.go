@@ -1087,7 +1087,7 @@ func (s *sqliteStore) GetLastOrder(phone string) (LastOrder, bool) {
 
 // itemsAJSON / itemsDeJSON serializan las líneas multicolor para SQLite. Vacío <-> "" para que
 // los pedidos de un solo color no arrastren un "[]" que nadie necesita, y para que las filas
-// anteriores a C1 (items = '') se lean como lo que son: sin lista.
+// anteriores a C1 (items = ”) se lean como lo que son: sin lista.
 func itemsAJSON(items []ItemPedido) string {
 	if len(items) == 0 {
 		return ""
@@ -1635,6 +1635,49 @@ func (s *sqliteStore) SectorCubierto(phone string) string {
 
 func (s *sqliteStore) LimpiarSectorCubierto(phone string) {
 	sectorCubiertoMem.Delete(phone)
+}
+
+// La bienvenida pendiente y la marca de "ya se presentó" viven EN MEMORIA, como el sector
+// cubierto: duran un solo turno (se ponen y se consumen en el mismo mensaje entrante). Si el
+// proceso se reinicia justo en medio, lo que se pierde es un saludo, no un pedido — y al siguiente
+// mensaje el cliente ya está "a media conversación", así que tampoco le correspondería.
+var (
+	bienvenidaPendMem sync.Map // phone -> texto de la presentación por entregar
+	yaSePresentoMem   sync.Map // phone -> el código se presentó en este turno
+)
+
+func (s *sqliteStore) SetBienvenidaPendiente(phone, texto string) {
+	bienvenidaPendMem.Store(phone, texto)
+}
+
+func (s *sqliteStore) BienvenidaPendiente(phone string) string {
+	if v, ok := bienvenidaPendMem.Load(phone); ok {
+		if texto, ok := v.(string); ok {
+			return texto
+		}
+	}
+	return ""
+}
+
+func (s *sqliteStore) LimpiarBienvenidaPendiente(phone string) {
+	bienvenidaPendMem.Delete(phone)
+}
+
+func (s *sqliteStore) MarcarYaSePresento(phone string) {
+	yaSePresentoMem.Store(phone, true)
+}
+
+func (s *sqliteStore) YaSePresento(phone string) bool {
+	v, ok := yaSePresentoMem.Load(phone)
+	if !ok {
+		return false
+	}
+	b, _ := v.(bool)
+	return b
+}
+
+func (s *sqliteStore) LimpiarYaSePresento(phone string) {
+	yaSePresentoMem.Delete(phone)
 }
 
 // El enlace de seguimiento vive junto al pedido activo (misma fila): así no hay forma de que

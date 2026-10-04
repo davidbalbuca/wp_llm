@@ -161,6 +161,27 @@ func avisarCliente(cfg config.Config, store conversation.Store, phone, texto str
 	return nil
 }
 
+// entregarBienvenidaPendiente es la RED DE SEGURIDAD de la presentación: si ningún mensaje del
+// turno se la llevó, sale suelta.
+//
+// Hace falta porque varios caminos del webhook terminan sin que el modelo hable (fuera de
+// cobertura, media no soportada, link de Maps ilegible, control humano) y en todos ellos la marca
+// se quedaría puesta sin entregar: el cliente NUEVO no recibiría ninguna presentación.
+//
+// Se llama con defer, así cubre también los returns intermedios. Es idempotente: si la bienvenida
+// ya viajó dentro de un mensaje, la marca está consumida y esto no hace nada.
+func entregarBienvenidaPendiente(cfg config.Config, store conversation.Store, ag *agent.Agent, phone string) {
+	texto, hay := ag.HayBienvenidaPendiente(phone)
+	if !hay {
+		return // ya viajó dentro del primer mensaje del turno: nada que hacer
+	}
+	ag.ConsumirBienvenidaPendiente(phone)
+	log.Printf("[bienvenida] %s: ningún mensaje del turno se llevó la presentación; se manda suelta", phone)
+	if err := avisarCliente(cfg, store, phone, texto); err != nil {
+		log.Printf("[bienvenida] no se pudo saludar a %s: %v", phone, err)
+	}
+}
+
 // avisarClienteMenu manda un aviso con BOTONES. Para una confirmacion es mejor que el texto
 // libre: lo que vuelve es el titulo exacto del boton, no un "si" escrito de veinte maneras que
 // haya que interpretar. Si el menu falla por lo que sea, se cae a texto plano: el aviso tiene
@@ -896,18 +917,21 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		return
 	}
 
-	// LA PRESENTACIÓN SALE AQUÍ, antes de que el modelo conteste nada.
+	// LA PRESENTACIÓN NO SE ENVÍA AQUÍ: se deja PENDIENTE y viaja dentro del primer mensaje del
+	// turno (el cuerpo del menú o el texto de la respuesta), para que el cliente reciba UN solo
+	// WhatsApp y no dos (pedido del dueño, caso 593963518172 del 02/10).
 	//
-	// Va como mensaje APARTE y no metida en la respuesta: el cliente escribió para algo concreto
-	// ("deseo pedir gas", "¿traen a mi zona?") y esa respuesta tiene que llegarle igual. Así ve
-	// primero quiénes somos y enseguida lo que vino a buscar, sin que una cosa tape a la otra.
+	// Si ningún mensaje se la lleva —hay caminos que cortan el turno sin que el modelo hable: fuera
+	// de cobertura, media no soportada, link de Maps ilegible— la red de seguridad del defer la
+	// manda suelta. Dos mensajes son un defecto de forma; ninguno es perder al que llega por
+	// primera vez. Ver internal/agent/bienvenidaunida.go.
 	//
 	// Después del control humano a propósito: si un humano tomó el chat, el bot no habla.
 	if haySaludo {
-		if err := avisarCliente(cfg, store, inc.From, saludoInicial); err != nil {
-			// Que no salga el saludo no puede cortar la conversación: se sigue con el pedido.
-			log.Printf("[bienvenida] no se pudo saludar a %s: %v", inc.From, err)
-		}
+		ag.DejarBienvenidaPendiente(inc.From, saludoInicial)
+		// La red de seguridad corre AL SALIR del handler, así cubre también los returns
+		// intermedios: ningún camino puede dejar a un cliente nuevo sin presentación.
+		defer entregarBienvenidaPendiente(cfg, store, ag, inc.From)
 	}
 
 	// Determina el texto a procesar por la IA.
