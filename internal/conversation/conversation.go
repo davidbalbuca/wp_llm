@@ -627,13 +627,6 @@ type Store interface {
 	SectorCubierto(phone string) string
 	// LimpiarSectorCubierto lo olvida (ubicación nueva sin verificar, o sesión nueva).
 	LimpiarSectorCubierto(phone string)
-	// SetBienvenidaPendiente guarda la presentación del bot para que viaje DENTRO del primer
-	// mensaje del turno en vez de salir como un WhatsApp aparte (pedido del dueño, 02/10).
-	SetBienvenidaPendiente(phone, texto string)
-	// BienvenidaPendiente devuelve esa presentación (vacía si no hay ninguna por entregar).
-	BienvenidaPendiente(phone string) string
-	// LimpiarBienvenidaPendiente la consume: la presentación es de UN mensaje, no de cada uno.
-	LimpiarBienvenidaPendiente(phone string)
 	// SetSeguimientoActivo guarda el enlace de seguimiento del pedido activo. Va junto al pedido
 	// y muere con él: al cancelarse o entregarse, ClearActivePedido lo borra.
 	SetSeguimientoActivo(phone, url string)

@@ -1637,29 +1637,6 @@ func (s *sqliteStore) LimpiarSectorCubierto(phone string) {
 	sectorCubiertoMem.Delete(phone)
 }
 
-// La bienvenida pendiente vive EN MEMORIA, como el sector cubierto: dura un solo turno (se pone
-// y se consume en el mismo mensaje entrante). Si el proceso se reinicia justo en medio, lo que se
-// pierde es un saludo, no un pedido — y al siguiente mensaje el cliente ya está "a media
-// conversación", así que tampoco le correspondería.
-var bienvenidaPendienteMem sync.Map // phone -> texto de la presentación
-
-func (s *sqliteStore) SetBienvenidaPendiente(phone, texto string) {
-	bienvenidaPendienteMem.Store(phone, texto)
-}
-
-func (s *sqliteStore) BienvenidaPendiente(phone string) string {
-	if v, ok := bienvenidaPendienteMem.Load(phone); ok {
-		if texto, ok := v.(string); ok {
-			return texto
-		}
-	}
-	return ""
-}
-
-func (s *sqliteStore) LimpiarBienvenidaPendiente(phone string) {
-	bienvenidaPendienteMem.Delete(phone)
-}
-
 // El enlace de seguimiento vive junto al pedido activo (misma fila): así no hay forma de que
 // sobreviva a su pedido. Se guarda en la tabla existente por la columna `seguimiento`, que
 // entra por el ALTER idempotente.
