@@ -29,6 +29,10 @@ type Config struct {
 	VerifyToken     string
 	Port            string
 	GraphAPIVersion string
+	// WhatsAppAPIBase es la base de la Graph API de Meta (por defecto https://graph.facebook.com).
+	// Solo se cambia para probar en local con cmd/simulador, que hace de Meta falsa: así el bot
+	// corre igual que en producción pero sus mensajes no salen a WhatsApp.
+	WhatsAppAPIBase string
 	// BackendURL es la URL base del backend GEOWARE. El bot consume {BackendURL}/georoutes/.
 	BackendURL string
 	// SeguimientoBaseURL es el dominio PÚBLICO de la página de seguimiento en vivo
@@ -114,6 +118,18 @@ type Config struct {
 	ChequeoEntrega time.Duration
 }
 
+// graphAPIBasePorDefecto es la Graph API real de Meta. Exportada vía GraphAPIBase para que quien
+// arme un Config a mano (los tests) no termine con una URL sin host.
+const graphAPIBasePorDefecto = "https://graph.facebook.com"
+
+// GraphAPIBase devuelve la base de la Graph API a usar: la configurada o, si está vacía, la real.
+func (c Config) GraphAPIBase() string {
+	if c.WhatsAppAPIBase == "" {
+		return graphAPIBasePorDefecto
+	}
+	return c.WhatsAppAPIBase
+}
+
 func required(k string) string {
 	v := os.Getenv(k)
 	if v == "" {
@@ -182,6 +198,7 @@ func Load() Config {
 		VerifyToken:          required("WEBHOOK_VERIFY_TOKEN"),
 		Port:                 optional("PORT", "3000"),
 		GraphAPIVersion:      "v21.0",
+		WhatsAppAPIBase:      strings.TrimRight(optional("WHATSAPP_API_BASE", graphAPIBasePorDefecto), "/"),
 		BackendURL:           strings.TrimRight(optional("BACKEND_URL", "http://127.0.0.1:8000"), "/"),
 		SeguimientoBaseURL:   strings.TrimRight(os.Getenv("SEGUIMIENTO_BASE_URL"), "/"),
 		ChannelSecret:        os.Getenv("BACKEND_CHANNEL_SECRET"),
