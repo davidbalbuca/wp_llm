@@ -55,6 +55,7 @@ type Notifier struct {
 	hiloErrores       int64
 	hiloSinRepartidor int64
 	hiloSondeo        int64
+	hiloPedidosApp    int64
 	// vistos cuenta fallos por motivo dentro de ventanaTope, para el anti-inundación.
 	vistos map[string]*contador
 }
@@ -205,6 +206,21 @@ func (n *Notifier) Sondeo(phone, nombre, detalle string) {
 	})
 }
 
+// AvisoPedidoApp publica un evento de un pedido HECHO DESDE LA APP (nuevo, entregado, cancelado,
+// demorado, sin repartidor) en su hilo fijo. El texto lo arma el backend (eventos_pedido.py),
+// que es quien sabe qué le pasó al pedido; aquí solo se publica.
+//
+// Existe porque los pedidos de la app no pasaban por el bot y el grupo no se enteraba de ellos
+// (dueño, 04/10). urgente = con sonido (cancelado, problema, demorado, sin repartidor).
+func (n *Notifier) AvisoPedidoApp(texto string, urgente bool) {
+	if n == nil || texto == "" {
+		return
+	}
+	go n.protegido("AvisoPedidoApp", func() {
+		n.enviar(n.hiloPedidosAppID(), html.EscapeString(texto), !urgente)
+	})
+}
+
 // Resumen manda un texto ya armado al hilo de errores (parte diaria). Silencioso.
 func (n *Notifier) Resumen(texto string) {
 	if n == nil {
@@ -333,6 +349,7 @@ const (
 	claveHiloErrores       = "#hilo-errores"
 	claveHiloSinRepartidor = "#hilo-sin-repartidor"
 	claveHiloSondeo        = "#hilo-sondeo"
+	claveHiloPedidosApp    = "#hilo-pedidos-app"
 )
 
 // hiloErroresID / hiloSinRepartidorID / hiloSondeoID son los hilos FIJOS del grupo. Se persisten
@@ -348,6 +365,10 @@ func (n *Notifier) hiloSinRepartidorID() int64 {
 
 func (n *Notifier) hiloSondeoID() int64 {
 	return n.hiloFijo(&n.hiloSondeo, claveHiloSondeo, "🕵️ Posibles sondeos", 9367192) // morado
+}
+
+func (n *Notifier) hiloPedidosAppID() int64 {
+	return n.hiloFijo(&n.hiloPedidosApp, claveHiloPedidosApp, "📱 Pedidos de la App", 7322096) // azul
 }
 
 // hiloFijo devuelve el hilo apuntado por destino, creándolo SOLO la primera vez. Orden: memoria

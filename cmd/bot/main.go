@@ -409,6 +409,28 @@ func main() {
 		go notifyOrderSearching(cfg, store, payload.PedidoID, payload.Telefono)
 	})
 
+	// Aviso al grupo de Telegram de un pedido HECHO DESDE LA APP (no pasa por el bot, así que el
+	// grupo no se enteraba). El backend arma el texto (core/georoutes_admin/eventos_pedido.py) y
+	// aquí solo se publica en el hilo "📱 Pedidos de la App".
+	mux.HandleFunc("POST /internal/aviso-pedido", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			PedidoID int    `json:"pedido_id"`
+			Texto    string `json:"texto"`
+			Urgente  bool   `json:"urgente"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Texto) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		log.Printf("[aviso-pedido] pedido %d: %.80q", payload.PedidoID, payload.Texto)
+		avisos.AvisoPedidoApp(payload.Texto, payload.Urgente)
+	})
+
 	log.Printf("Servidor escuchando en http://localhost:%s", cfg.Port)
 	// --- Web/panel: revisar y controlar conversaciones (protegido por el secreto de canal) ---
 	// Lista de chats recientes (número, último mensaje, modo bot/humano).
