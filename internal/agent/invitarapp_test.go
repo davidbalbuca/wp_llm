@@ -27,7 +27,14 @@ func TestInvitarAppUnaVezCadaTreintaDias(t *testing.T) {
 }
 
 func TestMensajeInvitarAppLlevaElLink(t *testing.T) {
-	if !strings.Contains(MensajeInvitarApp(), "https://ubi.ec") {
+	if !strings.Contains(MensajeInvitarApp(), "https://ubi.ec/app.html") {
 		t.Errorf("la invitación no lleva el link de descarga: %q", MensajeInvitarApp())
+	}
+}
+
+// La invitación da una razón para descargarla, no solo el link.
+func TestMensajeInvitarAppDaUnValor(t *testing.T) {
+	if !strings.Contains(MensajeInvitarApp(), "consumo") {
+		t.Errorf("la invitación no dice qué gana con la app: %q", MensajeInvitarApp())
 	}
 }

@@ -39,17 +39,21 @@ func MensajeGuardarContacto() string {
 // la descargue. En el saludo no, porque ahí lo que quiere es pedir y mandarlo a otro lado lo pierde.
 //
 // Y como mucho una vez cada 30 días: quien pide cada semana la vería en cada entrega y se vuelve
-// publicidad. El link es ubi.ec, que tiene los botones de Play Store y App Store.
+// publicidad.
+//
+// Lleva un VALOR concreto, no solo "descárgala": en la app ve su consumo de gas y cuándo le toca
+// pedir otra vez (pedido del dueño, 04/10). Es lo que el WhatsApp no le da.
 
-// LinkApp es la página con los enlaces de descarga de la app (Android y iPhone).
-const LinkApp = "https://ubi.ec"
+// LinkApp es la página de DESCARGA de la app (botones de Google Play y App Store).
+const LinkApp = "https://ubi.ec/app.html"
 
 // intervaloInvitacionApp es lo mínimo que pasa entre dos invitaciones al mismo cliente.
 const intervaloInvitacionApp = 30 * 24 * time.Hour
 
 // MensajeInvitarApp es la línea que va dentro del aviso de entrega.
 func MensajeInvitarApp() string {
-	return "📲 ¿Sabías que también puedes pedir desde nuestra app? Descárgala aquí 👉 " + LinkApp
+	return "📲 ¿Sabías que en nuestra app puedes ver tu consumo de gas y saber cuándo te toca " +
+		"pedir otra vez? Descárgala gratis 👉 " + LinkApp
 }
 
 // TocaInvitarApp dice si a este cliente le corresponde la invitación en esta entrega.
