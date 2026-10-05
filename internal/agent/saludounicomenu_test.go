@@ -20,7 +20,7 @@ func TestLimpiarSaludoDelCuerpoDeMenuCasoReal(t *testing.T) {
 	from := "593995446872"
 
 	// Paso 1: el código se presenta (bienvenida.go). Se guarda como turno "model" en el historial.
-	bienvenida := "¡Buenos días, tyty! 👋 ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu gas aquísito no más! 🔥\n\nTe conecto con el repartidor de gas más cercano a ti, en minutos."
+	bienvenida := "¡Buenos días, tyty! 👋 ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu repartidor aquísito no más! 🔥\n\nTe conecto con el repartidor de gas más cercano a ti, en minutos."
 	store.AppendModel(from, bienvenida)
 
 	// Paso 2: el modelo redacta el cuerpo del menú de color CON saludo repetido.
@@ -63,7 +63,7 @@ func TestLimpiarSaludoDelCuerpoDeMenuEraSoloSaludo(t *testing.T) {
 	ag := &Agent{store: store}
 	from := "593900000001"
 
-	bienvenida := "¡Hola, David! 👋 ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu gas aquísito no más! 🔥\n\nTe conecto con el repartidor..."
+	bienvenida := "¡Hola, David! 👋 ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu repartidor aquísito no más! 🔥\n\nTe conecto con el repartidor..."
 	store.AppendModel(from, bienvenida)
 
 	// El modelo SOLO saludó en el cuerpo del menú, sin pregunta.

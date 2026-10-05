@@ -18,18 +18,18 @@ func TestBienvenidaViajaEnElCuerpoDelMenu(t *testing.T) {
 		return nil
 	}}
 
-	ag.DejarBienvenidaPendiente(from, "¡Buenas tardes, Leandro! 👋 ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu gas aquísito no más! 🔥\n\nTe conecto con el repartidor más cercano.")
+	ag.DejarBienvenidaPendiente(from, "¡Buenas tardes, Leandro! 👋 ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu repartidor aquísito no más! 🔥\n\nTe conecto con el repartidor más cercano.")
 	if err := ag.mandarMenu(from, "¿Qué cilindro de 15kg necesitas?", []string{"Blanco", "Amarillo"}); err != nil {
 		t.Fatalf("mandarMenu: %v", err)
 	}
 
-	if !strings.Contains(cuerpoEnviado, "*UbiGas*, tu gas aquísito") {
+	if !strings.Contains(cuerpoEnviado, "*UbiGas*, tu repartidor aquísito") {
 		t.Errorf("la presentación NO viajó en el cuerpo del menú:\n%q", cuerpoEnviado)
 	}
 	if !strings.Contains(cuerpoEnviado, "¿Qué cilindro de 15kg necesitas?") {
 		t.Errorf("se perdió la pregunta del menú:\n%q", cuerpoEnviado)
 	}
-	if strings.Index(cuerpoEnviado, "*UbiGas*, tu gas aquísito") > strings.Index(cuerpoEnviado, "¿Qué cilindro") {
+	if strings.Index(cuerpoEnviado, "*UbiGas*, tu repartidor aquísito") > strings.Index(cuerpoEnviado, "¿Qué cilindro") {
 		t.Errorf("la presentación va ANTES de la pregunta:\n%q", cuerpoEnviado)
 	}
 	if _, hay := ag.HayBienvenidaPendiente(from); hay {
@@ -51,7 +51,7 @@ func TestElModeloNoVeLaPresentacionEnSuHistorial(t *testing.T) {
 	ag := &Agent{store: store}
 	from := "593997600001"
 
-	ag.DejarBienvenidaPendiente(from, "¡Buenas tardes, JULIO! 👋 ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu gas aquísito no más! 🔥\n\nTe conecto con el repartidor más cercano.")
+	ag.DejarBienvenidaPendiente(from, "¡Buenas tardes, JULIO! 👋 ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu repartidor aquísito no más! 🔥\n\nTe conecto con el repartidor más cercano.")
 
 	for _, c := range store.History(from) {
 		if c == nil {
@@ -77,7 +77,7 @@ func TestTrasElMenuElUltimoTurnoDelModeloEsLaPregunta(t *testing.T) {
 	from := "593939600002"
 	ag := &Agent{store: store, enviarMenu: func(_, _ string, _ []string) error { return nil }}
 
-	ag.DejarBienvenidaPendiente(from, "¡Buenas tardes, Jefferson! 👋 ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu gas aquísito no más! 🔥\n\nTe conecto con el repartidor.")
+	ag.DejarBienvenidaPendiente(from, "¡Buenas tardes, Jefferson! 👋 ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu repartidor aquísito no más! 🔥\n\nTe conecto con el repartidor.")
 
 	// Simula el cierre de un turno que acabó en menú (lo que hace HandleMessage).
 	t2 := &turno{}
@@ -113,7 +113,7 @@ func TestElCandadoDelDobleSaludoVeLaBandera(t *testing.T) {
 	ag := &Agent{store: store}
 	from := "593900600003"
 
-	ag.DejarBienvenidaPendiente(from, "¡Hola, Ana! 👋 ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu gas aquísito no más! 🔥\n\nTe conecto con el repartidor.")
+	ag.DejarBienvenidaPendiente(from, "¡Hola, Ana! 👋 ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu repartidor aquísito no más! 🔥\n\nTe conecto con el repartidor.")
 	if !ag.yaSePresentoElCodigo(from) {
 		t.Fatal("el candado no ve la presentación: el modelo saludaría otra vez")
 	}
@@ -133,7 +133,7 @@ func TestUnSoloMensajeConUnSoloSaludo(t *testing.T) {
 		return nil
 	}}
 
-	ag.DejarBienvenidaPendiente(from, "¡Buenas tardes, Leandro! 👋 ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu gas aquísito no más! 🔥\n\nTe conecto con el repartidor más cercano.")
+	ag.DejarBienvenidaPendiente(from, "¡Buenas tardes, Leandro! 👋 ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu repartidor aquísito no más! 🔥\n\nTe conecto con el repartidor más cercano.")
 	cuerpo := ag.limpiarSaludoDelCuerpoDeMenu(from, "📋 ¡Hola, Leandro! 👋 Con gusto te ayudo. ¿Qué color necesitas?")
 	if err := ag.mandarMenu(from, cuerpo, []string{"Blanco", "Amarillo"}); err != nil {
 		t.Fatalf("mandarMenu: %v", err)
@@ -145,7 +145,7 @@ func TestUnSoloMensajeConUnSoloSaludo(t *testing.T) {
 	if strings.Contains(cuerpoEnviado, "¡Hola, Leandro!") {
 		t.Errorf("sobrevivió el saludo del modelo:\n%q", cuerpoEnviado)
 	}
-	if !strings.Contains(cuerpoEnviado, "*UbiGas*, tu gas aquísito") || !strings.Contains(cuerpoEnviado, "¿Qué color necesitas?") {
+	if !strings.Contains(cuerpoEnviado, "*UbiGas*, tu repartidor aquísito") || !strings.Contains(cuerpoEnviado, "¿Qué color necesitas?") {
 		t.Errorf("el mensaje único perdió la presentación o la pregunta:\n%q", cuerpoEnviado)
 	}
 }
@@ -156,10 +156,10 @@ func TestBienvenidaViajaEnElTextoDeLaRespuesta(t *testing.T) {
 	ag := &Agent{store: store}
 	from := "593900600004"
 
-	ag.DejarBienvenidaPendiente(from, "¡Hola! 👋 ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu gas aquísito no más! 🔥\n\nTe conecto con el repartidor más cercano.")
+	ag.DejarBienvenidaPendiente(from, "¡Hola! 👋 ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu repartidor aquísito no más! 🔥\n\nTe conecto con el repartidor más cercano.")
 	salida := ag.conBienvenida(from, "El cilindro de 15KG cuesta $3.25 😊")
 
-	if !strings.Contains(salida, "*UbiGas*, tu gas aquísito") || !strings.Contains(salida, "$3.25") {
+	if !strings.Contains(salida, "*UbiGas*, tu repartidor aquísito") || !strings.Contains(salida, "$3.25") {
 		t.Errorf("el mensaje único perdió la presentación o la respuesta:\n%q", salida)
 	}
 }
@@ -180,14 +180,14 @@ func TestLaPresentacionSeEntregaUnaSolaVez(t *testing.T) {
 	ag := &Agent{store: store}
 	from := "593900600006"
 
-	ag.DejarBienvenidaPendiente(from, "¡Hola! 👋 ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu gas aquísito no más! 🔥\n\nTe conecto con el repartidor.")
+	ag.DejarBienvenidaPendiente(from, "¡Hola! 👋 ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu repartidor aquísito no más! 🔥\n\nTe conecto con el repartidor.")
 	primero := ag.conBienvenida(from, "¿Qué color necesitas?")
 	segundo := ag.conBienvenida(from, "¿Cuántos cilindros?")
 
-	if !strings.Contains(primero, "*UbiGas*, tu gas aquísito") {
+	if !strings.Contains(primero, "*UbiGas*, tu repartidor aquísito") {
 		t.Errorf("el primer mensaje debía llevarla:\n%q", primero)
 	}
-	if strings.Contains(segundo, "*UbiGas*, tu gas aquísito") {
+	if strings.Contains(segundo, "*UbiGas*, tu repartidor aquísito") {
 		t.Errorf("el segundo mensaje la repite:\n%q", segundo)
 	}
 }
@@ -199,7 +199,7 @@ func TestLaAuditoriaRegistraLaPresentacion(t *testing.T) {
 	ag := &Agent{store: store}
 	from := "593900600007"
 
-	ag.DejarBienvenidaPendiente(from, "¡Hola! 👋 ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu gas aquísito no más! 🔥\n\nTe conecto con el repartidor.")
+	ag.DejarBienvenidaPendiente(from, "¡Hola! 👋 ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu repartidor aquísito no más! 🔥\n\nTe conecto con el repartidor.")
 	ag.conBienvenida(from, "¿Qué color necesitas?")
 
 	visto := false
