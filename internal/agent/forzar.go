@@ -429,9 +429,17 @@ func coloresEnTexto(products []georoutes.Product, texto string) []string {
 	for _, prod := range products {
 		for _, col := range prod.Colores {
 			clave := normalizar(col.Nombre)
-			if pos, ok := posiciones[clave]; ok && !vistos[clave] {
-				vistos[clave] = true
-				hallados = append(hallados, hallazgo{col.Nombre, pos})
+			if vistos[clave] {
+				continue
+			}
+			// También en plural ("2 blancos", "dos azules"): la gente pide así, y sin esto el
+			// color no se anotaba y la cantidad pegada a él se perdía.
+			for _, forma := range []string{clave, clave + "s", clave + "es"} {
+				if pos, ok := posiciones[forma]; ok {
+					vistos[clave] = true
+					hallados = append(hallados, hallazgo{col.Nombre, pos})
+					break
+				}
 			}
 		}
 	}

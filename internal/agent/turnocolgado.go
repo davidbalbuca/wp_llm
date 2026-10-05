@@ -132,6 +132,12 @@ func devuelveElTurno(texto string) bool {
 	if strings.ContainsAny(texto, "?¿") {
 		return true
 	}
+	// "Compárteme tu ubicación por WhatsApp 📎" ya le pasa el turno al cliente aunque no lleve
+	// signo de pregunta. Sin esto se le pegaba "¿Me compartes tu ubicación 📎 para enviártelo?" y
+	// el cliente recibía la misma petición dos veces en un mensaje (visto en prod el 04/10).
+	if pideLaUbicacion(texto) {
+		return true
+	}
 	return esUnCierre(texto)
 }
 

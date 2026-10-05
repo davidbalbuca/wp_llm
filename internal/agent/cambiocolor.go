@@ -150,6 +150,22 @@ func (a *Agent) revisarCambioDeColorPrometido(t *turno, from, mensajeCliente, re
 		return reply
 	}
 	tiene, quiere := colores[0], colores[1]
+	// El cambio que se PROMETIÓ es el que dice la respuesta ("…se puede cambiar POR NARANJA"), no
+	// necesariamente el que pidió el cliente. El 04/10 (simulador) el cliente preguntó amarillo por
+	// blanco, el bot contestó bien "tu amarillo se puede cambiar por naranja" (configurado), y el
+	// candado lo leyó como amarillo->blanco: tapó la respuesta correcta y abrió un ticket de más.
+	if destinos := a.destinosPrometidos(reply, tiene); len(destinos) > 0 {
+		quiere = ""
+		for _, d := range destinos {
+			if ok, _ := a.cambioConfigurado(tiene, d); !ok {
+				quiere = d
+				break
+			}
+		}
+		if quiere == "" {
+			return reply // todo lo que prometió está configurado: es verdad
+		}
+	}
 	if strings.EqualFold(tiene, quiere) {
 		return reply
 	}
@@ -225,4 +241,42 @@ func unirConY(nombres []string) string {
 	default:
 		return strings.Join(nombres[:len(nombres)-1], ", ") + " y " + nombres[len(nombres)-1]
 	}
+}
+
+// destinosPrometidos devuelve los colores a los que la respuesta ofrece cambiar: los que vienen
+// detrás de "por" ("te lo cambiamos POR un naranja"). Se excluye el color que el cliente tiene.
+// Vacío si la respuesta no lo dice así; entonces manda el par del mensaje del cliente.
+func (a *Agent) destinosPrometidos(reply, tiene string) []string {
+	contexto, ok := a.catalog.Get()
+	if !ok || contexto == nil {
+		return nil
+	}
+	saltables := map[string]bool{"el": true, "la": true, "los": true, "las": true, "un": true,
+		"uno": true, "una": true, "unos": true, "unas": true, "cilindro": true, "cilindros": true,
+		"color": true, "de": true}
+	palabras := strings.Fields(normalizar(reply))
+	var out []string
+	vistos := map[string]bool{}
+	for i, w := range palabras {
+		if w != "por" {
+			continue
+		}
+		for j := i + 1; j < len(palabras) && j <= i+3; j++ {
+			if saltables[palabras[j]] {
+				continue
+			}
+			for _, prod := range contexto.Products {
+				for _, c := range prod.Colores {
+					nombre := strings.ToUpper(strings.TrimSpace(c.Nombre))
+					raiz := raizDeColor(normalizar(nombre))
+					if raiz != "" && strings.HasPrefix(palabras[j], raiz) && !strings.EqualFold(nombre, tiene) && !vistos[nombre] {
+						vistos[nombre] = true
+						out = append(out, nombre)
+					}
+				}
+			}
+			break
+		}
+	}
+	return out
 }

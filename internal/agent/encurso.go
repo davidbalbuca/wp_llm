@@ -12,6 +12,7 @@ package agent
 import (
 	"log"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"wp-llm-gas/internal/conversation"
@@ -76,7 +77,21 @@ func (a *Agent) anotarDelMensaje(from, texto string) {
 	//    Y la opción "Más de 3" del menú NO es una cantidad, aunque lleve un 3 dentro: es la
 	//    puerta para escribir un número mayor. Sin esta salida, el cliente que la toca queriendo
 	//    SEIS se queda con TRES anotados — lo contrario exacto de lo que pidió.
-	if !pareceHora && !esOpcionMasCilindros(texto) && len(strings.Fields(texto)) <= 4 {
+	//
+	//    Antes de eso, la cantidad PEGADA a su color ("quiero 1 blanco y 1 amarillo", "2 cilindros
+	//    azules") se lee aunque el mensaje sea largo: el número junto al color no es ambiguo. El
+	//    04/10 ese mensaje dejaba los dos colores sin cantidad y el bot preguntaba "¿cuántos?"
+	//    justo después de decir "ya quedó anotado".
+	pegadas := map[string]int{}
+	if !pareceHora && !esOpcionMasCilindros(texto) {
+		if contexto, ok := a.catalog.Get(); ok && contexto != nil {
+			pegadas = cantidadesPegadasAlColor(contexto.Products, texto)
+		}
+	}
+	for color, n := range pegadas {
+		p = ponerCantidad(p, color, n)
+	}
+	if len(pegadas) == 0 && !pareceHora && !esOpcionMasCilindros(texto) && len(strings.Fields(texto)) <= 4 {
 		n := primerNumero(texto)
 		if n < 1 {
 			// En palabras: "un gas blanco", "dos cilindros". Antes solo se leían dígitos, así que
@@ -304,4 +319,57 @@ func (a *Agent) horaEnMensaje(texto string) (pareceHora bool, hora string) {
 		return true, "" // "6h30" con horario 07-19: es una hora, pero no una que sirva
 	}
 	return true, h
+}
+
+// marcasDeIntercambio delatan que el cliente habla del cilindro que YA TIENE ("tengo 2 amarillos,
+// ¿me los cambian por blanco?"): esos números no son lo que pide.
+var marcasDeIntercambio = []string{"tengo", "tenia", "cambiar", "cambien", "cambian", "cambiarlo",
+	"cambiarlos", "cambio", "cambiame"}
+
+// relleno son las palabras que pueden ir entre el número y el color sin romper el par:
+// "2 cilindros de gas blanco", "1 tanque amarillo".
+var relleno = map[string]bool{"de": true, "del": true, "gas": true, "color": true, "cilindro": true,
+	"cilindros": true, "tanque": true, "tanques": true, "bombona": true, "bombonas": true}
+
+// cantidadesPegadasAlColor lee las cantidades que van JUNTO a un color del catálogo: "quiero 1
+// blanco y 1 amarillo" -> {BLANCO:1, AMARILLO:1}; "2 cilindros azules" -> {AZUL:2}. Solo mira
+// hacia atrás desde el color (es como habla la gente) y salta el relleno ("cilindros de gas").
+//
+// No lee nada si el cliente habla del cilindro que ya tiene o pregunta: ahí los números no son
+// un pedido.
+func cantidadesPegadasAlColor(products []georoutes.Product, texto string) map[string]int {
+	out := map[string]int{}
+	if strings.ContainsAny(texto, "?¿") {
+		return out
+	}
+	norm := normalizar(texto)
+	if contieneMarca(norm, marcasDeIntercambio) {
+		return out
+	}
+	nombres := map[string]string{} // forma normalizada (y plurales) -> nombre del catálogo
+	for _, prod := range products {
+		for _, col := range prod.Colores {
+			n := normalizar(col.Nombre)
+			nombres[n], nombres[n+"s"], nombres[n+"es"] = col.Nombre, col.Nombre, col.Nombre
+		}
+	}
+	palabras := strings.Fields(norm)
+	for i, w := range palabras {
+		color, esColor := nombres[w]
+		if !esColor {
+			continue
+		}
+		for j := i - 1; j >= 0 && j >= i-4; j-- {
+			if relleno[palabras[j]] {
+				continue
+			}
+			if n, err := strconv.Atoi(palabras[j]); err == nil && n >= 1 && n <= 20 {
+				out[color] = n
+			} else if n, ok := numerosEscritos[palabras[j]]; ok {
+				out[color] = n
+			}
+			break // la primera palabra que no es relleno decide: o es el número, o no hay
+		}
+	}
+	return out
 }
