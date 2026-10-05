@@ -318,6 +318,6 @@ func renderCambiosDeColor(eq georoutes.Equivalencias) string {
 		"la lista; si su color no tiene ningún cambio, pregúntale si quiere pedir del mismo color que " +
 		"tiene. NO ofrezcas vender cilindros o envases nuevos ni ninguna otra salida que no esté en " +
 		"INFORMACIÓN DEL SERVICIO. Dilo con palabras normales (\"tu amarillo te lo cambiamos por " +
-		"blanco\"), sin el símbolo ↔ y sin mencionarle "la tabla" (para el cliente es simplemente lo que hacemos). Si usas un menú, la explicación va en el CUERPO del menú. Nunca " +
+		"blanco\"), sin el símbolo ↔ y sin mencionarle \"la tabla\" (para el cliente es simplemente lo que hacemos). Si usas un menú, la explicación va en el CUERPO del menú. Nunca " +
 		"prometas un cambio que no esté en esta lista.\n"
 }
