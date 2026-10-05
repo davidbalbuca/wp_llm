@@ -3,7 +3,7 @@
 // INCIDENTE 28/09, señalado por el dueño con el caso 593999376151, y presente en 70 clientes del
 // histórico: el código se presenta y el modelo saluda otra vez a los pocos segundos.
 //
-//	07:49:48  system   "¡Hola, Chri! 👋 ¿Se te acabó el gas? 😱 ¡Tranqui, *UbiGas* está aquísito no más! 🔥  Te conecto con el repartidor…"
+//	07:49:48  system   "¡Hola, Chri! 👋 Soy *Ubi* 🔥  Te conecto con el repartidor…"
 //	07:49:56  model    "¡Hola, Chri! 👋 Con gusto te ayudo con tu pedido de gas 😊…"
 //
 // Las frases de prueba son las REALES: salen de medir las 93 aperturas que el modelo escribió justo

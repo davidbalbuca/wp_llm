@@ -103,7 +103,7 @@ func (a *Agent) empiezaConversacion(from string) bool {
 //     "UbiGas" y no "Ubi" (04/10): lleva la palabra gas, así se entiende y se guarda más rápido.
 //   - QUÉ HAGO ("te conecto con el repartidor más cercano"): explica por qué hay una espera y
 //     por qué se pide la ubicación, antes de pedirla.
-//   - EL GANCHO ("¿Se te acabó el gas? ¡Tranqui, UbiGas está aquísito no más!", elegido por el dueño): es la situación de quien escribe. Ya no se habla de
+//   - EL GANCHO ("¿Se te acabó el gas? ¡Con UbiGas, tu gas aquísito no más!", elegido por el dueño): es la situación de quien escribe. Ya no se habla de
 //     marcas (04/10): no hay marca, y el color se pregunta justo debajo con los botones.
 //
 // Corto porque es lo PRIMERO que se lee: un párrafo largo se salta entero y entonces no sirvió.
@@ -124,7 +124,7 @@ func textoBienvenidaA(nombre string, ahora time.Time) string {
 		// Solo el primer nombre: "¡Hola, David Espinoza Fajardo!" suena a carta del banco.
 		saludo = franjaDeSaludo(ahora) + ", " + primerNombre(nombre) + "! 👋"
 	}
-	return saludo + " ¿Se te acabó el gas? 😱 ¡Tranqui, *UbiGas* está aquísito no más! 🔥\n\n" +
+	return saludo + " ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu gas aquísito no más! 🔥\n\n" +
 		"Tenemos un repartidor a la vuelta de tu casa, listo para llevártelo en minutos 🚚💨"
 }
 
