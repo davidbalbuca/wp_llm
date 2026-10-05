@@ -72,16 +72,22 @@ func (a *Agent) ResponderAperturaConColores(from, texto string) (string, bool) {
 	if p, _ := a.store.GetPedidoEnCurso(from); len(p.Lineas()) > 0 {
 		return "", false
 	}
-	opciones := a.coloresDisponibles()
+	// Si ya nos compró, se le OFRECE repetir su último pedido en vez de preguntarle el color de
+	// cero (04/10). Es una pregunta con botones: nada de lo anterior se reutiliza sin que lo toque.
+	cuerpo, opciones, que := cuerpoMenuColores, a.coloresDisponibles(), "colores"
+	if last, hay := a.store.GetLastOrder(from); hay && last.Cantidad > 0 && last.Color != "" && !a.tienePedidoVivo(from) {
+		cuerpo = "👇 ¿Te envío lo mismo de la última vez: " + describeItems(last.ItemsDelPedido()) + "?"
+		opciones, que = []string{BotonRepetirPedido, BotonCambiarPedido}, "repetir"
+	}
 	if len(opciones) < 2 {
 		return "", false // sin catálogo no hay menú: que lo lleve el modelo
 	}
-	if err := a.mandarMenu(from, cuerpoMenuColores, opciones); err != nil {
-		log.Printf("[apertura] %s: el menú de colores falló (%v); lo atiende el modelo", from, err)
+	if err := a.mandarMenu(from, cuerpo, opciones); err != nil {
+		log.Printf("[apertura] %s: el menú de %s falló (%v); lo atiende el modelo", from, que, err)
 		return "", false
 	}
-	log.Printf("[apertura] %s abrió con %q: presentación + menú de colores en código", from, texto)
-	registro := cuerpoMenuColores + " [" + strings.Join(opciones, " / ") + "]"
+	log.Printf("[apertura] %s abrió con %q: presentación + menú de %s en código", from, texto, que)
+	registro := cuerpo + " [" + strings.Join(opciones, " / ") + "]"
 	// Al historial del modelo, para que entienda el "Blanco" que viene; al panel, para que se vea.
 	a.store.AppendUser(from, texto)
 	a.store.AppendModel(from, registro)

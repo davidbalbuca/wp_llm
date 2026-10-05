@@ -42,9 +42,12 @@ func (a *Agent) construirSistema(from string) (fijo, volatil string) {
 			"directamente al registrar el pedido):\n- Cédula/identificación: %s\n- Nombres: %s\n- Correo: %s\n"+
 			"Salúdalo por su nombre. Para un nuevo pedido solo necesitas: color/marca, cantidad y su ubicación de WhatsApp.",
 			perfil.Identificacion, perfil.Nombres, perfil.Correo)
+	}
 
-		// Si tiene un pedido anterior, ofrécele repetir lo mismo: es más amigable que
-		// preguntarle todo desde cero.
+	// Si tiene un pedido anterior, ofrécele repetir lo mismo: es más amigable que preguntarle todo
+	// desde cero. FUERA del bloque de la cédula (04/10): desde que el bot registra sin cédula, los
+	// clientes nuevos no la tienen, y quedaban sin esta oferta aunque ya nos hubieran comprado.
+	{
 		if last, ok := a.store.GetLastOrder(from); ok && last.Cantidad > 0 {
 			// Sin el destino: de eso habla el bloque de abajo, y repetirlo confunde al modelo.
 			resumen := describeItems(last.ItemsDelPedido())
