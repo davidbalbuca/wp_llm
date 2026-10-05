@@ -638,6 +638,12 @@ type Store interface {
 	BienvenidaPendiente(phone string) string
 	// LimpiarBienvenidaPendiente la consume: la presentación es de UN mensaje, no de cada uno.
 	LimpiarBienvenidaPendiente(phone string)
+	// MarcarInvitacionApp anota cuándo se le invitó a descargar la app (en el aviso de entrega).
+	// Durable: la invitación sale como mucho una vez cada 30 días y eso tiene que sobrevivir a un
+	// reinicio del bot, o se le repetiría al cliente en cada entrega.
+	MarcarInvitacionApp(phone string, cuando time.Time)
+	// UltimaInvitacionApp devuelve cuándo se le invitó por última vez (ok=false si nunca).
+	UltimaInvitacionApp(phone string) (time.Time, bool)
 	// MarcarYaSePresento deja constancia de que el código se presentó en ESTE turno. Es el dato
 	// que usa el candado del doble saludo, y vive aparte del historial del modelo justamente para
 	// no contaminar su memoria de trabajo.

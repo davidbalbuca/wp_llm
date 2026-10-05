@@ -324,6 +324,12 @@ CREATE TABLE IF NOT EXISTS eligiendo_hora (
     created_at INTEGER NOT NULL
 );
 
+-- Cuándo se le invitó por última vez a descargar la app (aviso de entrega, máx. 1 cada 30 días).
+CREATE TABLE IF NOT EXISTS invitacion_app (
+    phone      TEXT PRIMARY KEY,
+    enviada_en INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS tarjeta_estado (
     phone      TEXT    PRIMARY KEY,
     message_id INTEGER NOT NULL DEFAULT 0,
@@ -1355,6 +1361,29 @@ func (s *sqliteStore) ClearTarjetaEstado(phone string) {
 	if _, err := s.db.Exec(`DELETE FROM tarjeta_estado WHERE phone = ?`, phone); err != nil {
 		log.Printf("[sqlite] ClearTarjetaEstado %s: %v", phone, err)
 	}
+}
+
+// --- Invitación a la app ---
+
+func (s *sqliteStore) MarcarInvitacionApp(phone string, cuando time.Time) {
+	if _, err := s.db.Exec(`
+        INSERT INTO invitacion_app(phone, enviada_en) VALUES(?, ?)
+        ON CONFLICT(phone) DO UPDATE SET enviada_en=excluded.enviada_en`,
+		phone, cuando.Unix()); err != nil {
+		log.Printf("[sqlite] MarcarInvitacionApp %s: %v", phone, err)
+	}
+}
+
+func (s *sqliteStore) UltimaInvitacionApp(phone string) (time.Time, bool) {
+	var unix int64
+	err := s.db.QueryRow(`SELECT enviada_en FROM invitacion_app WHERE phone = ?`, phone).Scan(&unix)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("[sqlite] UltimaInvitacionApp %s: %v", phone, err)
+		}
+		return time.Time{}, false
+	}
+	return time.Unix(unix, 0), true
 }
 
 // --- Menú de horas para programar ---

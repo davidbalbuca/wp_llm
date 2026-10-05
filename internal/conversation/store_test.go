@@ -212,3 +212,24 @@ func TestSinNingunNombreDevuelveVacio(t *testing.T) {
 		t.Errorf("se inventó un nombre para un cliente desconocido: %q", n)
 	}
 }
+
+// La invitación a la app tiene que sobrevivir a un reinicio (SQLite), o se repetiría en cada entrega.
+func TestInvitacionAppDurable(t *testing.T) {
+	path := t.TempDir() + "/bot.db"
+	s1, err := NewSQLiteStore(path, 15)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, hubo := s1.UltimaInvitacionApp("593900800002"); hubo {
+		t.Fatal("un cliente nuevo no tiene invitación")
+	}
+	cuando := time.Unix(1791200000, 0)
+	s1.MarcarInvitacionApp("593900800002", cuando)
+	s2, err := NewSQLiteStore(path, 15)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, hubo := s2.UltimaInvitacionApp("593900800002"); !hubo || !got.Equal(cuando) {
+		t.Errorf("tras reabrir la base: %v %v", got, hubo)
+	}
+}

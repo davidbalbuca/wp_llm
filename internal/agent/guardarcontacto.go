@@ -14,6 +14,12 @@
 // teléfono o pidiéndole a otro.
 package agent
 
+import (
+	"time"
+
+	"wp-llm-gas/internal/conversation"
+)
+
 // MensajeGuardarContacto es la invitación que va pegada al agradecimiento final.
 //
 // Corto a propósito: llega cuando la conversación ya terminó, así que un párrafo largo se lee
@@ -24,4 +30,30 @@ package agent
 func MensajeGuardarContacto() string {
 	return "📇 Guárdanos como *UbiGas* en tus contactos: así nos encuentras rapidito la próxima vez " +
 		"que necesites gas y te conectamos con el repartidor más cercano 😉"
+}
+
+// INVITACIÓN A LA APP (pedido del dueño, 04/10): "comenzar a pedir al cliente que también se baje
+// la app, porque por ahí también puede hacer el pedido".
+//
+// Solo en el aviso de ENTREGA: ya tiene su gas y está contento, que es cuando más probable es que
+// la descargue. En el saludo no, porque ahí lo que quiere es pedir y mandarlo a otro lado lo pierde.
+//
+// Y como mucho una vez cada 30 días: quien pide cada semana la vería en cada entrega y se vuelve
+// publicidad. El link es ubi.ec, que tiene los botones de Play Store y App Store.
+
+// LinkApp es la página con los enlaces de descarga de la app (Android y iPhone).
+const LinkApp = "https://ubi.ec"
+
+// intervaloInvitacionApp es lo mínimo que pasa entre dos invitaciones al mismo cliente.
+const intervaloInvitacionApp = 30 * 24 * time.Hour
+
+// MensajeInvitarApp es la línea que va dentro del aviso de entrega.
+func MensajeInvitarApp() string {
+	return "📲 ¿Sabías que también puedes pedir desde nuestra app? Descárgala aquí 👉 " + LinkApp
+}
+
+// TocaInvitarApp dice si a este cliente le corresponde la invitación en esta entrega.
+func TocaInvitarApp(store conversation.Store, phone string, ahora time.Time) bool {
+	ultima, hubo := store.UltimaInvitacionApp(phone)
+	return !hubo || ahora.Sub(ultima) >= intervaloInvitacionApp
 }

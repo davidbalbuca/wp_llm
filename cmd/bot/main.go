@@ -1330,6 +1330,12 @@ func notifyOrderFinished(cfg config.Config, store conversation.Store, pedidoID i
 	// Va ANTES de la pregunta y no después: lo último que se lee tiene que ser aquello para lo
 	// que están los botones, o el cliente se queda mirando unas estrellas sin saber qué contestan.
 	msg += agent.MensajeGuardarContacto() + "\n\n"
+	// La invitación a la app, como mucho una vez cada 30 días (ver agent.MensajeInvitarApp). Va con
+	// lo de guardar el contacto: las dos son "cómo encontrarnos la próxima vez".
+	invitaApp := agent.TocaInvitarApp(store, phone, time.Now())
+	if invitaApp {
+		msg += agent.MensajeInvitarApp() + "\n\n"
+	}
 	if conductor != "" {
 		msg += fmt.Sprintf("¿Cómo calificarías a tu repartidor %s?", conductor)
 	} else {
@@ -1342,6 +1348,11 @@ func notifyOrderFinished(cfg config.Config, store conversation.Store, pedidoID i
 	if err := avisarClienteMenu(cfg, store, phone, msg, agent.BotonesCalificacion(), respaldo); err != nil {
 		reportarFallo(cfg, store, phone, "No se pudo avisar la ENTREGA ni pedir la calificación",
 			fmt.Sprintf("Pedido #%d. El mensaje no salió: %v", pedidoID, err))
+		return
+	}
+	// Se anota solo si el aviso salió: si no llegó, la invitación tampoco.
+	if invitaApp {
+		store.MarcarInvitacionApp(phone, time.Now())
 	}
 }
 
