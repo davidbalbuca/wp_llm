@@ -499,6 +499,9 @@ func main() {
 		salida := map[string]any{}
 		_, tieneCuenta := store.GetAccount(phone)
 		salida["tiene_cuenta"] = tieneCuenta
+		// El nombre con el que se va a crear el pedido (vacío si su WhatsApp no dice un nombre):
+		// el panel lo muestra para que el operador lo confirme o lo corrija.
+		salida["nombre"] = conversation.NombreUsable(store, phone)
 		if loc, ok := store.GetLocation(phone); ok {
 			salida["latitude"] = loc.Latitude
 			salida["longitude"] = loc.Longitude

@@ -39,9 +39,9 @@ type PedidoDeOperador struct {
 	IDConductor int
 	// Operador es quién lo creó; queda guardado en el pedido.
 	Operador string
-	// Identificacion y Nombres: los completa el operador en el formulario cuando el cliente
-	// todavia no tiene cuenta. Pasa siempre en los chats que atiende una persona, porque ahi el
-	// bot nunca corre el registro: el equipo le pide la cedula por el chat para facturar.
+	// Identificacion y Nombres: los escribe el operador en el formulario. Los dos son opcionales:
+	// sin cédula el cliente se registra por su WhatsApp, y sin nombre se usa el que dio en el
+	// chat o el de su perfil si sirve. El nombre escrito corrige el del perfil ("@sd2").
 	Identificacion string
 	Nombres        string
 	// MaxHoras es la ventana que el panel ya validó. En cero se usa la que diga el backend.
@@ -68,18 +68,29 @@ func (a *Agent) CrearPedidoDeOperador(p PedidoDeOperador) ResultadoPedidoOperado
 		return noSePudo("faltan el teléfono o los productos")
 	}
 
-	// Datos del cliente. Un cliente sin cuenta (el bot solo guarda el perfil cuando un pedido
-	// sale bien) no se puede pedir: no hay a nombre de quién. Decisión de David: en esos casos
-	// el operador NO completa los datos personales desde el panel.
+	// Datos del cliente. La cédula es opcional desde el 04/10: el cliente se registra por su
+	// número de WhatsApp. El nombre es el que escribió el operador en el formulario y, si no
+	// escribió nada, el que dio el cliente en el chat o el de su WhatsApp si sirve (05/10).
+	// Si dejó el nombre que venía prellenado, no se re-valida: el de un registro con cédula se
+	// usa tal cual aunque no pase el filtro de nombres (así lo hace NombreUsable).
+	usable := conversation.NombreUsable(a.store, from)
+	escrito := ""
+	if dado := strings.TrimSpace(p.Nombres); dado != "" && dado != usable {
+		if escrito = conversation.NombreSiSirve(dado); escrito == "" {
+			return noSePudo("el nombre escrito no parece un nombre (sin números ni símbolos): corrígelo")
+		}
+	}
+	nombres := escrito
+	if nombres == "" {
+		nombres = usable
+	}
 	account, hayCuenta := a.store.GetAccount(from)
 	if !hayCuenta {
-		// Sin cuenta se crea con lo que el operador escribio, por el MISMO camino que el pedido
-		// del bot (get-or-create en el backend: si ya existe, no lo duplica).
+		// Sin cuenta se crea por el MISMO camino que el pedido del bot (get-or-create en el
+		// backend: si ya existe, no lo duplica).
 		identificacion := strings.TrimSpace(p.Identificacion)
-		// Cédula opcional (04/10). El nombre: el que dio, o el de su WhatsApp si sirve (05/10).
-		nombres := conversation.NombreUsable(a.store, from)
 		if nombres == "" {
-			return noSePudo("este cliente no tiene un nombre válido (su WhatsApp no dice un nombre): pídeselo por el chat")
+			return noSePudo("falta el nombre del cliente: escríbelo en el formulario (su WhatsApp no muestra un nombre)")
 		}
 		nueva, err := a.gr.WppGetOrCreateClient(identificacion, nombres, from)
 		if err != nil {
@@ -88,7 +99,24 @@ func (a *Agent) CrearPedidoDeOperador(p PedidoDeOperador) ResultadoPedidoOperado
 		}
 		account = conversation.Account{Username: nueva.Username, Password: nueva.Password}
 		a.store.SetAccount(from, account)
-		a.store.SetProfile(from, conversation.Profile{Identificacion: identificacion, Nombres: nombres})
+		perfil, _ := a.store.GetProfile(from)
+		perfil.Identificacion, perfil.Nombres = identificacion, nombres
+		a.store.SetProfile(from, perfil)
+	} else if escrito != "" && escrito != usable {
+		// Ya tenía cuenta y el operador corrigió el nombre (el de su perfil era "@sd2" o similar).
+		// Es un extra: si falla, el pedido sigue con la cuenta de siempre. El backend solo lo
+		// cambia en clientes sin cédula; el de un cliente registrado con cédula no se toca.
+		if nueva, err := a.gr.WppActualizarNombre(escrito, from); err == nil && nueva != nil {
+			account = conversation.Account{Username: nueva.Username, Password: nueva.Password}
+			a.store.SetAccount(from, account)
+			perfil, _ := a.store.GetProfile(from)
+			if strings.TrimSpace(perfil.Identificacion) == "" {
+				perfil.Nombres = escrito
+				a.store.SetProfile(from, perfil)
+			}
+		} else if err != nil {
+			log.Printf("[pedido-operador] %s no se pudo actualizar el nombre: %v", from, err)
+		}
 	}
 	loc, hayUbicacion := a.store.GetLocation(from)
 	if !hayUbicacion {
