@@ -6,6 +6,7 @@ package agent
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"wp-llm-gas/internal/catalog"
 	"wp-llm-gas/internal/georoutes"
@@ -199,6 +200,7 @@ func renderServiceInfo(contexto *catalog.Context, disponible bool) string {
 	}
 
 	texto.WriteString(renderCobertura(contexto.Zonas))
+	texto.WriteString(renderCambiosDeColor(contexto.Equivalencias))
 
 	texto.WriteString("\nPara concretar un pedido necesitas del cliente: el color/marca deseado, la cantidad y " +
 		"su ubicación de WhatsApp (📎 → Ubicación). NO pidas cédula ni correo (no se necesitan); " +
@@ -273,4 +275,49 @@ func yaEstabaCancelado(mensaje string) bool {
 		strings.Contains(m, "ya estaba cancelado") ||
 		strings.Contains(m, "fue entregado") ||
 		strings.Contains(m, "no existe")
+}
+
+// renderCambiosDeColor le da al modelo la tabla de cambios de color del negocio (la misma que se
+// edita en el panel, GET /getColorEquivalences/), con la regla de cómo responder.
+//
+// Antes el modelo no la veía: solo el candado de cambiocolor.go corregía DESPUÉS una promesa falsa.
+// El 04/10 un cliente preguntó "tengo amarillo pero quiero cambiarlo por blanco, ¿se puede?" y el
+// modelo habría tenido que adivinar, aunque BLANCO↔AMARILLO estaba configurado. El candado se
+// queda como red de seguridad.
+//
+// Los pares se ordenan: el texto entra en la parte CACHEADA del prompt, y un orden distinto entre
+// llamadas la invalidaría.
+func renderCambiosDeColor(eq georoutes.Equivalencias) string {
+	var pares []string
+	vistos := map[string]bool{}
+	for _, p := range eq.Pares {
+		a, b := strings.ToUpper(strings.TrimSpace(p.ColorA)), strings.ToUpper(strings.TrimSpace(p.ColorB))
+		if a == "" || b == "" || a == b {
+			continue
+		}
+		if a > b {
+			a, b = b, a
+		}
+		if par := a + " ↔ " + b; !vistos[par] {
+			vistos[par] = true
+			pares = append(pares, par)
+		}
+	}
+	sort.Strings(pares)
+	if len(pares) == 0 {
+		return "\nCAMBIO DE COLOR DE CILINDRO: no hay datos de qué cambios se hacen. Si el cliente " +
+			"pregunta si le cambian su cilindro de un color por otro, NO lo afirmes ni lo niegues: " +
+			"dile que lo confirmas con el equipo y deriva con escalar_al_dueno.\n"
+	}
+	return "\nCAMBIO DE COLOR DE CILINDRO (tabla del negocio, vale en AMBOS sentidos): " +
+		strings.Join(pares, ", ") + ".\n" +
+		"Si el cliente pregunta si puede entregar su cilindro de un color y recibir otro (\"tengo " +
+		"amarillo, ¿me lo cambian por blanco?\"): si el par ESTÁ en esta lista, dile que SÍ, al mismo " +
+		"precio de siempre, y sigue con el pedido del color que quiere. Si NO está, dile con amabilidad " +
+		"que ese cambio no lo hacemos y ofrécele SOLO los colores por los que sí se cambia el suyo según " +
+		"la lista; si su color no tiene ningún cambio, pregúntale si quiere pedir del mismo color que " +
+		"tiene. NO ofrezcas vender cilindros o envases nuevos ni ninguna otra salida que no esté en " +
+		"INFORMACIÓN DEL SERVICIO. Dilo con palabras normales (\"tu amarillo te lo cambiamos por " +
+		"blanco\"), sin el símbolo ↔. Si usas un menú, la explicación va en el CUERPO del menú. Nunca " +
+		"prometas un cambio que no esté en esta lista.\n"
 }
