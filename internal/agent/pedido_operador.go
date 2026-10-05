@@ -76,13 +76,10 @@ func (a *Agent) CrearPedidoDeOperador(p PedidoDeOperador) ResultadoPedidoOperado
 		// Sin cuenta se crea con lo que el operador escribio, por el MISMO camino que el pedido
 		// del bot (get-or-create en el backend: si ya existe, no lo duplica).
 		identificacion := strings.TrimSpace(p.Identificacion)
-		nombres := strings.TrimSpace(p.Nombres)
-		// Cédula opcional (04/10): sin ella el backend lo registra por su teléfono.
+		// Cédula opcional (04/10). El nombre: el que dio, o el de su WhatsApp si sirve (05/10).
+		nombres := conversation.NombreUsable(a.store, from)
 		if nombres == "" {
-			nombres = conversation.NombreDe(a.store, from)
-		}
-		if nombres == "" {
-			return noSePudo("este cliente no tiene cuenta: escribe su nombre")
+			return noSePudo("este cliente no tiene un nombre válido (su WhatsApp no dice un nombre): pídeselo por el chat")
 		}
 		nueva, err := a.gr.WppGetOrCreateClient(identificacion, nombres, from)
 		if err != nil {

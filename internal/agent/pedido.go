@@ -415,6 +415,18 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 	}()
 }
 
+// PreguntaNombre es cómo se le pide el nombre al cliente cuando el de su WhatsApp no sirve
+// ("@sd2", "😀", un correo...). Dice PARA QUÉ: el repartidor lo necesita para ubicarlo. Así se
+// entiende que no es un trámite (dueño, 05/10).
+const PreguntaNombre = "¿Me ayudas con tu nombre para que el repartidor te pueda ubicar en la entrega? 😊"
+
+// instruccionPedirNombre es lo que se le devuelve al modelo cuando falta el nombre.
+func instruccionPedirNombre(que string) string {
+	return "Falta el nombre del cliente (el de su perfil de WhatsApp no sirve como nombre). " + que +
+		": pídeselo con estas palabras: \"" + PreguntaNombre + "\" (solo el nombre, ningún otro dato). " +
+		"Apenas te lo diga, vuelve a llamar a la herramienta con ese nombre."
+}
+
 func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) string {
 	// REGLA DURA de horario: fuera del horario laboral NO se registran pedidos (no hay
 	// conductores). El prompt también lo dice; esto es la garantía en código.
@@ -489,7 +501,9 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 	}
 
 	identificacion := strings.TrimSpace(str(args["identificacion"]))
-	nombres := strings.TrimSpace(str(args["nombres_completos"]))
+	// Solo cuenta si sirve como nombre: el modelo a veces repite el del perfil ("@sd2").
+	nombres := conversation.NombreSiSirve(str(args["nombres_completos"]))
+	nombreDicho := nombres // el que el cliente acaba de dar en esta conversación
 	// El telefono es el de la CONVERSACION, punto. Antes salia de lo que el modelo escribiera en
 	// el argumento y solo se caia a `from` si venia vacio: el modelo lo rellenaba con etiquetas y
 	// en produccion quedaron clientes con telefono "wa", "WhatsApp", "+593" y "+593WHATSAPP". El
@@ -504,22 +518,30 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 		if identificacion == "" {
 			identificacion = perfil.Identificacion
 		}
-		if nombres == "" {
-			nombres = perfil.Nombres
-		}
 	}
 	// La CÉDULA YA NO ES OBLIGATORIA (04/10): sin ella el backend registra al cliente por su
-	// teléfono. Se usa si la tiene (cliente viejo, o la dio para su factura). El NOMBRE, si el
-	// cliente no lo escribió, es el de su perfil de WhatsApp: lo ve el repartidor.
+	// teléfono. El NOMBRE lo ve el repartidor: el que el cliente dio, o el de su perfil de
+	// WhatsApp SI SIRVE como nombre (05/10: llegaban "@sd2", "😀", correos...).
 	if nombres == "" {
-		nombres = conversation.NombreDe(a.store, from)
+		nombres = conversation.NombreUsable(a.store, from)
 	}
 	if nombres == "" {
 		// QUE dato falta se deja anotado para quien llame desde codigo: este fallo se arregla
 		// preguntandolo, no disculpandose ni derivando (ver resultadoPedido.faltaDato y el
 		// candado del fantasma en forzar.go).
 		t.ultimoPedido = resultadoPedido{faltaDato: "nombre"}
-		return "Falta el nombre del cliente. Pídeselo (solo el nombre) antes de registrar el pedido."
+		return instruccionPedirNombre("NO se registró el pedido todavía")
+	}
+	// El cliente acaba de dar su nombre: se guarda, y si ya tenía cuenta se corrige también en el
+	// backend (ver más abajo), porque ahí quedó el de su perfil y es el que ve el repartidor.
+	nombreNuevo := false
+	if nombreDicho != "" {
+		perfil, _ := a.store.GetProfile(from)
+		if conversation.NombreSiSirve(perfil.Nombres) != nombreDicho {
+			perfil.Nombres = nombreDicho
+			a.store.SetProfile(from, perfil)
+			nombreNuevo = true
+		}
 	}
 
 	// COMPUERTA de protección de datos. Va ANTES de persistir el perfil y antes de llamar al
@@ -583,6 +605,17 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 
 	// Cuenta del bot (YA verificada, sin OTP): de la caché local, o del backend (get-or-create).
 	account, ok := a.store.GetAccount(from)
+	if ok && nombreNuevo && identificacion == "" {
+		// Ya tenía cuenta (con el nombre de su perfil): se corrige el nombre en el backend. Es un
+		// extra: si falla, el pedido sigue con la cuenta de siempre.
+		if nueva, err := a.gr.WppActualizarNombre(nombres, telefono); err == nil && nueva != nil {
+			account = conversation.Account{Username: nueva.Username, Password: nueva.Password}
+			a.store.SetAccount(from, account)
+			log.Printf("[nombre] %s: nombre actualizado en el backend (%s)", from, nombres)
+		} else if err != nil {
+			log.Printf("[nombre] %s: no se pudo actualizar el nombre en el backend: %v", from, err)
+		}
+	}
 	if !ok {
 		nueva, err := a.gr.WppGetOrCreateClient(identificacion, nombres, telefono)
 		if err != nil {

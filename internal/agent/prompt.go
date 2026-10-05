@@ -27,12 +27,16 @@ func (a *Agent) construirSistema(from string) (fijo, volatil string) {
 	// mientras no esté registrado. Sin esto el modelo lo deducía del texto: el 10/09 Guillermo
 	// Pacheco escribió "Brito por favor 2 cilindros a la iglesia" y el bot lo saludó "¡Hola,
 	// Brito!" tres veces seguidas, con su nombre real llegando en el mismo mensaje.
-	if perfil, ok := a.store.GetProfile(from); ok && perfil.PerfilWhatsApp != "" {
-		fmt.Fprintf(&b, "\n\nNOMBRE DEL CLIENTE EN WHATSAPP: %s. Es el que él mismo puso en su "+
-			"perfil. Si lo saludas por su nombre, usa ESTE (o el nombre con el que se presente "+
-			"explícitamente). NUNCA deduzcas su nombre de otras palabras del mensaje: lo que "+
-			"escribe suele ser el pedido, un lugar o para quién es, no cómo se llama.",
-			perfil.PerfilWhatsApp)
+	if nombre := conversation.NombreUsable(a.store, from); nombre != "" {
+		fmt.Fprintf(&b, "\n\nNOMBRE DEL CLIENTE: %s. Si lo saludas por su nombre, usa ESTE (o el "+
+			"nombre con el que se presente explícitamente). NUNCA deduzcas su nombre de otras "+
+			"palabras del mensaje: lo que escribe suele ser el pedido, un lugar o para quién es, no "+
+			"cómo se llama.", nombre)
+	} else if perfil, ok := a.store.GetProfile(from); ok && strings.TrimSpace(perfil.PerfilWhatsApp) != "" {
+		// El perfil dice algo que no es un nombre ("@sd2", "😀"...): no se usa ni para saludar.
+		fmt.Fprintf(&b, "\n\nNOMBRE DEL CLIENTE: no lo sabemos (su perfil de WhatsApp dice %q, que no es "+
+			"un nombre: NO lo uses ni lo repitas). Salúdalo sin nombre. Al registrar el pedido el "+
+			"sistema te pedirá preguntárselo.", perfil.PerfilWhatsApp)
 	}
 
 	// Si ya conocemos al cliente (pidió antes), inyectamos sus datos para que el bot NO se

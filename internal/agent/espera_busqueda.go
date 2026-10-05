@@ -331,18 +331,13 @@ func mensajeAsignado(a *Agent, w conversation.PendingWait, res *georoutes.OrderR
 		b.WriteString(fmt.Sprintf("📦 %d x %s\n", l.Cantidad, nombre))
 	}
 
-	if res.ConductorAsignado != "" {
-		b.WriteString("🚚 Repartidor: " + res.ConductorAsignado)
-		// La placa solo si el backend la envió (conductor verificado: modos 'normal'/'sin_tracking').
-		if res.Placa != "" {
-			b.WriteString(" (placa " + res.Placa + ")")
-		}
-		b.WriteString("\n")
-	}
-	// El enlace de seguimiento en vivo SOLO existe en modo 'normal' (hay GPS real). En
-	// 'sin_tracking' y 'solo_nombre' el backend no manda token, así que aquí no se muestra mapa.
-	if enlace := a.urlSeguimiento(res.SeguimientoToken); enlace != "" {
-		b.WriteString("\n📍 Sigue tu pedido en vivo aquí:\n" + enlace + "\n")
+	// El mismo bloque que cualquier otra asignación (asignacion.go). La placa y el enlace solo
+	// vienen si el backend los mandó (conductor verificado / con GPS real); los minutos, solo si
+	// hubo una ruta real.
+	minutos, _ := res.MinutosEntregaConMargen(a.cfg.MargenEntregaMin)
+	if bloque := MensajeRepartidor(res.ConductorAsignado, res.Placa, minutos,
+		a.urlSeguimiento(res.SeguimientoToken)); bloque != "" {
+		b.WriteString("\n" + bloque + "\n")
 	}
 	b.WriteString("\nYa va en camino. ¡Gracias por tu paciencia!")
 	return b.String()

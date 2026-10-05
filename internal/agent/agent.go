@@ -231,7 +231,7 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
 				"identificacion":    {Type: genai.TypeString, Description: "OPCIONAL. Cédula del cliente SOLO si él la dio por su cuenta (p. ej. quiere factura con sus datos). NO la pidas."},
-				"nombres_completos": {Type: genai.TypeString, Description: "OPCIONAL. Nombre del cliente si lo escribió; si no, se usa el de su WhatsApp."},
+				"nombres_completos": {Type: genai.TypeString, Description: "OPCIONAL. El nombre que el cliente te dijo. Si no lo dijo se usa el de su WhatsApp; si ese no sirve como nombre, la herramienta te pedirá preguntárselo."},
 				"color":             {Type: genai.TypeString, Description: "Color/marca del cilindro. Debe coincidir con uno de los colores de la INFORMACIÓN DEL SERVICIO. Para varios colores usa 'items' en su lugar."},
 				"cantidad":          {Type: genai.TypeInteger, Description: "Cantidad de cilindros solicitados (del color de 'color')."},
 				"items": {Type: genai.TypeArray, Description: "SOLO cuando el cliente pide MÁS DE UN color en el mismo pedido: " +
@@ -341,7 +341,7 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 				"hora":           {Type: genai.TypeString, Description: "Hora deseada en formato HH:MM (24 horas)"},
 				"dia":            {Type: genai.TypeString, Description: "'hoy' o 'manana' (si no se indica, se asume la próxima ocurrencia de esa hora)"},
 				"identificacion": {Type: genai.TypeString, Description: "OPCIONAL. Cédula solo si el cliente la dio por su cuenta. NO la pidas."},
-				"nombres":        {Type: genai.TypeString, Description: "OPCIONAL. Nombre si lo escribió; si no, se usa el de su WhatsApp."},
+				"nombres":        {Type: genai.TypeString, Description: "OPCIONAL. El nombre que el cliente te dijo. Si no lo dijo se usa el de su WhatsApp; si ese no sirve como nombre, la herramienta te pedirá preguntárselo."},
 			},
 			Required: []string{"color", "cantidad", "hora"},
 		},

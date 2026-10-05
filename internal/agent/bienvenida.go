@@ -40,7 +40,8 @@ func (a *Agent) SaludoDeBienvenida(from string) (string, bool) {
 	if !a.empiezaConversacion(from) {
 		return "", false
 	}
-	nombre := strings.TrimSpace(conversation.NombreDe(a.store, from))
+	// Solo un nombre que sirva: "¡Buenas noches, @sd2!" suena a robot (05/10).
+	nombre := conversation.NombreUsable(a.store, from)
 	log.Printf("[bienvenida] %s empieza conversación; se presenta el bot", from)
 	return textoBienvenida(nombre) + a.datosDeArranque(), true
 }

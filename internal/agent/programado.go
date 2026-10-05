@@ -55,22 +55,19 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	}
 
 	identificacion := strings.TrimSpace(str(args["identificacion"]))
-	nombres := strings.TrimSpace(str(args["nombres"]))
+	nombres := conversation.NombreSiSirve(str(args["nombres"]))
 	if perfil, ok := a.store.GetProfile(from); ok {
 		if identificacion == "" {
 			identificacion = perfil.Identificacion
 		}
-		if nombres == "" {
-			nombres = perfil.Nombres
-		}
 	}
-	// Cédula opcional (04/10): sin ella el backend registra al cliente por su teléfono. El nombre,
-	// si no lo escribió, es el de su perfil de WhatsApp. Igual que en registrar_pedido.
+	// Cédula opcional (04/10). El nombre: el que dio, o el de su WhatsApp si sirve como nombre.
+	// Igual que en registrar_pedido.
 	if nombres == "" {
-		nombres = conversation.NombreDe(a.store, from)
+		nombres = conversation.NombreUsable(a.store, from)
 	}
 	if nombres == "" {
-		return "Para programar necesito el nombre del cliente. Pídeselo (solo el nombre)."
+		return instruccionPedirNombre("NO se agendó todavía")
 	}
 
 	// COMPUERTA de protección de datos, igual que en registrar_pedido: agendar también guarda los

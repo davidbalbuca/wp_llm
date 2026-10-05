@@ -21,7 +21,7 @@ func TestSinCedulaElPedidoNoSeDetienePidiendoDatos(t *testing.T) {
 	store := conversation.NewMemStore()
 	ag := agentDePrueba(nil, store)
 	ag.gr = georoutes.NewClient(esp.servidor.URL)
-	store.SetProfile(from, conversation.Profile{PerfilWhatsApp: "J.L🪽"})
+	store.SetProfile(from, conversation.Profile{PerfilWhatsApp: "Jorge Luna 🪽"})
 	store.SetLocation(from, -2.885136, -78.986911)
 
 	tur := &turno{}
@@ -99,5 +99,44 @@ func TestCancelarConLaBusquedaAbiertaCancelaLaBusqueda(t *testing.T) {
 	}
 	if _, sigue := store.GetPendingWait(from); sigue {
 		t.Error("la búsqueda/espera sigue viva después de cancelarla")
+	}
+}
+
+// 05/10: perfiles que no sirven como nombre ("J.L🪽", "@sd2", "😀"): el pedido no se registra con
+// eso; se le pregunta el nombre, diciéndole para qué (el repartidor lo necesita para ubicarlo).
+func TestPerfilQueNoEsNombreSePreguntaElNombre(t *testing.T) {
+	for _, perfil := range []string{"J.L🪽", "@sd2", "😀", "castelar_1963@hotmail.com"} {
+		const from = "593999900055"
+		store := conversation.NewMemStore()
+		ag := agentDePrueba(nil, store)
+		store.SetProfile(from, conversation.Profile{PerfilWhatsApp: perfil})
+		store.SetLocation(from, -2.885136, -78.986911)
+
+		tur := &turno{}
+		salida := ag.registrarPedido(tur, from, map[string]any{"color": "BLANCO", "cantidad": 1})
+		if !strings.Contains(salida, PreguntaNombre) || tur.ultimoPedido.faltaDato != "nombre" {
+			t.Errorf("%q: debía preguntarse el nombre: %q", perfil, salida)
+		}
+		// Y si el modelo le pasa el mismo perfil como nombre, tampoco cuenta.
+		tur = &turno{}
+		salida = ag.registrarPedido(tur, from, map[string]any{"color": "BLANCO", "cantidad": 1, "nombres_completos": perfil})
+		if tur.ultimoPedido.faltaDato != "nombre" {
+			t.Errorf("%q pasado como nombre no debía aceptarse: %q", perfil, salida)
+		}
+	}
+}
+
+// El nombre que el cliente da queda guardado: la próxima vez no se le pregunta.
+func TestElNombreQueDaElClienteSeGuarda(t *testing.T) {
+	const from = "593999900056"
+	store := conversation.NewMemStore()
+	ag := agentDePrueba(nil, store)
+	store.SetProfile(from, conversation.Profile{PerfilWhatsApp: "@sd2"})
+	store.SetLocation(from, -2.885136, -78.986911)
+
+	ag.registrarPedido(&turno{}, from, map[string]any{"color": "BLANCO", "cantidad": 1, "nombres_completos": "Sandra Duchi"})
+
+	if got := conversation.NombreUsable(store, from); got != "Sandra Duchi" {
+		t.Errorf("el nombre dado no quedó guardado: %q", got)
 	}
 }

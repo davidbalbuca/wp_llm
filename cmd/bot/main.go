@@ -377,17 +377,23 @@ func main() {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
+		// placa, minutos y seguimiento_token llegan desde el 05/10 (el backend viejo no los manda:
+		// sin ellos el mensaje sale igual, solo con el nombre).
 		var payload struct {
-			PedidoID  int    `json:"pedido_id"`
-			Telefono  string `json:"telefono"`
-			Conductor string `json:"conductor"`
+			PedidoID         int    `json:"pedido_id"`
+			Telefono         string `json:"telefono"`
+			Conductor        string `json:"conductor"`
+			Placa            string `json:"placa"`
+			Minutos          int    `json:"minutos"`
+			SeguimientoToken string `json:"seguimiento_token"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		go notifyOrderReassigned(cfg, store, payload.PedidoID, payload.Telefono, payload.Conductor)
+		go notifyOrderReassigned(cfg, store, payload.PedidoID, payload.Telefono, payload.Conductor,
+			payload.Placa, payload.Minutos, payload.SeguimientoToken)
 	})
 
 	// El pedido perdio a su repartidor y el backend se lo esta ofreciendo a otros. El pedido
@@ -1474,7 +1480,8 @@ func notifyOrderSearching(cfg config.Config, store conversation.Store, pedidoID 
 
 // notifyOrderReassigned avisa al cliente por WhatsApp que su pedido fue REASIGNADO a un nuevo
 // repartidor (el anterior canceló). El pedido sigue vivo, así que NO se limpia el historial.
-func notifyOrderReassigned(cfg config.Config, store conversation.Store, pedidoID int, telefono, conductor string) {
+func notifyOrderReassigned(cfg config.Config, store conversation.Store, pedidoID int, telefono, conductor,
+	placa string, minutosRuta int, token string) {
 	phone := telefono
 	if p, ok := store.GetOrderPhone(pedidoID); ok && p != "" {
 		phone = p
@@ -1483,11 +1490,19 @@ func notifyOrderReassigned(cfg config.Config, store conversation.Store, pedidoID
 		log.Printf("[order-reassigned] pedido %d sin teléfono de contacto; se ignora", pedidoID)
 		return
 	}
-	msg := "🚚 Tu pedido fue asignado a un nuevo repartidor"
-	if conductor != "" {
-		msg += ": " + conductor
+	// El mismo mensaje que cualquier asignación (agent.MensajeRepartidor): nombre, placa, minutos y
+	// enlace. Los minutos llevan el mismo margen de preparación que la primera asignación.
+	minutos := 0
+	if minutosRuta > 0 {
+		minutos = minutosRuta + cfg.MargenEntregaMin
 	}
-	msg += ". ¡Ya va en camino!"
+	enlace := ""
+	if base := strings.TrimRight(cfg.SeguimientoBaseURL, "/"); base != "" && token != "" {
+		enlace = base + "/seguimiento/" + token + "/"
+		// El enlace vigente del pedido: el candado de seguimiento compara contra este.
+		store.SetSeguimientoActivo(phone, enlace)
+	}
+	msg := agent.MensajeReasignado(conductor, placa, minutos, enlace)
 	if err := avisarCliente(cfg, store, phone, msg); err != nil {
 		reportarFallo(cfg, store, phone, "No se pudo avisar la REASIGNACIÓN a otro conductor",
 			fmt.Sprintf("Pedido #%d. El mensaje no salió: %v", pedidoID, err))

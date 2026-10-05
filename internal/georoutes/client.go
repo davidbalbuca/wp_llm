@@ -222,6 +222,28 @@ func (c *Client) WppGetOrCreateClient(identificacion, nombres, telefono string) 
 	return &acc, nil
 }
 
+// WppActualizarNombre corrige el nombre de un cliente del bot que ya existe (registrado por su
+// teléfono, sin cédula) y devuelve sus credenciales nuevas: es el mismo endpoint que
+// WppGetOrCreateClient, que siempre las regenera. Se usa cuando el cliente da su nombre y el que
+// quedó en el backend era el de su perfil de WhatsApp ("@sd2", "😀"...), que es el que ve el
+// repartidor (05/10). Al cliente con cédula el backend no le toca el nombre.
+func (c *Client) WppActualizarNombre(nombres, telefono string) (*Account, error) {
+	res, err := c.post("/wppGetOrCreateClient/", map[string]any{
+		"identificacion":    "",
+		"nombres":           nombres,
+		"telefono":          telefono,
+		"actualizar_nombre": true,
+	}, "")
+	if err != nil {
+		return nil, err
+	}
+	var acc Account
+	if err := json.Unmarshal(res, &acc); err != nil {
+		return nil, fmt.Errorf("credenciales no válidas del backend: %w", err)
+	}
+	return &acc, nil
+}
+
 // Tokens son los JWT que devuelve el login, más el estado de verificación.
 type Tokens struct {
 	Access       string `json:"access"`
