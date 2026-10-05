@@ -57,9 +57,12 @@ func TestAlEmpezarLaConversacionElBotSePresenta(t *testing.T) {
 	if !strings.Contains(bajo, "repartidor") && !strings.Contains(bajo, "reparto") {
 		t.Errorf("el saludo no explica que conectamos con un repartidor: %q", saludo)
 	}
-	if !strings.Contains(bajo, "color") {
-		t.Errorf("el saludo no dice que da igual el color/marca del cilindro, que es lo que más "+
-			"frena a quien tiene un cilindro de otra marca en casa: %q", saludo)
+	// 04/10: el gancho reemplaza a "no importa la marca" (no hay marca; el color va en el menú).
+	if !strings.Contains(bajo, "se te acabo el gas") {
+		t.Errorf("el saludo no abre con el gancho \"¿Se te acabó el gas?\": %q", saludo)
+	}
+	if strings.Contains(bajo, "marca") {
+		t.Errorf("el saludo ya no habla de marcas: %q", saludo)
 	}
 }
 

@@ -1218,6 +1218,16 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 			}
 			return
 		}
+		// Apertura simple ("Hola", "quiero gas"): la presentación y los botones de colores en UN
+		// mensaje, sin pasar por el modelo. Va al final: todo lo anterior tiene prioridad, y si el
+		// cliente trae algo más que un saludo, el turno sigue al modelo. Ver internal/agent/apertura.go.
+		if reply, manejado := ag.ResponderAperturaConColores(inc.From, inc.Text); manejado {
+			log.Printf("[webhook] apertura con menú de colores para %s", inc.From)
+			if reply != "" {
+				_ = replyClient(cfg, store, inc.From, reply)
+			}
+			return
+		}
 	}
 
 	// Timeout del turno: si el proveedor del modelo se cuelga, el turno se aborta, el cliente

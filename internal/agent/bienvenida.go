@@ -24,6 +24,7 @@
 package agent
 
 import (
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -41,7 +42,40 @@ func (a *Agent) SaludoDeBienvenida(from string) (string, bool) {
 	}
 	nombre := strings.TrimSpace(conversation.NombreDe(a.store, from))
 	log.Printf("[bienvenida] %s empieza conversación; se presenta el bot", from)
-	return textoBienvenida(nombre), true
+	return textoBienvenida(nombre) + a.datosDeArranque(), true
+}
+
+// datosDeArranque son el PRECIO y la COBERTURA que acompañan a la presentación (pedido del dueño,
+// 04/10: "la idea es ya dar información precisa desde el arranque"). Son las dos preguntas que
+// más se hacen antes de pedir, así que se contestan antes de que las hagan.
+//
+// Salen del catálogo del backend, nunca quemados: si cambia el precio o se agrega una zona, el
+// saludo cambia solo. Sin catálogo no se dice nada (mejor callar que dar un precio viejo).
+func (a *Agent) datosDeArranque() string {
+	if a.catalog == nil {
+		return ""
+	}
+	contexto, ok := a.catalog.Get()
+	if !ok || contexto == nil {
+		return ""
+	}
+	var b strings.Builder
+	switch len(contexto.Products) {
+	case 0:
+	case 1:
+		fmt.Fprintf(&b, "\n💵 $%.2f por cilindro, con envío e instalación incluidos.",
+			contexto.Products[0].PrecioTotal())
+	default:
+		var precios []string
+		for _, p := range contexto.Products {
+			precios = append(precios, fmt.Sprintf("%s $%.2f", p.Nombre, p.PrecioTotal()))
+		}
+		fmt.Fprintf(&b, "\n💵 %s (envío e instalación incluidos).", strings.Join(precios, ", "))
+	}
+	if zonas := ZonasEnTexto(contexto.Zonas); zonas != "" {
+		b.WriteString("\n📍 Llegamos a las parroquias urbanas y rurales de " + zonas + ".")
+	}
+	return b.String()
 }
 
 // empiezaConversacion dice si este mensaje abre una conversación nueva.
@@ -65,11 +99,12 @@ func (a *Agent) empiezaConversacion(from string) bool {
 // textoBienvenida arma la presentación. Los tres puntos son los que pidió David, y cada uno
 // responde a una duda concreta del cliente:
 //
-//   - QUIÉN SOY ("Ubi"): en WhatsApp, un número desconocido que pregunta cosas da desconfianza.
+//   - QUIÉN SOY ("UbiGas"): en WhatsApp, un número desconocido que pregunta cosas da desconfianza.
+//     "UbiGas" y no "Ubi" (04/10): lleva la palabra gas, así se entiende y se guarda más rápido.
 //   - QUÉ HAGO ("te conecto con el repartidor más cercano"): explica por qué hay una espera y
 //     por qué se pide la ubicación, antes de pedirla.
-//   - NO IMPORTA EL COLOR: es lo que más frena a quien tiene en casa un cilindro de otra marca
-//     y cree que no se lo van a cambiar.
+//   - EL GANCHO ("¿Se te acabó el gas? ¡Tranqui, UbiGas está aquísito no más!", elegido por el dueño): es la situación de quien escribe. Ya no se habla de
+//     marcas (04/10): no hay marca, y el color se pregunta justo debajo con los botones.
 //
 // Corto porque es lo PRIMERO que se lee: un párrafo largo se salta entero y entonces no sirvió.
 func textoBienvenida(nombre string) string {
@@ -89,9 +124,8 @@ func textoBienvenidaA(nombre string, ahora time.Time) string {
 		// Solo el primer nombre: "¡Hola, David Espinoza Fajardo!" suena a carta del banco.
 		saludo = franjaDeSaludo(ahora) + ", " + primerNombre(nombre) + "! 👋"
 	}
-	return saludo + " Soy *Ubi* 🔥\n\n" +
-		"Te conecto con el repartidor de gas más cercano a ti, en minutos. " +
-		"No importa el color ni la marca de tu cilindro: lo buscamos y te lo llevamos hasta tu puerta 🚚"
+	return saludo + " ¿Se te acabó el gas? 😱 ¡Tranqui, *UbiGas* está aquísito no más! 🔥\n\n" +
+		"Tenemos un repartidor a la vuelta de tu casa, listo para llevártelo en minutos 🚚💨"
 }
 
 // primerNombre se queda con la primera palabra del nombre completo.

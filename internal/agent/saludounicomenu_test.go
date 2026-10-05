@@ -7,7 +7,7 @@ import (
 	"wp-llm-gas/internal/conversation"
 )
 
-// CASO REAL 593995446872 (2-oct): el código mandó la bienvenida ("Soy *Ubi*") y 5 segundos
+// CASO REAL 593995446872 (2-oct): el código mandó la bienvenida ("*UbiGas* está aquísito") y 5 segundos
 // después el modelo redactó el menú de color con "📋 ¡Hola! 👋 Con gusto te ayudo…". Dos saludos
 // seguidos. Los 7 casos del 2-oct son TODOS menús (menu=True en el análisis forense).
 //
@@ -20,7 +20,7 @@ func TestLimpiarSaludoDelCuerpoDeMenuCasoReal(t *testing.T) {
 	from := "593995446872"
 
 	// Paso 1: el código se presenta (bienvenida.go). Se guarda como turno "model" en el historial.
-	bienvenida := "¡Buenos días, tyty! 👋 Soy *Ubi* 🔥\n\nTe conecto con el repartidor de gas más cercano a ti, en minutos."
+	bienvenida := "¡Buenos días, tyty! 👋 ¿Se te acabó el gas? 😱 ¡Tranqui, *UbiGas* está aquísito no más! 🔥\n\nTe conecto con el repartidor de gas más cercano a ti, en minutos."
 	store.AppendModel(from, bienvenida)
 
 	// Paso 2: el modelo redacta el cuerpo del menú de color CON saludo repetido.
@@ -63,7 +63,7 @@ func TestLimpiarSaludoDelCuerpoDeMenuEraSoloSaludo(t *testing.T) {
 	ag := &Agent{store: store}
 	from := "593900000001"
 
-	bienvenida := "¡Hola, David! 👋 Soy *Ubi* 🔥\n\nTe conecto con el repartidor..."
+	bienvenida := "¡Hola, David! 👋 ¿Se te acabó el gas? 😱 ¡Tranqui, *UbiGas* está aquísito no más! 🔥\n\nTe conecto con el repartidor..."
 	store.AppendModel(from, bienvenida)
 
 	// El modelo SOLO saludó en el cuerpo del menú, sin pregunta.

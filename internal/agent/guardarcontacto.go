@@ -19,9 +19,9 @@ package agent
 // Corto a propósito: llega cuando la conversación ya terminó, así que un párrafo largo se lee
 // como publicidad y se ignora entero. Dos líneas: qué pedimos y para qué le sirve.
 //
-// Nombra a UBI porque es lo que el cliente va a escribir en su buscador de contactos la próxima
+// Nombra a UBIGAS porque es lo que el cliente va a escribir en su buscador de contactos la próxima
 // vez que se le acabe el gas. "Guárdanos" a secas no le dice cómo encontrarnos.
 func MensajeGuardarContacto() string {
-	return "📇 Guárdanos como *Ubi* en tus contactos: así nos encuentras rapidito la próxima vez " +
+	return "📇 Guárdanos como *UbiGas* en tus contactos: así nos encuentras rapidito la próxima vez " +
 		"que necesites gas y te conectamos con el repartidor más cercano 😉"
 }
