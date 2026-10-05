@@ -125,7 +125,7 @@ func textoBienvenidaA(nombre string, ahora time.Time) string {
 		saludo = franjaDeSaludo(ahora) + ", " + primerNombre(nombre) + "! 👋"
 	}
 	return saludo + " ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu repartidor aquísito no más! 🔥\n\n" +
-		"Está a la vuelta de tu casa y te lo lleva en minutos 🚚💨"
+		"Estamos a la vuelta de tu casa y te lo llevamos en minutos 🚚💨"
 }
 
 // primerNombre se queda con la primera palabra del nombre completo.
