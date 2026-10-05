@@ -2,6 +2,7 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -89,6 +90,10 @@ type Config struct {
 	// separados por coma o en rango: "1-6" es lunes a sabado. Se configura en el .env del bot
 	// para poder cambiarlo sin recompilar (feriados, un domingo que si se trabaja).
 	BotDiasLaborables string
+	// BotHorarioFinPorDia cambia la hora de CIERRE de días puntuales: "7=19:00" es que el domingo
+	// se cierra a las 19:00 y el resto de días a BotHorarioFin. Varios con coma: "6=20:00,7=19:00".
+	// Días ISO, como BotDiasLaborables. Vacía = todos los días cierran a BotHorarioFin.
+	BotHorarioFinPorDia string
 	// BotCentroLat/BotCentroLng es el centro de la zona donde se opera. Solo se usa para
 	// recuperar el prefijo de un Plus Code corto cuando el cliente manda un enlace de Google
 	// Maps (ver internal/whatsapp/pluscode.go): esos codigos vienen sin la parte que dice en que
@@ -219,6 +224,7 @@ func Load() Config {
 		BotHorarioInicio:     optional("BOT_HORARIO_INICIO", "07:00"),
 		BotHorarioFin:        optional("BOT_HORARIO_FIN", "19:00"),
 		BotDiasLaborables:    optional("BOT_DIAS_LABORABLES", "1-6"),
+		BotHorarioFinPorDia:  optional("BOT_HORARIO_FIN_POR_DIA", ""),
 		// Centro de Cuenca (Parque Calderón). Ver BotCentroLat en la Config.
 		BotCentroLat: optionalFloat("BOT_CENTRO_LAT", -2.9001),
 		BotCentroLng: optionalFloat("BOT_CENTRO_LNG", -79.0059),
@@ -246,4 +252,29 @@ func optionalBool(k string, def bool) bool {
 		return def
 	}
 	return v != "0" && v != "false" && v != "no"
+}
+
+// HorarioFin es la hora de cierre ("HH:MM") de ese día de la semana: la de BotHorarioFinPorDia si
+// ese día tiene una propia, si no BotHorarioFin. Una entrada mal escrita se ignora: un error de
+// configuración no puede cerrar el negocio ni cambiarle el horario a otro día.
+func (c Config) HorarioFin(dia time.Weekday) string {
+	iso := int(dia)
+	if iso == 0 {
+		iso = 7 // time.Weekday pone el domingo en 0; la configuración usa ISO (domingo=7)
+	}
+	for _, parte := range strings.Split(c.BotHorarioFinPorDia, ",") {
+		d, hora, ok := strings.Cut(strings.TrimSpace(parte), "=")
+		if !ok {
+			continue
+		}
+		hora = strings.TrimSpace(hora)
+		var h, m int
+		if n, err := fmt.Sscanf(hora, "%d:%d", &h, &m); n != 2 || err != nil || h < 0 || h > 23 || m < 0 || m > 59 {
+			continue
+		}
+		if n, err := strconv.Atoi(strings.TrimSpace(d)); err == nil && n == iso {
+			return fmt.Sprintf("%02d:%02d", h, m)
+		}
+	}
+	return c.BotHorarioFin
 }

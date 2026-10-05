@@ -146,3 +146,15 @@ func TestRevisarCierresConsultaElHorario(t *testing.T) {
 		t.Error("revisarCierres NO consulta dentroDelHorario: volverían los mensajes de madrugada")
 	}
 }
+
+// El domingo cierra antes (BOT_HORARIO_FIN_POR_DIA, 04/10): a las 19:30 de un domingo ya no se
+// manda la despedida, pero un lunes a la misma hora sí.
+func TestElCierreRespetaElHorarioDelDomingo(t *testing.T) {
+	cfg := config.Config{BotHorarioInicio: "07:00", BotHorarioFin: "20:30", BotHorarioFinPorDia: "7=19:00"}
+	if dentroDelHorario(time.Date(2026, 10, 4, 19, 30, 0, 0, time.Local), cfg) {
+		t.Error("domingo 19:30: fuera de horario")
+	}
+	if !dentroDelHorario(time.Date(2026, 10, 5, 19, 30, 0, 0, time.Local), cfg) {
+		t.Error("lunes 19:30: dentro de horario")
+	}
+}

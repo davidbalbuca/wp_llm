@@ -293,7 +293,10 @@ func (a *Agent) horaEnMensaje(texto string) (pareceHora bool, hora string) {
 		return false, ""
 	}
 	// Desde aquí, el cliente SÍ estaba diciendo una hora (aunque no podamos atenderla).
-	ini, fin := parseHoraHHMM(a.cfg.BotHorarioInicio), parseHoraHHMM(a.cfg.BotHorarioFin)
+	// Contra el cierre MÁS TARDE de la semana: el cliente puede estar diciendo la hora de mañana, y
+	// si hoy es domingo (cierra antes) un "a las 8 de la noche" para el lunes sigue siendo válido.
+	// La hora exacta del día de la entrega la valida programar_entrega.
+	ini, fin := parseHoraHHMM(a.cfg.BotHorarioInicio), parseHoraHHMM(a.cierreMasTarde())
 	if ini < 0 || fin < 0 {
 		return true, h // sin horario configurado no se filtra nada
 	}

@@ -288,8 +288,8 @@ func (a *Agent) cancelarLaEspera(from, texto string) string {
 	} else {
 		respuesta = fmt.Sprintf("Listo, ya no te busco repartidor 🙏. Dejé tu pedido anotado por si "+
 			"quieres retomarlo, y si prefieres puedo agendarte la entrega para más tarde: atendemos "+
-			"de %s a %s, dime a qué hora te viene bien. Y si ya no lo necesitas, aquí estoy cuando "+
-			"me busques 😊", a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
+			"%s, dime a qué hora te viene bien. Y si ya no lo necesitas, aquí estoy cuando "+
+			"me busques 😊", a.textoHorario())
 	}
 	// El turno queda en el HISTORIAL. Sin esto el modelo no se entera de que el cliente
 	// canceló la espera: el 15/09, dos horas después, le volvió a ofrecer esperar o programar

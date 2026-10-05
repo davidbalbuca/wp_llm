@@ -163,9 +163,8 @@ func (a *Agent) construirSistema(from string) (fijo, volatil string) {
 	// Fecha y hora de Ecuador. Sin la fecha el modelo inventa el día y agenda mal (09/09: dijo
 	// "hoy es sábado" un miércoles). Va en la parte volátil: cambia cada mensaje.
 	ahora := time.Now().In(zonaEcuador)
-	fmt.Fprintf(&b, "\n\nHOY ES: %s. HORA ACTUAL: %s (Ecuador). HORARIO DE ENTREGAS: %s de %s a %s.",
-		fechaEnEspanol(ahora), ahora.Format("15:04"), a.textoDiasLaborables(),
-		a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
+	fmt.Fprintf(&b, "\n\nHOY ES: %s. HORA ACTUAL: %s (Ecuador). HORARIO DE ENTREGAS: %s.",
+		fechaEnEspanol(ahora), ahora.Format("15:04"), a.textoHorario())
 	// El dia no laborable se avisa APARTE de la hora: son dos motivos distintos y al cliente hay
 	// que decirle el suyo. Un domingo, "a esta hora no hay repartidores" es falso -no es la hora,
 	// es el dia- y le hace pensar que mas tarde si habra.

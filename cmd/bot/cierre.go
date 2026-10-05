@@ -162,7 +162,7 @@ func mereceCierre(store conversation.Store, chat conversation.ConversationSummar
 // no: lo decide el bot, y a medianoche solo molesta.
 func dentroDelHorario(ahora time.Time, cfg config.Config) bool {
 	ini, okIni := horaDelDia(cfg.BotHorarioInicio)
-	fin, okFin := horaDelDia(cfg.BotHorarioFin)
+	fin, okFin := horaDelDia(cfg.HorarioFin(ahora.Weekday()))
 	if !okIni || !okFin {
 		return true // horario mal configurado: no se bloquea nada (el cierre no es crítico)
 	}

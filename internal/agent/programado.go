@@ -39,7 +39,8 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	_, esperandoConductor := a.store.GetPendingWait(from)
 	if a.dentroDeHorario(time.Now().In(zonaEcuador)) && strings.TrimSpace(str(args["hora"])) == "" &&
 		!esperandoConductor {
-		return "ESTAMOS DENTRO DEL HORARIO (" + a.cfg.BotHorarioInicio + " a " + a.cfg.BotHorarioFin + "): " +
+		return "ESTAMOS DENTRO DEL HORARIO (hoy de " + a.cfg.BotHorarioInicio + " a " +
+			a.finDelDia(time.Now().In(zonaEcuador)) + "): " +
 			"no se programa nada porque el servicio está ACTIVO ahora. Usa registrar_pedido para tomar el " +
 			"pedido de una vez. Solo programa si el cliente pidió EXPRESAMENTE otra hora."
 	}
@@ -110,11 +111,21 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	}
 	if mins < 0 {
 		return fmt.Sprintf("El cliente aún no ha dicho a qué hora quiere su entrega (no inventes una tú). "+
-			"Pregúntale si desea PROGRAMAR y dile que atendemos de %s a %s; apenas te diga una hora, "+
-			"agéndala sin volver a preguntar.", a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
+			"Pregúntale si desea PROGRAMAR y dile que atendemos %s; apenas te diga una hora, "+
+			"agéndala sin volver a preguntar.", a.textoHorario())
 	}
+	ahora := time.Now().In(zonaEcuador)
+	dia := strings.ToLower(strings.TrimSpace(str(args["dia"])))
+	esManana := dia == "manana" || dia == "mañana"
+	// La hora de cierre es la del día de la ENTREGA: un domingo a las 19:30 se puede agendar para
+	// el lunes a las 20:00 aunque el domingo cierre a las 19:00.
+	diaEntrega := ahora
+	if esManana {
+		diaEntrega = ahora.Add(24 * time.Hour)
+	}
+	finEntrega := a.finDelDia(diaEntrega)
 	ini := parseHoraHHMM(a.cfg.BotHorarioInicio)
-	fin := parseHoraHHMM(a.cfg.BotHorarioFin)
+	fin := parseHoraHHMM(finEntrega)
 	// Horario de entregas CERRADO en ambos extremos [ini, fin]: la hora de cierre es válida para
 	// AGENDAR. Antes era `mins >= fin` (exclusivo), así que "7 de la noche" == 19:00 == la hora de
 	// cierre que el bot anuncia ("atendemos de 07:00 a 19:00, apenas me digas una hora la agendo")
@@ -122,14 +133,12 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	// gate de pedidos INMEDIATOS (dentroDeHorario, `mins < fin`) sigue siendo exclusivo a propósito:
 	// mira la hora ACTUAL, y a las 19:00 en punto ya no hay margen para despachar ahora.
 	if mins < ini || mins > fin {
-		return fmt.Sprintf("Esa hora está fuera del horario de entregas (%s a %s). Pídele al cliente una hora "+
-			"dentro del horario.", a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
+		return fmt.Sprintf("Esa hora está fuera del horario de entregas de ese día (%s a %s). Pídele al "+
+			"cliente una hora dentro del horario.", a.cfg.BotHorarioInicio, finEntrega)
 	}
 
-	ahora := time.Now().In(zonaEcuador)
 	target := time.Date(ahora.Year(), ahora.Month(), ahora.Day(), mins/60, mins%60, 0, 0, zonaEcuador)
-	dia := strings.ToLower(strings.TrimSpace(str(args["dia"])))
-	if dia == "manana" || dia == "mañana" {
+	if esManana {
 		target = target.Add(24 * time.Hour)
 	} else if !target.After(ahora) {
 		// Esa hora YA PASO hoy. Antes se saltaba a mañana en silencio, y asi un cliente que
@@ -246,12 +255,18 @@ func (a *Agent) dentroDeHorario(t time.Time) bool {
 		return false
 	}
 	ini := parseHoraHHMM(a.cfg.BotHorarioInicio)
-	fin := parseHoraHHMM(a.cfg.BotHorarioFin)
+	fin := parseHoraHHMM(a.finDelDia(t))
 	if ini < 0 || fin < 0 {
 		return true // configuración inválida: no bloquear el servicio
 	}
 	mins := t.Hour()*60 + t.Minute()
 	return mins >= ini && mins < fin
+}
+
+// finDelDia es la hora de cierre ("HH:MM") del día de `t`. El domingo puede cerrar antes que el
+// resto (BOT_HORARIO_FIN_POR_DIA, 04/10): todo lo que mira la hora de cierre pasa por aquí.
+func (a *Agent) finDelDia(t time.Time) string {
+	return a.cfg.HorarioFin(t.Weekday())
 }
 
 // diasEnEspanol traduce los numeros ISO de dia a su nombre, para poder decirselo al cliente.
@@ -302,7 +317,11 @@ func (a *Agent) esDiaLaborable(t time.Time) bool {
 // decirselo al cliente. El bot no puede decir "de lunes a sabado" a secas: si manana alguien
 // cambia la configuracion, el mensaje tiene que cambiar con ella.
 func (a *Agent) textoDiasLaborables() string {
-	dias := a.diasLaborables()
+	return textoDeDias(a.diasLaborables())
+}
+
+// textoDeDias arma el texto de un conjunto de días ISO: "lunes a sábado" o la lista.
+func textoDeDias(dias map[int]bool) string {
 	var nombres []string
 	for i := 1; i <= 7; i++ {
 		if dias[i] {
@@ -331,6 +350,60 @@ func (a *Agent) textoDiasLaborables() string {
 		return diasEnEspanol[primero] + " a " + diasEnEspanol[ultimo]
 	}
 	return strings.Join(nombres, ", ")
+}
+
+// textoHorario es el horario completo para decírselo al cliente: "lunes a domingo de 07:00 a
+// 20:30", o, si algún día cierra a otra hora, "lunes a sábado de 07:00 a 20:30 y domingo de 07:00
+// a 19:00". Sale de la configuración, igual que textoDiasLaborables.
+func (a *Agent) textoHorario() string {
+	// Los días laborables, agrupados por su hora de cierre, en el orden de la semana.
+	var cierres []string
+	porCierre := map[string]map[int]bool{}
+	for iso, trabaja := range a.diasLaborables() {
+		if !trabaja {
+			continue
+		}
+		fin := a.cfg.HorarioFin(time.Weekday(iso % 7))
+		if porCierre[fin] == nil {
+			porCierre[fin] = map[int]bool{}
+		}
+		porCierre[fin][iso] = true
+	}
+	for iso := 1; iso <= 7; iso++ {
+		for fin, dias := range porCierre {
+			if dias[iso] && !contiene(cierres, fin) {
+				cierres = append(cierres, fin)
+			}
+		}
+	}
+	var partes []string
+	for _, fin := range cierres {
+		partes = append(partes, textoDeDias(porCierre[fin])+" de "+a.cfg.BotHorarioInicio+" a "+fin)
+	}
+	if len(partes) == 0 {
+		return a.textoDiasLaborables() + " de " + a.cfg.BotHorarioInicio + " a " + a.cfg.BotHorarioFin
+	}
+	return strings.Join(partes, " y ")
+}
+
+// cierreMasTarde es la hora de cierre más tardía de la semana ("HH:MM").
+func (a *Agent) cierreMasTarde() string {
+	mejor, mejorMin := a.cfg.BotHorarioFin, parseHoraHHMM(a.cfg.BotHorarioFin)
+	for d := time.Sunday; d <= time.Saturday; d++ {
+		if fin := a.cfg.HorarioFin(d); parseHoraHHMM(fin) > mejorMin {
+			mejor, mejorMin = fin, parseHoraHHMM(fin)
+		}
+	}
+	return mejor
+}
+
+func contiene(lista []string, x string) bool {
+	for _, v := range lista {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 // horaPedidaPorCliente busca en lo que el cliente escribió una hora del horario laboral y la
