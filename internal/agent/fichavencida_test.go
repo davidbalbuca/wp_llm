@@ -117,3 +117,40 @@ func TestAperturaOfreceRepetirElUltimoPedido(t *testing.T) {
 		t.Errorf("se armó un pedido sin que el cliente lo confirmara: %+v", p)
 	}
 }
+
+// CASO 04/10 (prod): el bot ofreció "¿cancelemos este pedido?" con un pedido a medio armar; el
+// cliente dijo "Cancela" y recibió "no tienes ningún pedido en curso", y la ficha siguió viva.
+func TestCancelarDescartaElPedidoAMedioArmar(t *testing.T) {
+	const from = "593900900010"
+	store := conversation.NewMemStore()
+	ag := agentDePrueba(nil, store)
+	store.SetPedidoEnCurso(from, conversation.PedidoEnCurso{Color: "BLANCO", Cantidad: 1, Flujo: conversation.FlujoProgramacion})
+
+	salida, manejado := ag.ResponderCancelacion(from, "Cancela")
+
+	if !manejado {
+		t.Fatal("el cancelar no se resolvió en código")
+	}
+	if strings.Contains(strings.ToLower(salida), "no tienes ningún pedido") {
+		t.Errorf("se le dijo que no tenía pedido a quien estaba armando uno: %q", salida)
+	}
+	if !strings.Contains(salida, "1 BLANCO") {
+		t.Errorf("no se le dijo qué se canceló: %q", salida)
+	}
+	if _, sigue := store.GetPedidoEnCurso(from); sigue {
+		t.Error("el pedido a medio armar sigue guardado")
+	}
+}
+
+// Sin nada armado, la respuesta de siempre.
+func TestCancelarSinNadaSigueDiciendoQueNoHayPedido(t *testing.T) {
+	const from = "593900900011"
+	store := conversation.NewMemStore()
+	ag := agentDePrueba(nil, store)
+	store.SetPedidoEnCurso(from, conversation.PedidoEnCurso{Flujo: conversation.FlujoInmediato}) // vacía
+
+	salida, manejado := ag.ResponderCancelacion(from, "cancelar")
+	if !manejado || !strings.Contains(strings.ToLower(salida), "no tienes ningún pedido") {
+		t.Errorf("sin pedido armado debía decir que no hay pedido: %q", salida)
+	}
+}

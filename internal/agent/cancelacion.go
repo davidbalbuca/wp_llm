@@ -155,6 +155,19 @@ func (a *Agent) ResponderCancelacion(from, texto string) (string, bool) {
 		if a.tieneEntregaAgendada(from) {
 			return "", false
 		}
+		// Un pedido A MEDIO ARMAR (color, cantidad u hora anotados, sin crear todavía) también es
+		// "este pedido" para el cliente. El 04/10 en prod el bot ofreció "¿cancelemos este
+		// pedido?", el cliente dijo "Cancela" y recibió "no tienes ningún pedido en curso": la
+		// ficha seguía viva y se habría arrastrado al siguiente mensaje.
+		if p, hay := a.store.GetPedidoEnCurso(from); hay && !p.Vacio() {
+			a.descartarPedidoAMedioArmar(from)
+			msg = "Listo, dejé sin efecto el pedido que estábamos armando (" + describirFicha(p) +
+				") 🙏. Cuando necesites tu gas, aquí estoy 😊"
+			log.Printf("[cancelacion] %s: se descarta el pedido a medio armar (%s)", from, describirFicha(p))
+			a.store.AppendUser(from, texto)
+			a.store.AppendModel(from, msg)
+			return msg, true
+		}
 		msg = cancelacionSinPedido.mensajeAlCliente()
 		log.Printf("[cancelacion] %s: no tiene pedido ni entrega agendada; se le dice en código (sin ticket)", from)
 		a.store.AppendUser(from, texto)
@@ -269,4 +282,21 @@ func (a *Agent) tieneEntregaAgendada(from string) bool {
 		}
 	}
 	return false
+}
+
+// descartarPedidoAMedioArmar borra todo lo que el cliente fue armando sin llegar a crear el
+// pedido: la ficha, el pedido en pausa esperando confirmar la dirección y el menú de horas.
+func (a *Agent) descartarPedidoAMedioArmar(from string) {
+	a.store.ClearPedidoEnCurso(from)
+	a.store.ClearPedidoEsperandoDireccion(from)
+	a.store.ClearEligiendoHora(from)
+}
+
+// describirFicha resume el pedido a medio armar para decírselo al cliente: "1 BLANCO" o, si solo
+// había hora, "para las 16:30".
+func describirFicha(p conversation.PedidoEnCurso) string {
+	if lineas := p.Lineas(); len(lineas) > 0 {
+		return describeItems(lineas)
+	}
+	return "para las " + p.Hora
 }
