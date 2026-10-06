@@ -445,7 +445,16 @@ func main() {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		writeJSON(w, store.ListConversations(atoiDefault(r.URL.Query().Get("limit"), 100)))
+		convs := store.ListConversations(atoiDefault(r.URL.Query().Get("limit"), 100))
+		// Para el estado de cada chat en el panel (06/10): "Registrando pedido" mientras tenga un
+		// pedido a medio armar que no ha vencido (la misma vigencia que usa el agente).
+		for i := range convs {
+			if p, ok := store.GetPedidoEnCurso(convs[i].Phone); ok && !p.Vacio() &&
+				time.Since(p.UpdatedAt) < agent.VencimientoFicha {
+				convs[i].Armando = true
+			}
+		}
+		writeJSON(w, convs)
 	})
 	// Conversación completa de un número (para revisarla).
 	mux.HandleFunc("GET /internal/conversation", func(w http.ResponseWriter, r *http.Request) {

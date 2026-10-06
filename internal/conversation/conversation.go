@@ -77,6 +77,9 @@ type ConversationSummary struct {
 	// NoAsignado: su pedido se quedo sin conductor y todavia nadie lo ha resuelto. Lo calcula
 	// el BACKEND con su propia base y sobreescribe lo que venga de aqui.
 	NoAsignado bool `json:"no_asignado"`
+	// Armando: tiene un pedido a medio armar y vigente (dijo color o cantidad y todavía no se
+	// registra). Lo pone el endpoint del panel; el panel lo muestra como "Registrando pedido".
+	Armando bool `json:"armando"`
 	// NoLeido: el cliente escribio despues de la ultima vez que alguien abrio este chat en el
 	// panel. Que el bot ya le haya contestado no cuenta: lo que se marca es si una PERSONA lo
 	// vio, igual que en WhatsApp.
