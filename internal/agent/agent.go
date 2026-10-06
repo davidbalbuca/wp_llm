@@ -505,6 +505,12 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 		switch {
 		case a.tienePedidoVivo(from):
 			log.Printf("[fantasma] %s: el modelo afirmó un pedido y el pedido EXISTE; no se fuerza nada", from)
+		case !t.programo && a.store.TieneProgramacionViva(from):
+			// Le recordó una entrega que SÍ está agendada. Antes solo se miraba esto si el cliente
+			// estaba pidiendo agendar en ese momento: a Edgar (06/10 06:48) le recordó su entrega de
+			// las 08:00, el candado no la vio, forzó un pedido inmediato y le contestó "tuve un
+			// problema al registrar tu pedido".
+			log.Printf("[fantasma] %s: el modelo habló de una programación que EXISTE; no se fuerza nada", from)
 		case !t.programo && a.clienteQuiereProgramar(from):
 			if a.store.TieneProgramacionViva(from) {
 				log.Printf("[fantasma] %s: el modelo afirmó una programación y la programación EXISTE; no se fuerza nada", from)
@@ -514,6 +520,12 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 			if forzado, ok := a.forzarProgramacionSiHaceFalta(t, from); ok {
 				reply = forzado
 			}
+		case !a.dentroDeHorario(time.Now().In(zonaEcuador)):
+			// Fuera de horario no puede existir un pedido inmediato: forzarlo solo fallaba y el
+			// cliente recibía "tuve un problema al registrar" a la primera (23/09 y 02/10, ~22:40).
+			// Se le pide con amabilidad lo que falta y el modelo sigue con la programación.
+			log.Printf("[fantasma] %s: afirmó un pedido fuera de horario; no se fuerza, se pide lo que falta", from)
+			reply = a.loQueFaltaParaElPedido(from)
 		default:
 			log.Printf("[fantasma] %s: el modelo afirmó un pedido sin registrar_pedido; se fuerza el registro", from)
 			if forzado, ok := a.forzarRegistroSiHaceFalta(t, from); ok {

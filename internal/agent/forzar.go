@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"wp-llm-gas/internal/conversation"
 	"wp-llm-gas/internal/georoutes"
@@ -32,13 +33,14 @@ import (
 func (a *Agent) forzarRegistroSiHaceFalta(t *turno, from string) (string, bool) {
 	lineas, ok := a.inferirLineas(from)
 	if !ok {
-		// No sabemos qué pedir con certeza: honesto y sin inventar.
+		// No sabemos qué pedir con certeza: honesto y sin inventar. Y sin decir "tuve un problema
+		// al registrar": no se intentó registrar nada. Pasaba al PRIMER mensaje ("Deseo pedir GAS
+		// 😄" -> "Disculpa, tuve un problema al registrar tu pedido"), 4 veces entre el 23/09 y el
+		// 06/10. Se le pregunta con amabilidad lo que falta, como en cualquier conversación.
 		notify.Default.Fallo(from, a.nombreDe(from), "Pedido fantasma — no se pudo autorregistrar",
 			"El modelo afirmó un pedido sin llamar registrar_pedido y el código no pudo inferir "+
-				"color/cantidad con seguridad. El cliente NO tiene pedido; hay que atenderlo.")
-		return "Disculpa 🙏, tuve un problema al registrar tu pedido. ¿Me confirmas qué cilindro " +
-			"necesitas (color) y cuántos, y me compartes tu ubicación 📎? Quiero asegurarme de que " +
-			"te llegue tu gas.", true
+				"color/cantidad con seguridad. Se le preguntó al cliente lo que falta.")
+		return a.loQueFaltaParaElPedido(from), true
 	}
 
 	log.Printf("[forzar] %s: el modelo confirmó sin registrar; se registra en código (%s)", from, describeItems(lineas))
@@ -499,4 +501,28 @@ func (a *Agent) forzarProgramacionSiHaceFalta(t *turno, from string) (string, bo
 		"El modelo dijo agendado, el código intentó programar y NO quedó. Detalle: "+conversation.Recortar(salida, 200))
 	return "Disculpa 🙏, tuve un problema al agendar tu entrega. Ya avisé al equipo para que te " +
 		"contacte y la deje lista. Lamento la molestia.", true
+}
+
+// loQueFaltaParaElPedido pregunta, con amabilidad, el siguiente dato que falta según la ficha:
+// el color, la cantidad o la ubicación. Es la respuesta honesta cuando el modelo dio por hecho un
+// pedido que no existe: no se inventa nada ni se culpa a un "problema".
+func (a *Agent) loQueFaltaParaElPedido(from string) string {
+	p, _ := a.store.GetPedidoEnCurso(from)
+	switch {
+	case len(p.Lineas()) == 0:
+		return "Para ayudarte con tu gas, cuéntame de qué color es tu cilindro (blanco, amarillo, " +
+			"naranja o azul) 😊"
+	case !p.Completo():
+		return "¿Cuántos cilindros de " + strings.ToLower(p.Lineas()[len(p.Lineas())-1].Color) +
+			" te mando? 😊"
+	}
+	if _, hay := a.store.GetLocation(from); !hay {
+		return "¿Me ayudas con tu ubicación? 📍 Así el repartidor más cercano llega directo a ti " +
+			"(tocas el 📎 y luego *Ubicación*)."
+	}
+	if !a.dentroDeHorario(time.Now().In(zonaEcuador)) {
+		return "¿A qué hora te viene bien recibirlo? Atendemos de " + a.cfg.BotHorarioInicio + " a " +
+			a.finDelDia(time.Now().In(zonaEcuador)) + " 😊"
+	}
+	return "Ya casi está 😊 ¿Me confirmas que te lo envío ahora?"
 }
