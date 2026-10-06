@@ -291,6 +291,10 @@ func (a *Agent) avisarRepartidorAsignado(from string, w conversation.PendingWait
 		Direccion: calle,
 	})
 	store.ClearPendingWait(from)
+	// La ficha del pedido a medio armar ya cumplió: el pedido existe. Sin esto quedaba viva y el
+	// candado del turno colgado creía que el cliente seguía armando uno: a John (06/10, #370,
+	// asignado tras la espera) le pegaba "¿Seguimos con tu pedido?" a cada respuesta.
+	store.ClearPedidoEnCurso(from)
 	// El enlace de seguimiento queda registrado como el VIVO de este pedido, igual que en el
 	// pedido normal: es lo que permite detectar despues un enlace de otro pedido.
 	if enlace := a.urlSeguimiento(res.SeguimientoToken); enlace != "" {

@@ -102,6 +102,11 @@ func soloInstruccion(t *turno, texto string) string {
 // entrega, no la conversación. Lo que cuenta es el tramo en que el cliente está armando el
 // pedido y todavía no existe nada en el backend — justo donde se cayó Doris.
 func (a *Agent) clienteEstaAMedioPedir(from string) bool {
+	// Con un pedido EN CURSO no está a medio pedir, aunque quede una ficha vieja (el caso de John,
+	// 06/10): ahí la conversación la llevan el repartidor y los avisos de entrega.
+	if _, vivo := a.store.GetActivePedido(from); vivo {
+		return false
+	}
 	if p, hay := a.store.GetPedidoEnCurso(from); hay && !p.Vacio() {
 		return true // eligió color y/o cantidad: está armando su pedido
 	}
