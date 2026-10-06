@@ -182,6 +182,15 @@ func (a *Agent) revisarCoberturaAfirmada(from, reply string) string {
 	if !afirmaCobertura(reply) {
 		return reply
 	}
+	// Prometió cobertura en OTRA CIUDAD (ciudadesfuera.go): ahí no llegamos, se le dice que no.
+	if ciudad := a.lugarFueraEnElMensaje(from); ciudad != "" {
+		var zonas []georoutes.ZonaCobertura
+		if contexto, ok := a.catalog.Get(); ok && contexto != nil {
+			zonas = contexto.Zonas
+		}
+		log.Printf("[cobertura] %s: el modelo prometió cobertura en %s, donde no operamos; se corrige", from, ciudad)
+		return mensajeCiudadFuera(ciudad, zonas)
+	}
 	// Ubicación de esta conversación = geocerca ya consultada y superada. El "sí" es cierto.
 	if a.ubicacionEsDeAhora(from) {
 		return reply
@@ -199,14 +208,16 @@ func (a *Agent) revisarCoberturaAfirmada(from, reply string) string {
 // mensajeCoberturaEnPositivo redacta la respuesta correcta: dice dónde SÍ atendemos (con las
 // zonas que informa el backend, nunca quemadas) y pide la ubicación para confirmar.
 func mensajeCoberturaEnPositivo(zonas []georoutes.ZonaCobertura) string {
-	base := "¡Claro que sí! 😊 "
+	// Sin "¡Claro que sí!" delante (06/10): este texto reemplaza una respuesta del modelo, y
+	// arrancar con un sí a una pregunta de cobertura promete justo lo que todavía no se sabe.
+	base := ""
 	if texto := ZonasEnTexto(zonas); texto != "" {
 		// "urbanas y rurales" es la frase que faltaba: la geocerca cubre el cantón completo, y
 		// sin decirlo el cliente de una parroquia rural asume que solo se atiende el centro.
-		base += "Atendemos en las parroquias urbanas y rurales de " + texto + ". "
+		base = "Atendemos en las parroquias urbanas y rurales de " + texto + ". "
 	}
 	return base + "Si me compartes tu ubicación 📍, te confirmo al instante si llegamos justo " +
-		"a tu casa."
+		"a tu casa 😊"
 }
 
 // ejemplosPorZona es cuántas parroquias se nombran por zona EN EL MENSAJE AL CLIENTE. Seis, no
@@ -294,6 +305,12 @@ func (a *Agent) revisarNegativaDeCobertura(from, reply string) string {
 	// Taparla lo devolvería al bucle de pedirle el pin una y otra vez para darle la misma
 	// respuesta — el caso de Ambato del 08/09. La marca se limpia si comparte otra ubicación.
 	if a.store.FueraDeCoberturaVerificado(from) {
+		return reply
+	}
+	// Y si nombró OTRA CIUDAD (Loja, Machala, Gualaceo…), el "no llegamos" también es verdad: no
+	// es un barrio que el modelo no conoce (ciudadesfuera.go, caso del 06/10).
+	if ciudad := a.lugarFueraEnElMensaje(from); ciudad != "" {
+		log.Printf("[cobertura] %s: el modelo negó cobertura en %s, donde no operamos; se respeta", from, ciudad)
 		return reply
 	}
 	contexto, ok := a.catalog.Get()
