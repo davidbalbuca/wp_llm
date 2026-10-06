@@ -218,10 +218,10 @@ func (a *Agent) ResponderRepetirPedido(from, texto string) (string, bool) {
 		// anterior para que entienda por qué se la pedimos otra vez.
 		texto := fmt.Sprintf("¡Listo! %s como la última vez 🙌 ", describeItems(lineas))
 		if destino := last.Destino(); destino != "" {
-			texto += fmt.Sprintf("La última vez te lo entregamos en %s. Compárteme tu ubicación "+
-				"por WhatsApp 📎 y te lo envío enseguida.", destino)
+			texto += fmt.Sprintf("La última vez te lo entregamos en %s. ¿Me ayudas con tu ubicación "+
+				"de hoy? 📍 Así el repartidor más cercano llega directo a ti.", destino)
 		} else {
-			texto += "Compárteme tu ubicación por WhatsApp 📎 y te lo envío enseguida."
+			texto += "¿Me ayudas con tu ubicación? 📍 Así el repartidor más cercano llega directo a ti."
 		}
 		return texto, true
 	}

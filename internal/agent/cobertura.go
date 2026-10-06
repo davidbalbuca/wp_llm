@@ -83,6 +83,7 @@ func pideLaUbicacion(texto string) bool {
 		{"comparte", "tu", "ubicacion"}, {"me", "compartes", "tu", "ubicacion"},
 		{"envíame", "tu", "ubicacion"}, {"enviame", "tu", "ubicacion"},
 		{"mandame", "tu", "ubicacion"}, {"necesito", "tu", "ubicacion"},
+		{"me", "ayudas", "con", "tu", "ubicacion"},
 	}, 3)
 }
 
@@ -204,8 +205,8 @@ func mensajeCoberturaEnPositivo(zonas []georoutes.ZonaCobertura) string {
 		// sin decirlo el cliente de una parroquia rural asume que solo se atiende el centro.
 		base += "Atendemos en las parroquias urbanas y rurales de " + texto + ". "
 	}
-	return base + "Para confirmarte si llegamos justo a tu dirección, compárteme tu ubicación " +
-		"por WhatsApp 📎 y lo verifico al instante."
+	return base + "Si me compartes tu ubicación 📍, te confirmo al instante si llegamos justo " +
+		"a tu casa."
 }
 
 // ejemplosPorZona es cuántas parroquias se nombran por zona EN EL MENSAJE AL CLIENTE. Seis, no

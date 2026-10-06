@@ -93,7 +93,7 @@ func (a *Agent) CambiarDireccionPorUbicacion(from string, lat, lng float64) (str
 	if res, err := a.gr.CheckCoverage(lat, lng, from); err == nil && !res.Cubierto {
 		log.Printf("[cambio-dir] %s: nueva ubicación fuera de cobertura; no se cancela el anterior", from)
 		msg := "Revisé tu nueva ubicación y por ahora no llegamos a esa zona 😔. " +
-			"Tu pedido anterior sigue en camino a la dirección original. Si tienes otra dirección dentro de nuestra zona, compártemela 📍"
+			"Tu pedido anterior sigue en camino a la dirección original. Si quieres que te llegue a otra dirección dentro de nuestra zona, ¿me la compartes? 📍"
 		a.store.AppendUser(from, fmt.Sprintf("📍 ubicación: %.6f, %.6f", lat, lng))
 		a.store.AppendModel(from, msg)
 		return msg, true

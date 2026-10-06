@@ -19,7 +19,7 @@ import (
 )
 
 // cuerpoMenuColores es la pregunta que va debajo de la presentación.
-const cuerpoMenuColores = "👇 ¿De qué color es tu cilindro?"
+const cuerpoMenuColores = "Cuéntame, ¿de qué color es tu cilindro? 👇 Así te busco a quien lo tenga más cerca"
 
 // palabrasDeApertura son las únicas que puede traer un mensaje para contestarlo con el menú.
 var palabrasDeApertura = map[string]bool{

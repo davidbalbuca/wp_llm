@@ -98,8 +98,8 @@ func (a *Agent) ConfirmarDireccion(from, texto string) (string, bool) {
 		// Se BORRA la ubicacion vieja: si no, el proximo intento volveria a proponerla.
 		a.store.ClearLocation(from)
 		log.Printf("[direccion] %s pidió otra dirección", from)
-		return "Perfecto 👍 Compárteme tu ubicación actual por WhatsApp 📎 (botón de adjuntar → " +
-			"Ubicación) y con eso te lo enviamos.", true
+		return "Perfecto 👍 ¿Me compartes tu ubicación de ahora? 😊 Tocas el 📎 → *Ubicación* y " +
+			"con eso te lo enviamos.", true
 
 	default:
 		// Cualquier otra cosa NO se interpreta: podria ser "sí pero a la casa de mi mamá".

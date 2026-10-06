@@ -77,6 +77,9 @@ type Config struct {
 	// consentimiento se conserva para poder volver a encenderlo sin tocar código.
 	PedirConsentimiento bool
 	CierreVentanaMax    time.Duration
+	// CierreDespedida: si el cliente tampoco contesta el recordatorio, cuánto se espera antes de
+	// despedirse (06/10: primero un recordatorio según dónde se quedó, después la despedida).
+	CierreDespedida time.Duration
 	// Telegram: alertas de operación (test productivo). Sin token o chat queda APAGADO y el bot
 	// sigue igual. TelegramAvisarInicio permite dejar solo errores (los verdes son ruidosos).
 	TelegramBotToken     string
@@ -221,6 +224,7 @@ func Load() Config {
 		UsarBusquedaBackend:  optionalBool("BOT_USAR_BUSQUEDA", false),
 		PedirConsentimiento:  optionalBool("BOT_PEDIR_CONSENTIMIENTO", false),
 		CierreVentanaMax:     time.Duration(optionalInt("BOT_CIERRE_VENTANA_MAX_MIN", 60)) * time.Minute,
+		CierreDespedida:      time.Duration(optionalInt("BOT_CIERRE_DESPEDIDA_MIN", 15)) * time.Minute,
 		BotHorarioInicio:     optional("BOT_HORARIO_INICIO", "07:00"),
 		BotHorarioFin:        optional("BOT_HORARIO_FIN", "19:00"),
 		BotDiasLaborables:    optional("BOT_DIAS_LABORABLES", "1-6"),

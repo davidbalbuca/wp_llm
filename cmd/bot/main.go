@@ -1047,7 +1047,7 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 				messageForAgent = "He compartido mi ubicación actual."
 			} else {
 				log.Printf("[webhook] link corto de Maps sin coordenadas para %s: %q", inc.From, inc.Text)
-				_ = replyClient(cfg, store, inc.From, "No pude abrir tu enlace de Google Maps 🙏. Por favor, compárteme tu ubicación con el pin nativo de WhatsApp: adjuntar 📎 → Ubicación → Enviar ubicación actual.")
+				_ = replyClient(cfg, store, inc.From, "No pude abrir tu enlace de Google Maps 🙏. ¿Me compartes tu ubicación directo desde WhatsApp? Tocas el 📎 → *Ubicación* → *Enviar tu ubicación actual* 😊")
 				return
 			}
 		} else {

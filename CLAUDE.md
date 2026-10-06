@@ -48,8 +48,9 @@ ANTHROPIC_API_KEY           # API key de la Console (obligatoria si LLM_PROVIDER
 ANTHROPIC_MODEL             # (default: claude-haiku-4-5-20251001)
 ANTHROPIC_MAX_TOKENS        # (default: 1024)
 ANTHROPIC_CACHE_TTL         # 5m (default) | 1h - cuanto vive el prompt cacheado
-BOT_CIERRE_INACTIVIDAD_MIN  # silencio tras el cual el bot se despide (default: 7)
+BOT_CIERRE_INACTIVIDAD_MIN  # silencio tras el cual el bot manda el recordatorio de lo que falta (default: 7)
 BOT_CIERRE_VENTANA_MAX_MIN  # techo: pasado esto ya no se despide (default: 60)
+BOT_CIERRE_DESPEDIDA_MIN    # si no contesta el recordatorio, a los cuántos min se despide (default: 15)
 BOT_ESPERA_RONDA_MIN        # (default: 10) cuánto dura CADA ronda de espera de repartidor. Al
                             # cliente se le pregunta hasta 2 veces si quiere seguir esperando, y
                             # en la 3ª solo le quedan [Reprogramar / Cancelar]. Antes eran 5 min
