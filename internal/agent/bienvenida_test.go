@@ -141,35 +141,37 @@ func TestElSaludoEstaCableado(t *testing.T) {
 	}
 }
 
-// FUERA DE HORARIO EL SALUDO YA LO DICE (05/10). A las 20:52 el saludo prometía "te lo llevamos
-// en minutos" y recién después del color el modelo decía que ya habíamos cerrado.
+// FUERA DE HORARIO EL SALUDO ES OTRO DESDE LA ENTRADA (05/10). A las 20:52 el saludo prometía "te
+// lo llevamos en minutos" y recién después del color el modelo decía que ya habíamos cerrado.
+// Pedido del dueño: "hola soy Ubi etc, ahora no estamos atendiendo pero te agendo tu pedido para
+// mañana desde las 7 am".
 func agenteSaludoConHorario() *Agent {
 	return &Agent{cfg: config.Config{BotHorarioInicio: "07:00", BotHorarioFin: "20:30",
 		BotHorarioFinPorDia: "7=19:00", BotDiasLaborables: "1-7"}}
 }
 
-func TestDespuesDelCierreElSaludoOfreceAgendarParaManana(t *testing.T) {
+func TestDespuesDelCierreElSaludoEsElDeCerrado(t *testing.T) {
 	a := agenteSaludoConHorario()
 	lunes2052 := time.Date(2026, 10, 5, 20, 52, 0, 0, zonaEcuador)
 
-	txt := a.textoBienvenidaSegunHorario("", lunes2052)
+	got := a.textoBienvenidaSegunHorario("Lucia Paredes", lunes2052)
 
-	if strings.Contains(txt, "en minutos") {
-		t.Errorf("de noche no se puede prometer la entrega en minutos: %q", txt)
+	want := "¡Buenas noches, Lucia! 👋 Soy *UbiGas*, tu repartidor aquísito no más 🔥\n\n" +
+		"🌙 Ahora no estamos atendiendo (hoy atendimos hasta las 8:30 pm), pero te agendo tu pedido " +
+		"para mañana desde las 7 am 🚚"
+	if got != want {
+		t.Errorf("saludo fuera de horario\ngot  %q\nwant %q", got, want)
 	}
-	for _, debe := range []string{"*UbiGas*, tu repartidor aquísito", "ya cerramos", "hasta las 20:30",
-		"puedo agendar para mañana desde las 07:00"} {
-		if !strings.Contains(txt, debe) {
-			t.Errorf("falta %q en: %q", debe, txt)
-		}
+	if !strings.Contains(got, marcaDePresentacion) {
+		t.Errorf("sin la marca, saludounico.go no reconoce la presentación: %q", got)
 	}
 }
 
-func TestElDomingoAvisaElCierreDelDomingo(t *testing.T) {
+func TestElDomingoDiceSuCierre(t *testing.T) {
 	a := agenteSaludoConHorario()
 	domingo1930 := time.Date(2026, 10, 4, 19, 30, 0, 0, zonaEcuador)
 
-	if txt := a.textoBienvenidaSegunHorario("", domingo1930); !strings.Contains(txt, "hasta las 19:00") {
+	if txt := a.textoBienvenidaSegunHorario("", domingo1930); !strings.Contains(txt, "hoy atendimos hasta las 7 pm") {
 		t.Errorf("el domingo cierra a las 19:00: %q", txt)
 	}
 }
@@ -179,18 +181,39 @@ func TestDeMadrugadaSeAgendaParaHoy(t *testing.T) {
 	madrugada := time.Date(2026, 10, 6, 5, 40, 0, 0, zonaEcuador)
 
 	txt := a.textoBienvenidaSegunHorario("", madrugada)
-	if !strings.Contains(txt, "desde las 07:00") || strings.Contains(txt, "mañana") {
-		t.Errorf("de madrugada abrimos HOY a las 07:00: %q", txt)
+	if !strings.Contains(txt, "Todavía no empezamos a atender, pero te agendo tu pedido para hoy desde las 7 am") {
+		t.Errorf("de madrugada abrimos HOY: %q", txt)
 	}
 }
 
-func TestSiMananaNoSeTrabajaDiceElDia(t *testing.T) {
+func TestPasadaMedianocheSigueSiendoHoy(t *testing.T) {
+	a := agenteSaludoConHorario()
+	cero30 := time.Date(2026, 10, 6, 0, 30, 0, 0, zonaEcuador)
+
+	if txt := a.textoBienvenidaSegunHorario("", cero30); !strings.Contains(txt, "para hoy desde las 7 am") {
+		t.Errorf("a las 00:30 la apertura es hoy a las 7: %q", txt)
+	}
+}
+
+func TestSiMananaNoSeTrabajaYQuedaAMasDe24HorasNoSeOfreceAgendar(t *testing.T) {
 	a := agenteSaludoConHorario()
 	a.cfg.BotDiasLaborables = "1-6" // domingo cerrado
 	sabado2100 := time.Date(2026, 10, 10, 21, 0, 0, 0, zonaEcuador)
 
-	if txt := a.textoBienvenidaSegunHorario("", sabado2100); !strings.Contains(txt, "agendar para el lunes") {
-		t.Errorf("el domingo no se trabaja: tiene que decir el lunes: %q", txt)
+	txt := a.textoBienvenidaSegunHorario("", sabado2100)
+	// El lunes 07:00 queda a 34 h: WhatsApp no deja escribirle para confirmar.
+	if strings.Contains(txt, "agendo") || !strings.Contains(txt, "Volvemos el lunes desde las 7 am") {
+		t.Errorf("a más de 24 h no se puede agendar; hay que decir cuándo volvemos: %q", txt)
+	}
+}
+
+func TestElDiaQueNoSeTrabajaLoDice(t *testing.T) {
+	a := agenteSaludoConHorario()
+	a.cfg.BotDiasLaborables = "1-6"
+	domingo2200 := time.Date(2026, 10, 11, 22, 0, 0, 0, zonaEcuador)
+
+	if txt := a.textoBienvenidaSegunHorario("", domingo2200); !strings.Contains(txt, "Hoy no estamos atendiendo, pero te agendo tu pedido para mañana desde las 7 am") {
+		t.Errorf("domingo sin servicio, el lunes a las 7 queda a 9 h: %q", txt)
 	}
 }
 
@@ -209,6 +232,14 @@ func TestElAvisoDeCierreNoAfirmaQueYaEstaAgendado(t *testing.T) {
 		time.Date(2026, 10, 5, 20, 52, 0, 0, zonaEcuador), time.Date(2026, 10, 6, 5, 40, 0, 0, zonaEcuador)} {
 		if txt := a.textoBienvenidaSegunHorario("", hora); afirmaProgramado(txt) || afirmaPedidoConfirmado(txt) {
 			t.Errorf("el saludo ofrece agendar, no afirma que ya está: %q", txt)
+		}
+	}
+}
+
+func TestHoraAmigable(t *testing.T) {
+	for in, want := range map[string]string{"07:00": "7 am", "20:30": "8:30 pm", "12:00": "12 pm", "19:00": "7 pm", "00:15": "12:15 am"} {
+		if got := horaAmigable(in); got != want {
+			t.Errorf("horaAmigable(%q) = %q; quería %q", in, got, want)
 		}
 	}
 }

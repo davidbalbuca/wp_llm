@@ -46,48 +46,105 @@ func (a *Agent) SaludoDeBienvenida(from string) (string, bool) {
 	return a.textoBienvenidaSegunHorario(nombre, time.Now().In(zonaEcuador)) + a.datosDeArranque(), true
 }
 
-// textoBienvenidaSegunHorario es la presentación de siempre en horario y, FUERA de horario, la
-// misma con el aviso de que hoy ya no hay entregas y la OFERTA de agendarlo (05/10).
+// textoBienvenidaSegunHorario es la presentación de siempre en horario y, FUERA de horario, otra
+// de entrada (05/10): quién somos, que ahora no estamos atendiendo y que le agendamos el pedido.
 //
 // Antes, a las 20:52 el saludo prometía "te lo llevamos en minutos" y recién DESPUÉS de que el
 // cliente eligiera el color el modelo le decía que ya habíamos cerrado: una promesa y su
-// desmentida en dos mensajes seguidos. Pedido del dueño: "de entrada decir que no estamos en
-// horario y que te puedo agendar para mañana".
+// desmentida en dos mensajes seguidos. Pedido del dueño: "hola soy Ubi etc, ahora no estamos
+// atendiendo pero te agendo tu pedido para mañana desde las 7 am".
 //
-// Es una OFERTA ("te lo puedo agendar"), nunca "te lo dejo agendado": eso afirma algo que todavía
-// no existe, el modelo lo repetía y el candado del pedido fantasma forzaba un registro inmediato
-// que fallaba (probado en el simulador el 05/10 a las 21:25).
+// "Te agendo" es un ofrecimiento, nunca "te lo dejo agendado": eso afirma algo que todavía no
+// existe, el modelo lo repetía y el candado del pedido fantasma forzaba un registro inmediato que
+// fallaba (probado en el simulador el 05/10 a las 21:25).
 func (a *Agent) textoBienvenidaSegunHorario(nombre string, ahora time.Time) string {
 	cerrado := a.avisoFueraDeHorario(ahora)
 	if cerrado == "" {
 		return textoBienvenidaA(nombre, ahora)
 	}
-	return saludoConGancho(nombre, ahora) + "\n\n" + cerrado
+	return saludoDeFranja(nombre, ahora) + " Soy *UbiGas*, tu repartidor aquísito no más 🔥\n\n" + cerrado
 }
 
-// avisoFueraDeHorario dice que hoy ya no hay entregas y cuándo sí; "" si estamos en horario (o si
-// el horario no está configurado: sin horario no se le cierra la puerta a nadie).
+// avisoFueraDeHorario dice que ahora no atendemos y cuándo sí; "" si estamos en horario (o si el
+// horario no está configurado: sin horario no se le cierra la puerta a nadie).
 func (a *Agent) avisoFueraDeHorario(ahora time.Time) string {
 	ini := a.cfg.BotHorarioInicio
 	if parseHoraHHMM(ini) < 0 || a.dentroDeHorario(ahora) {
 		return ""
 	}
-	// Madrugada de un día que se trabaja: abrimos HOY.
-	if a.esDiaLaborable(ahora) && ahora.Hour()*60+ahora.Minute() < parseHoraHHMM(ini) {
-		return "🌙 Todavía no empezamos las entregas: atendemos desde las " + ini + ", pero te lo " +
-			"puedo agendar para que te llegue desde esa hora 🚚"
+	abre, ok := a.proximaApertura(ahora)
+	if !ok {
+		return ""
 	}
-	cuando := "mañana"
-	for d := 1; d <= 7; d++ {
-		if dia := ahora.AddDate(0, 0, d); a.esDiaLaborable(dia) {
-			if d > 1 {
-				cuando = "el " + diasEnEspanol[isoDelDia(dia)]
-			}
-			break
+	desde := "desde las " + horaAmigable(ini)
+	cuando := "para mañana"
+	switch dias := diasEntre(ahora, abre); {
+	case dias == 0:
+		cuando = "para hoy"
+	case dias > 1:
+		cuando = "para el " + diasEnEspanol[isoDelDia(abre)]
+	}
+	motivo := "🌙 Ahora no estamos atendiendo"
+	switch {
+	case diasEntre(ahora, abre) == 0:
+		motivo = "🌙 Todavía no empezamos a atender"
+	case !a.esDiaLaborable(ahora):
+		motivo = "🌙 Hoy no estamos atendiendo"
+	case a.esDiaLaborable(ahora) && ahora.Hour()*60+ahora.Minute() >= parseHoraHHMM(a.finDelDia(ahora)):
+		motivo += " (hoy atendimos hasta las " + horaAmigable(a.finDelDia(ahora)) + ")"
+	}
+	// WhatsApp solo deja escribirle dentro de las 24 h desde su último mensaje: más allá no se
+	// puede agendar, porque no habría cómo confirmarle la entrega.
+	if abre.Sub(ahora) > 24*time.Hour {
+		return motivo + ". Volvemos " + strings.TrimPrefix(cuando, "para ") + " " + desde +
+			": escríbenos y te lo llevamos en minutos 🚚"
+	}
+	return motivo + ", pero te agendo tu pedido " + cuando + " " + desde + " 🚚"
+}
+
+// proximaApertura es el próximo momento en que empezamos a atender (hoy o un día siguiente).
+func (a *Agent) proximaApertura(ahora time.Time) (time.Time, bool) {
+	ini := parseHoraHHMM(a.cfg.BotHorarioInicio)
+	if ini < 0 {
+		return time.Time{}, false
+	}
+	for d := 0; d <= 7; d++ {
+		dia := ahora.AddDate(0, 0, d)
+		abre := time.Date(dia.Year(), dia.Month(), dia.Day(), ini/60, ini%60, 0, 0, ahora.Location())
+		if abre.After(ahora) && a.esDiaLaborable(abre) {
+			return abre, true
 		}
 	}
-	return "🌙 Por hoy ya cerramos (atendemos hasta las " + a.finDelDia(ahora) + "), pero te lo puedo " +
-		"agendar para " + cuando + " desde las " + ini + " 🚚"
+	return time.Time{}, false
+}
+
+// diasEntre cuenta los días de calendario entre dos instantes (0 = el mismo día).
+func diasEntre(desde, hasta time.Time) int {
+	a := time.Date(desde.Year(), desde.Month(), desde.Day(), 0, 0, 0, 0, desde.Location())
+	b := time.Date(hasta.Year(), hasta.Month(), hasta.Day(), 0, 0, 0, 0, desde.Location())
+	return int(b.Sub(a).Hours()+12) / 24
+}
+
+// horaAmigable pasa "07:00" a "7 am" y "20:30" a "8:30 pm", como se dice en la calle.
+func horaAmigable(hhmm string) string {
+	m := parseHoraHHMM(hhmm)
+	if m < 0 {
+		return hhmm
+	}
+	h, min, sufijo := m/60, m%60, "am"
+	if h >= 12 {
+		sufijo = "pm"
+	}
+	if h > 12 {
+		h -= 12
+	}
+	if h == 0 {
+		h = 12
+	}
+	if min == 0 {
+		return fmt.Sprintf("%d %s", h, sufijo)
+	}
+	return fmt.Sprintf("%d:%02d %s", h, min, sufijo)
 }
 
 // isoDelDia es el número ISO del día (lunes=1 … domingo=7), el de la configuración.
@@ -176,15 +233,20 @@ func textoBienvenidaA(nombre string, ahora time.Time) string {
 		"Estamos a la vuelta de tu casa y te lo llevamos en minutos 🚚💨"
 }
 
-// saludoConGancho es la primera línea, igual dentro y fuera de horario: el saludo de la franja y
-// el gancho de UbiGas (saludounico.go la reconoce para no repetir la presentación).
+// saludoConGancho es la primera línea en horario: el saludo de la franja y el gancho de UbiGas.
+// Las dos versiones (en horario y cerrado) llevan "*UbiGas*, tu repartidor aquísito", que es lo
+// que saludounico.go reconoce para no repetir la presentación.
 func saludoConGancho(nombre string, ahora time.Time) string {
-	saludo := franjaDeSaludo(ahora) + "! 👋"
-	if nombre != "" {
-		// Solo el primer nombre: "¡Hola, David Espinoza Fajardo!" suena a carta del banco.
-		saludo = franjaDeSaludo(ahora) + ", " + primerNombre(nombre) + "! 👋"
+	return saludoDeFranja(nombre, ahora) + " ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu repartidor aquísito no más! 🔥"
+}
+
+// saludoDeFranja es "¡Buenas noches, Ana! 👋" (o sin nombre si su WhatsApp no dice uno).
+func saludoDeFranja(nombre string, ahora time.Time) string {
+	if nombre == "" {
+		return franjaDeSaludo(ahora) + "! 👋"
 	}
-	return saludo + " ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu repartidor aquísito no más! 🔥"
+	// Solo el primer nombre: "¡Hola, David Espinoza Fajardo!" suena a carta del banco.
+	return franjaDeSaludo(ahora) + ", " + primerNombre(nombre) + "! 👋"
 }
 
 // primerNombre se queda con la primera palabra del nombre completo.
