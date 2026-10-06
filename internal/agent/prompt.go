@@ -189,7 +189,9 @@ func (a *Agent) construirSistema(from string) (fijo, volatil string) {
 			"programar_entrega: pide color, cantidad, su ubicación de WhatsApp (NO pidas cédula) y la hora " +
 			"deseada. Para la hora, DILE EL HORARIO DE ATENCIÓN y deja que el cliente escriba " +
 			"la que prefiera (dentro de ese horario y de las próximas 24 horas): NO le ofrezcas horas como " +
-			"opciones ni uses mostrar_menu para eso.")
+			"opciones ni uses mostrar_menu para eso. Si el saludo de bienvenida del historial YA le dijo que " +
+			"cerramos y que se lo podemos agendar, NO se lo vuelvas a explicar: sigue directo con lo que falta. " +
+			"NUNCA digas que ya quedó agendado hasta que programar_entrega responda bien.")
 	} else {
 		// Decirlo EN POSITIVO es necesario: si solo se avisa cuando estamos fuera, el modelo ve
 		// la hora cerca del cierre y deduce solo que "la jornada terminó". Paso en produccion el

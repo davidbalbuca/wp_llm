@@ -43,7 +43,59 @@ func (a *Agent) SaludoDeBienvenida(from string) (string, bool) {
 	// Solo un nombre que sirva: "¡Buenas noches, @sd2!" suena a robot (05/10).
 	nombre := conversation.NombreUsable(a.store, from)
 	log.Printf("[bienvenida] %s empieza conversación; se presenta el bot", from)
-	return textoBienvenida(nombre) + a.datosDeArranque(), true
+	return a.textoBienvenidaSegunHorario(nombre, time.Now().In(zonaEcuador)) + a.datosDeArranque(), true
+}
+
+// textoBienvenidaSegunHorario es la presentación de siempre en horario y, FUERA de horario, la
+// misma con el aviso de que hoy ya no hay entregas y la OFERTA de agendarlo (05/10).
+//
+// Antes, a las 20:52 el saludo prometía "te lo llevamos en minutos" y recién DESPUÉS de que el
+// cliente eligiera el color el modelo le decía que ya habíamos cerrado: una promesa y su
+// desmentida en dos mensajes seguidos. Pedido del dueño: "de entrada decir que no estamos en
+// horario y que te puedo agendar para mañana".
+//
+// Es una OFERTA ("te lo puedo agendar"), nunca "te lo dejo agendado": eso afirma algo que todavía
+// no existe, el modelo lo repetía y el candado del pedido fantasma forzaba un registro inmediato
+// que fallaba (probado en el simulador el 05/10 a las 21:25).
+func (a *Agent) textoBienvenidaSegunHorario(nombre string, ahora time.Time) string {
+	cerrado := a.avisoFueraDeHorario(ahora)
+	if cerrado == "" {
+		return textoBienvenidaA(nombre, ahora)
+	}
+	return saludoConGancho(nombre, ahora) + "\n\n" + cerrado
+}
+
+// avisoFueraDeHorario dice que hoy ya no hay entregas y cuándo sí; "" si estamos en horario (o si
+// el horario no está configurado: sin horario no se le cierra la puerta a nadie).
+func (a *Agent) avisoFueraDeHorario(ahora time.Time) string {
+	ini := a.cfg.BotHorarioInicio
+	if parseHoraHHMM(ini) < 0 || a.dentroDeHorario(ahora) {
+		return ""
+	}
+	// Madrugada de un día que se trabaja: abrimos HOY.
+	if a.esDiaLaborable(ahora) && ahora.Hour()*60+ahora.Minute() < parseHoraHHMM(ini) {
+		return "🌙 Todavía no empezamos las entregas: atendemos desde las " + ini + ", pero te lo " +
+			"puedo agendar para que te llegue desde esa hora 🚚"
+	}
+	cuando := "mañana"
+	for d := 1; d <= 7; d++ {
+		if dia := ahora.AddDate(0, 0, d); a.esDiaLaborable(dia) {
+			if d > 1 {
+				cuando = "el " + diasEnEspanol[isoDelDia(dia)]
+			}
+			break
+		}
+	}
+	return "🌙 Por hoy ya cerramos (atendemos hasta las " + a.finDelDia(ahora) + "), pero te lo puedo " +
+		"agendar para " + cuando + " desde las " + ini + " 🚚"
+}
+
+// isoDelDia es el número ISO del día (lunes=1 … domingo=7), el de la configuración.
+func isoDelDia(t time.Time) int {
+	if iso := int(t.Weekday()); iso != 0 {
+		return iso
+	}
+	return 7
 }
 
 // datosDeArranque son el PRECIO y la COBERTURA que acompañan a la presentación (pedido del dueño,
@@ -120,13 +172,19 @@ func textoBienvenida(nombre string) string {
 // Diciéndolo bien la primera vez no hay nada que corregir — y el candado de saludounico.go quita lo
 // que sobre.
 func textoBienvenidaA(nombre string, ahora time.Time) string {
+	return saludoConGancho(nombre, ahora) + "\n\n" +
+		"Estamos a la vuelta de tu casa y te lo llevamos en minutos 🚚💨"
+}
+
+// saludoConGancho es la primera línea, igual dentro y fuera de horario: el saludo de la franja y
+// el gancho de UbiGas (saludounico.go la reconoce para no repetir la presentación).
+func saludoConGancho(nombre string, ahora time.Time) string {
 	saludo := franjaDeSaludo(ahora) + "! 👋"
 	if nombre != "" {
 		// Solo el primer nombre: "¡Hola, David Espinoza Fajardo!" suena a carta del banco.
 		saludo = franjaDeSaludo(ahora) + ", " + primerNombre(nombre) + "! 👋"
 	}
-	return saludo + " ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu repartidor aquísito no más! 🔥\n\n" +
-		"Estamos a la vuelta de tu casa y te lo llevamos en minutos 🚚💨"
+	return saludo + " ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu repartidor aquísito no más! 🔥"
 }
 
 // primerNombre se queda con la primera palabra del nombre completo.
