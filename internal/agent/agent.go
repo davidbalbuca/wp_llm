@@ -645,7 +645,20 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// deja la conversación esperando a un bot que no va a volver a hablar. Ver turnocolgado.go
 	// y el caso de Doris (21/09).
 	if a.turnoQuedaColgado(t, from, reply, dijoElModelo) {
-		reply = a.rescatarTurnoColgado(from, reply)
+		if a.listoParaRegistrar(from) {
+			// Ya dio TODO (color, cantidad y la ubicación de ahora): lo que espera es su pedido,
+			// no un "¿Seguimos con tu pedido?". Ver listoParaRegistrar.
+			log.Printf("[colgado] %s: tenía todo para pedir y el modelo no registró; se registra en código", from)
+			if forzado, ok := a.forzarRegistroSiHaceFalta(t, from); ok {
+				if forzado == "" { // salió un menú (p. ej. confirmar la dirección)
+					reply = ""
+				} else {
+					reply = strings.TrimSpace(reply) + "\n\n" + forzado
+				}
+			}
+		} else {
+			reply = a.rescatarTurnoColgado(from, reply)
+		}
 	}
 
 	// UN SOLO SALUDO. Si el código acaba de presentarse (bienvenida.go), el modelo NO puede saludar

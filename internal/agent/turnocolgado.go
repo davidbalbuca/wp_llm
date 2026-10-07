@@ -3,6 +3,7 @@ package agent
 import (
 	"log"
 	"strings"
+	"time"
 )
 
 // LA PELOTA NO SE QUEDA DEL LADO DEL BOT.
@@ -279,4 +280,21 @@ func (a *Agent) preguntaQueFalta(from string) string {
 		return "¿Me compartes tu ubicación 📎 para enviártelo?"
 	}
 	return "¿Seguimos con tu pedido? 😊"
+}
+
+// listoParaRegistrar dice si el cliente ya dio todo lo necesario para el pedido inmediato: color
+// y cantidad en la ficha, y una ubicación de ESTA conversación, en horario y sin otro pedido vivo.
+//
+// El caso (05/10 al 07/10, 7 conversaciones): el cliente manda su ubicación con todo lo demás ya
+// dicho; el modelo solo confirma la cobertura ("¡Buenas noticias! Sí llegamos a tu zona") sin
+// registrar, y el turno colgado le pegaba "¿Seguimos con tu pedido?". El cliente tenía que decir
+// "Si" para que recién se registrara, y si no contestaba, el pedido nunca existía.
+func (a *Agent) listoParaRegistrar(from string) bool {
+	if _, ok := a.inferirLineas(from); !ok {
+		return false
+	}
+	if !a.ubicacionEsDeAhora(from) || a.tienePedidoVivo(from) || a.clienteQuiereProgramar(from) {
+		return false
+	}
+	return a.dentroDeHorario(time.Now().In(zonaEcuador))
 }

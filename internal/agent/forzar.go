@@ -115,7 +115,7 @@ func (a *Agent) pedirElDatoQueFalta(from, falta string) string {
 		return a.revisarPeticionDeCedula(&turno{}, from,
 			"¡Ya casi! 😊 Para emitir tu factura necesito tu número de cédula.")
 	}
-	return "¡Ya casi! 😊 Solo me falta tu nombre completo para dejar tu pedido listo."
+	return "¡Ya casi! " + PreguntaNombre
 }
 
 // tienePedidoVivo dice si el cliente TIENE AHORA un pedido en marcha: uno registrado en el
