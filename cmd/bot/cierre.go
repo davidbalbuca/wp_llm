@@ -179,6 +179,10 @@ func revisarCierres(cfg config.Config, store conversation.Store) {
 			color := ""
 			if p, ok := store.GetPedidoEnCurso(chat.Phone); ok {
 				color = p.Color
+				// Con varios colores, el que todavía no tiene cantidad (el mismo del prompt).
+				if l, falta := p.PrimeraSinCantidad(); falta {
+					color = l.Color
+				}
 			}
 			if err := avisarCliente(cfg, store, chat.Phone, textoRecordatorio(nombre, falta, color)); err != nil {
 				log.Printf("[cierre] no se pudo recordar a %s: %v", chat.Phone, err)

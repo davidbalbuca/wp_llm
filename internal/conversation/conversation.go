@@ -456,6 +456,20 @@ func (p PedidoEnCurso) Lineas() []ItemPedido {
 	return lineas
 }
 
+// PrimeraSinCantidad es la línea por la que hay que preguntar "¿cuántos?": la PRIMERA sin
+// cantidad, en el orden en que el cliente nombró los colores. Es la misma que llena un número
+// suelto (ver cantidadSuelta en agent/encurso.go): el prompt, los rescates y la ficha tienen que
+// hablar de la misma línea, o el cliente responde "2" a una pregunta y se anota en otra (Alicia,
+// 08/10: le preguntaron por los amarillos y el 2 quedó en los blancos).
+func (p PedidoEnCurso) PrimeraSinCantidad() (ItemPedido, bool) {
+	for _, l := range p.Lineas() {
+		if l.Cantidad < 1 {
+			return l, true
+		}
+	}
+	return ItemPedido{}, false
+}
+
 // Completo dice si el pedido está listo para registrarse: al menos una línea y TODAS con color
 // y cantidad. Una línea a medias ("amarillo" sin cuántos) significa que aún falta preguntar.
 func (p PedidoEnCurso) Completo() bool {

@@ -742,6 +742,9 @@ func (s *memStore) SetPedidoEnCurso(phone string, p PedidoEnCurso) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p.UpdatedAt = time.Now()
+	// Copia de las líneas, como hace SQLite al serializar: si no, quien guardó y el store comparten
+	// el slice y un cambio posterior "se guarda solo" en memoria pero no en producción (08/10).
+	p.Items = append([]ItemPedido(nil), p.Items...)
 	s.pedidoEnCurso[phone] = p
 }
 
@@ -755,6 +758,7 @@ func (s *memStore) GetPedidoEnCurso(phone string) (PedidoEnCurso, bool) {
 		delete(s.pedidoEnCurso, phone)
 		return PedidoEnCurso{}, false
 	}
+	p.Items = append([]ItemPedido(nil), p.Items...)
 	return p, ok
 }
 

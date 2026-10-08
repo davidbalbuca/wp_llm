@@ -372,7 +372,7 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// Ficha del pedido: se anota lo que el cliente acaba de decir (color, cantidad, hora) ANTES
 	// de llamar al modelo, para que el prompt ya lo refleje y los candados no tengan que
 	// adivinarlo del historial (ver internal/agent/encurso.go).
-	a.anotarDelMensaje(from, text)
+	notaFicha := a.anotarDelMensaje(from, text)
 
 	// Vigilancia pasiva: avisa al grupo si el mensaje parece un sondeo del negocio en vez de un
 	// pedido. Va en su propia goroutine y NO altera la respuesta: el modelo ya tiene prohibido
@@ -389,6 +389,9 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// productos, colores o precios sin reiniciar el agente. Se devuelve en DOS piezas para
 	// poder cachear la fija (ver construirSistema y internal/llm).
 	sistemaFijo, systemPrompt := a.construirSistema(from)
+	if notaFicha != "" {
+		systemPrompt += "\n\nÚLTIMO DATO DEL CLIENTE: " + notaFicha
+	}
 
 	reply := ""
 	for round := 0; round < maxToolRounds; round++ {

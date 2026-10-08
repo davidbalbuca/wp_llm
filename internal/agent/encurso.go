@@ -10,6 +10,7 @@
 package agent
 
 import (
+	"fmt"
 	"log"
 	"regexp"
 	"strconv"
@@ -41,12 +42,21 @@ var marcaHoraria = regexp.MustCompile(`\d{1,2}\s*[:.]\s*\d{2}` + // 18:30, 18.30
 //
 // Es acumulativo: cada mensaje solo añade o corrige lo suyo. Un "mejor amarillo" pisa el color
 // anterior; un mensaje que no aporta nada deja la ficha igual.
-func (a *Agent) anotarDelMensaje(from, texto string) {
+//
+// Devuelve una nota para el prompt de ESTE turno cuando un número suelto se anotó en un pedido de
+// varios colores: dice a qué color fue. Sin ella el modelo lo leía mal aunque la ficha estuviera
+// bien (simulación del caso Alicia, 08/10: ficha "2 amarillos" y el modelo dijo "2 blancos").
+func (a *Agent) anotarDelMensaje(from, texto string) (nota string) {
 	if strings.TrimSpace(texto) == "" {
-		return
+		return ""
 	}
 	p, _ := a.store.GetPedidoEnCurso(from)
 	antes := p
+	// Copia de las líneas: ponerCantidad y cantidadSuelta cambian Items EN SU LUGAR, y con el
+	// slice compartido "antes" cambiaba con ellas, la comparación del paso 4 no veía nada y la
+	// cantidad de una línea cerrada nunca se guardaba (08/10). En la memoria de los tests no se
+	// notaba porque el store devolvía el mismo slice; con SQLite, en producción, se perdía.
+	antes.Items = append([]conversation.ItemPedido(nil), p.Items...)
 
 	// 1. Color(es): se validan contra el catálogo, así que "el azul" solo cuenta si azul existe.
 	//    Con VARIOS colores en el mensaje ("blanco y amarillo") cada uno abre su línea: antes la
@@ -73,7 +83,7 @@ func (a *Agent) anotarDelMensaje(from, texto string) {
 	//    modelo "FALTA: nada, llama ya a la herramienta" (encontrado en la revisión del 07/09).
 	//
 	//    Con varias líneas abiertas, "1 de blanco" lleva la cantidad a la línea de ESE color;
-	//    un número solo ("2") va a la línea que se está eligiendo ahora.
+	//    un número solo ("2") responde por la PRIMERA línea sin cantidad (ver cantidadSuelta).
 	//    Y la opción "Más de 3" del menú NO es una cantidad, aunque lleve un 3 dentro: es la
 	//    puerta para escribir un número mayor. Sin esta salida, el cliente que la toca queriendo
 	//    SEIS se queda con TRES anotados — lo contrario exacto de lo que pidió.
@@ -102,8 +112,14 @@ func (a *Agent) anotarDelMensaje(from, texto string) {
 		if n >= 1 && n <= 20 {
 			if colores := coloresDelMensaje(a, texto); len(colores) == 1 {
 				p = ponerCantidad(p, colores[0], n)
-			} else if len(colores) == 0 && p.Color != "" {
-				p.Cantidad = n
+			} else if len(colores) == 0 {
+				var color string
+				p, color = cantidadSuelta(p, n)
+				if color != "" && len(p.Lineas()) > 1 {
+					nota = fmt.Sprintf("el \"%s\" que acaba de escribir el cliente es la cantidad de "+
+						"cilindros %s y ya quedó anotada así en la ficha. NO la apliques a otro color.",
+						strings.TrimSpace(texto), color)
+				}
 			}
 		}
 	}
@@ -114,11 +130,12 @@ func (a *Agent) anotarDelMensaje(from, texto string) {
 	// 4. Solo se escribe si algo cambió: evita tocar el store en cada mensaje de charla.
 	if p.Color == antes.Color && p.Cantidad == antes.Cantidad && p.Hora == antes.Hora &&
 		p.Flujo == antes.Flujo && mismosItems(p.Items, antes.Items) {
-		return
+		return nota
 	}
 	log.Printf("[encurso] %s: color=%q cantidad=%d items=%v hora=%q flujo=%s", from, p.Color, p.Cantidad, p.Items, p.Hora, p.Flujo)
 	a.store.SetPedidoEnCurso(from, p)
 	a.avisarQuePidioGas(from, p)
+	return nota
 }
 
 // avisarQuePidioGas mueve la tarjeta del grupo de Telegram a "Pidió gas".
@@ -179,8 +196,8 @@ func contieneMarca(normalizado string, marcas []string) bool {
 //   - VARIOS colores en un mismo mensaje ("blanco y amarillo") son un pedido multicolor: cada
 //     color abre su línea. Antes la ficha tenía un solo Color y ganaba el último — así se
 //     perdió el BLANCO de David (10/09).
-//   - UN color con marca de adición ("también amarillo") y la línea en curso completa: la
-//     cierra y abre otra.
+//   - UN color con marca de adición ("también amarillo", "y blanco"): la línea en curso pasa a
+//     Items (con o sin cantidad) y el color nuevo abre otra.
 //   - UN color en cualquier otro caso pisa la línea en curso (cambio de opinión, o primera
 //     elección): el comportamiento de siempre.
 //   - Un color que YA tiene línea no se duplica (el cliente repitiéndose, o "1 de blanco"
@@ -205,8 +222,12 @@ func anotarColores(p conversation.PedidoEnCurso, products []georoutes.Product, t
 		switch {
 		case p.Color == "":
 			p.Color = c
-		case nuevos > 1 || (aditivo && !reemplaza && p.Cantidad >= 1):
-			// Multicolor en un mensaje, o una suma explícita con la línea en curso cerrada.
+		case nuevos > 1 || (aditivo && !reemplaza):
+			// Multicolor en un mensaje, o una suma explícita ("y blanco", "también azul"). La suma
+			// vale AUNQUE la línea en curso todavía no tenga cantidad: hasta el 08/10 se exigía, y
+			// "AMARILLO" + "Y blanco" se leía como cambio de opinión. La ficha se quedó solo con el
+			// blanco mientras el modelo le hablaba de los dos (Alicia). La línea pasa a Items sin
+			// cantidad y se pregunta por ella primero (PrimeraSinCantidad).
 			p.Items = append(p.Items, conversation.ItemPedido{Color: p.Color, Cantidad: p.Cantidad})
 			p.Color, p.Cantidad = c, 0
 		default:
@@ -214,6 +235,25 @@ func anotarColores(p conversation.PedidoEnCurso, products []georoutes.Product, t
 		}
 	}
 	return p
+}
+
+// cantidadSuelta pone un número dicho SIN color ("2") en la línea por la que se está
+// preguntando: la primera sin cantidad, que es la que nombran el prompt y los rescates
+// (PrimeraSinCantidad). Si todas tienen, es una corrección y va a la línea en curso, como siempre.
+// Antes iba siempre a la línea en curso, que es la ÚLTIMA nombrada: a Alicia (08/10) le
+// preguntaron por los amarillos y su "2" quedó en los blancos.
+// Devuelve también el color al que fue el número ("" si no había ninguna línea).
+func cantidadSuelta(p conversation.PedidoEnCurso, n int) (conversation.PedidoEnCurso, string) {
+	for i := range p.Items {
+		if p.Items[i].Cantidad < 1 {
+			p.Items[i].Cantidad = n
+			return p, p.Items[i].Color
+		}
+	}
+	if p.Color != "" {
+		p.Cantidad = n
+	}
+	return p, p.Color
 }
 
 // ponerCantidad asigna una cantidad a la línea del color dado, esté en curso o ya cerrada.
@@ -321,10 +361,21 @@ func (a *Agent) horaEnMensaje(texto string) (pareceHora bool, hora string) {
 	return true, h
 }
 
-// marcasDeIntercambio delatan que el cliente habla del cilindro que YA TIENE ("tengo 2 amarillos,
-// ¿me los cambian por blanco?"): esos números no son lo que pide.
-var marcasDeIntercambio = []string{"tengo", "tenia", "cambiar", "cambien", "cambian", "cambiarlo",
+// marcasDeIntercambio delatan que el cliente habla del cilindro que YA TIENE para cambiarlo por
+// otro color ("tengo 2 amarillos, me los cambian por blanco"): esos números no son lo que pide.
+var marcasDeIntercambio = []string{"cambiar", "cambien", "cambian", "cambiarlo",
 	"cambiarlos", "cambio", "cambiame"}
+
+// marcasDeTenencia: "tengo" SOLO no es un intercambio. En el gas se cambia el cilindro vacío por
+// uno lleno del MISMO color, así que "tengo un cilindro amarillo y uno blanco" ES el pedido
+// (Alicia, 08/10: con "tengo" en la lista se ignoraban las dos cantidades y el bot le volvía a
+// preguntar). Cuenta como intercambio solo si además lo cambia "por" otro.
+var marcasDeTenencia = []string{"tengo", "tenia"}
+
+func hablaDeIntercambio(norm string) bool {
+	return contieneMarca(norm, marcasDeIntercambio) ||
+		(contieneMarca(norm, marcasDeTenencia) && contieneMarca(norm, []string{"por"}))
+}
 
 // relleno son las palabras que pueden ir entre el número y el color sin romper el par:
 // "2 cilindros de gas blanco", "1 tanque amarillo".
@@ -343,7 +394,7 @@ func cantidadesPegadasAlColor(products []georoutes.Product, texto string) map[st
 		return out
 	}
 	norm := normalizar(texto)
-	if contieneMarca(norm, marcasDeIntercambio) {
+	if hablaDeIntercambio(norm) {
 		return out
 	}
 	nombres := map[string]string{} // forma normalizada (y plurales) -> nombre del catálogo

@@ -513,8 +513,8 @@ func (a *Agent) loQueFaltaParaElPedido(from string) string {
 		return "Para ayudarte con tu gas, cuéntame de qué color es tu cilindro (blanco, amarillo, " +
 			"naranja o azul) 😊"
 	case !p.Completo():
-		return "¿Cuántos cilindros de " + strings.ToLower(p.Lineas()[len(p.Lineas())-1].Color) +
-			" te mando? 😊"
+		l, _ := p.PrimeraSinCantidad()
+		return "¿Cuántos cilindros de " + strings.ToLower(l.Color) + " te mando? 😊"
 	}
 	if _, hay := a.store.GetLocation(from); !hay {
 		return "¿Me ayudas con tu ubicación? 📍 Así el repartidor más cercano llega directo a ti " +

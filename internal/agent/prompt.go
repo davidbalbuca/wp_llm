@@ -228,13 +228,14 @@ func (a *Agent) loQueFalta(from string, p conversation.PedidoEnCurso) string {
 	if len(lineas) == 0 {
 		falta = append(falta, "color/marca del cilindro")
 	}
-	for _, l := range lineas {
-		if l.Cantidad < 1 {
-			if len(lineas) == 1 {
-				falta = append(falta, "cantidad")
-			} else {
-				falta = append(falta, "cantidad de cilindros "+l.Color)
-			}
+	// Con varios colores se nombra SOLO la primera línea sin cantidad: es la que llena el "2" que
+	// conteste el cliente (cantidadSuelta). Si el modelo pregunta por otra, el número cae donde
+	// no es (Alicia, 08/10).
+	if l, falta1 := p.PrimeraSinCantidad(); falta1 {
+		if len(lineas) == 1 {
+			falta = append(falta, "cantidad")
+		} else {
+			falta = append(falta, "cantidad de cilindros "+l.Color+" (pregunta SOLO por ese color ahora)")
 		}
 	}
 	if _, hayUbicacion := a.store.GetLocation(from); !hayUbicacion {
