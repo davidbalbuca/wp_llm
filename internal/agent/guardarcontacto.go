@@ -52,8 +52,8 @@ const intervaloInvitacionApp = 30 * 24 * time.Hour
 
 // MensajeInvitarApp es la línea que va dentro del aviso de entrega.
 func MensajeInvitarApp() string {
-	return "📲 ¿Sabías que en nuestra app puedes ver tu consumo de gas y saber cuándo te toca " +
-		"pedir otra vez? Descárgala gratis 👉 " + LinkApp
+	// Una línea (09/10): el párrafo de antes no se leía.
+	return "📲 La próxima vez pídelo desde nuestra app y revisa tu consumo 👉 " + LinkApp
 }
 
 // TocaInvitarApp dice si a este cliente le corresponde la invitación en esta entrega.

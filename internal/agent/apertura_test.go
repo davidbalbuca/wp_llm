@@ -91,13 +91,21 @@ func TestDatosDeArranque(t *testing.T) {
 			CostoEnvio: 1, CostoInstalacion: 0.45, CostoServicio: 0.15}},
 		Zonas: []georoutes.ZonaCobertura{{Zona: "CUENCA", Parroquias: []string{"MONAY", "TURI"}}},
 	})
-	datos := ag.datosDeArranque()
-	if !strings.Contains(datos, "$3.25 por cilindro") || !strings.Contains(datos, "CUENCA (MONAY, TURI)") {
-		t.Errorf("el arranque debía traer el precio total y la cobertura: %q", datos)
+	// 09/10: debajo del saludo ya no van el precio ni las parroquias (no se leían): solo la ciudad.
+	if got := ag.enTodaLaCiudad(); got != " en todo Cuenca" {
+		t.Errorf("la ciudad sale del catálogo: %q", got)
 	}
-	sinCatalogo := &Agent{}
-	if got := sinCatalogo.datosDeArranque(); got != "" {
+	if got := (&Agent{}).enTodaLaCiudad(); got != "" {
 		t.Errorf("sin catálogo no se dice nada: %q", got)
+	}
+	saludo, _ := ag.SaludoDeBienvenida("593999300001")
+	for _, no := range []string{"$3.25", "parroquias", "Estamos a la vuelta"} {
+		if strings.Contains(saludo, no) {
+			t.Errorf("el saludo volvió a crecer (%q): %q", no, saludo)
+		}
+	}
+	if !strings.Contains(saludo, "en todo Cuenca") || !strings.Contains(saludo, LinkApp) {
+		t.Errorf("el saludo debía decir la ciudad e invitar a la app: %q", saludo)
 	}
 	if got := ZonasEnTexto([]georoutes.ZonaCobertura{{Zona: "CUENCA", Parroquias: []string{"MONAY"}}}); got != "CUENCA (MONAY)" {
 		t.Errorf("ZonasEnTexto = %q", got)

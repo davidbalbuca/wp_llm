@@ -28,6 +28,7 @@ import (
 	"log"
 	"strings"
 	"time"
+	"unicode"
 
 	"wp-llm-gas/internal/conversation"
 )
@@ -43,7 +44,14 @@ func (a *Agent) SaludoDeBienvenida(from string) (string, bool) {
 	// Solo un nombre que sirva: "¡Buenas noches, @sd2!" suena a robot (05/10).
 	nombre := conversation.NombreUsable(a.store, from)
 	log.Printf("[bienvenida] %s empieza conversación; se presenta el bot", from)
-	return a.textoBienvenidaSegunHorario(nombre, time.Now().In(zonaEcuador)) + a.datosDeArranque(), true
+	return a.textoBienvenidaSegunHorario(nombre, time.Now().In(zonaEcuador)) + "\n\n" + LineaApp(), true
+}
+
+// LineaApp invita a la app en CADA saludo (dueño, 09/10: "cada que se pueda va lo de la app, pero
+// que no sea tanto texto, las personas no leen y no se están bajando la app"). Una línea, el
+// enlace al final para que sea lo que se toca.
+func LineaApp() string {
+	return "📲 ¡Ya tenemos app! Pide tu gas desde ahí 👉 " + LinkApp
 }
 
 // textoBienvenidaSegunHorario es la presentación de siempre en horario y, FUERA de horario, otra
@@ -60,9 +68,10 @@ func (a *Agent) SaludoDeBienvenida(from string) (string, bool) {
 func (a *Agent) textoBienvenidaSegunHorario(nombre string, ahora time.Time) string {
 	cerrado := a.avisoFueraDeHorario(ahora)
 	if cerrado == "" {
-		return textoBienvenidaA(nombre, ahora)
+		return textoBienvenidaEn(nombre, ahora, a.enTodaLaCiudad())
 	}
-	return saludoDeFranja(nombre, ahora) + " Soy *UbiGas*, tu repartidor aquísito no más 🔥\n\n" + cerrado
+	return saludoDeFranja(nombre, ahora) + " Soy *UbiGas*, tu repartidor aquísito no más" + a.enTodaLaCiudad() +
+		" 🔥\n\n" + cerrado
 }
 
 // avisoFueraDeHorario dice que ahora no atendemos y cuándo sí; "" si estamos en horario (o si el
@@ -155,37 +164,43 @@ func isoDelDia(t time.Time) int {
 	return 7
 }
 
-// datosDeArranque son el PRECIO y la COBERTURA que acompañan a la presentación (pedido del dueño,
-// 04/10: "la idea es ya dar información precisa desde el arranque"). Son las dos preguntas que
-// más se hacen antes de pedir, así que se contestan antes de que las hagan.
+// enTodaLaCiudad es " en todo Cuenca" con las zonas del catálogo, o "" si no hay catálogo.
 //
-// Salen del catálogo del backend, nunca quemados: si cambia el precio o se agrega una zona, el
-// saludo cambia solo. Sin catálogo no se dice nada (mejor callar que dar un precio viejo).
-func (a *Agent) datosDeArranque() string {
+// Reemplaza al precio y la lista de parroquias que iban debajo del saludo (09/10): eran tres líneas
+// que nadie leía. El precio lo sigue diciendo el bot si se lo preguntan (está en su prompt). Sale
+// del catálogo, no escrito: si se suma otra ciudad, el saludo cambia solo.
+func (a *Agent) enTodaLaCiudad() string {
 	if a.catalog == nil {
 		return ""
 	}
 	contexto, ok := a.catalog.Get()
-	if !ok || contexto == nil {
+	if !ok || contexto == nil || len(contexto.Zonas) == 0 {
 		return ""
 	}
-	var b strings.Builder
-	switch len(contexto.Products) {
-	case 0:
-	case 1:
-		fmt.Fprintf(&b, "\n💵 $%.2f por cilindro, con envío e instalación incluidos.",
-			contexto.Products[0].PrecioTotal())
-	default:
-		var precios []string
-		for _, p := range contexto.Products {
-			precios = append(precios, fmt.Sprintf("%s $%.2f", p.Nombre, p.PrecioTotal()))
+	var ciudades []string
+	for _, z := range contexto.Zonas {
+		if nombre := strings.TrimSpace(z.Zona); nombre != "" {
+			ciudades = append(ciudades, nombrePropio(nombre))
 		}
-		fmt.Fprintf(&b, "\n💵 %s (envío e instalación incluidos).", strings.Join(precios, ", "))
 	}
-	if zonas := ZonasEnTexto(contexto.Zonas); zonas != "" {
-		b.WriteString("\n📍 Llegamos a las parroquias urbanas y rurales de " + zonas + ".")
+	if len(ciudades) == 0 {
+		return ""
 	}
-	return b.String()
+	if len(ciudades) == 1 {
+		return " en todo " + ciudades[0]
+	}
+	return " en " + strings.Join(ciudades[:len(ciudades)-1], ", ") + " y " + ciudades[len(ciudades)-1]
+}
+
+// nombrePropio pasa "SANTO DOMINGO" a "Santo Domingo".
+func nombrePropio(s string) string {
+	palabras := strings.Fields(strings.ToLower(s))
+	for i, p := range palabras {
+		r := []rune(p)
+		r[0] = unicode.ToUpper(r[0])
+		palabras[i] = string(r)
+	}
+	return strings.Join(palabras, " ")
 }
 
 // empiezaConversacion dice si este mensaje abre una conversación nueva.
@@ -228,16 +243,27 @@ func textoBienvenida(nombre string) string {
 // "¡Hola, Doris!" y el modelo contestaba "¡Buenas noches, Doris!" nueve segundos después (28/09).
 // Diciéndolo bien la primera vez no hay nada que corregir — y el candado de saludounico.go quita lo
 // que sobre.
+//
+// 09/10: solo la primera línea. "Estamos a la vuelta de tu casa…", el precio y las parroquias
+// eran tres líneas más que nadie leía; la invitación a la app va aparte (LineaApp).
 func textoBienvenidaA(nombre string, ahora time.Time) string {
-	return saludoConGancho(nombre, ahora) + "\n\n" +
-		"Estamos a la vuelta de tu casa y te lo llevamos en minutos 🚚💨"
+	return textoBienvenidaEn(nombre, ahora, "")
+}
+
+// textoBienvenidaEn es el saludo con la ciudad (" en todo Cuenca") pegada al gancho.
+func textoBienvenidaEn(nombre string, ahora time.Time, ciudad string) string {
+	return saludoConGancho(nombre, ahora, ciudad)
 }
 
 // saludoConGancho es la primera línea en horario: el saludo de la franja y el gancho de UbiGas.
 // Las dos versiones (en horario y cerrado) llevan "*UbiGas*, tu repartidor aquísito", que es lo
 // que saludounico.go reconoce para no repetir la presentación.
-func saludoConGancho(nombre string, ahora time.Time) string {
-	return saludoDeFranja(nombre, ahora) + " ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu repartidor aquísito no más! 🔥"
+func saludoConGancho(nombre string, ahora time.Time, ciudad string) string {
+	if ciudad != "" {
+		ciudad = "," + ciudad
+	}
+	return saludoDeFranja(nombre, ahora) + " ¿Se te acabó el gas? 😱 ¡Con *UbiGas*, tu repartidor aquísito no más" +
+		ciudad + "! 🔥"
 }
 
 // saludoDeFranja es "¡Buenas noches, Ana! 👋" (o sin nombre si su WhatsApp no dice uno).
