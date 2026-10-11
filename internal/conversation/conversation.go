@@ -354,6 +354,11 @@ type PendingWait struct {
 	// seguia en SIN_CONDUCTOR y se le ofrecia la ronda siguiente. Quien ignoraba el mensaje
 	// conservaba sus rondas.
 	UltimaRondaAt int64 `json:"ultima_ronda_at,omitempty"`
+	// ColorAlternoOfrecido: durante esta espera ya se le ofrecio el color equivalente (una sola
+	// vez: si dijo que no, no se le insiste). ChequeoColorAt es el unix de la ultima consulta de
+	// alternativas, para no preguntarle al backend en cada vuelta de 7 s.
+	ColorAlternoOfrecido bool  `json:"color_alterno_ofrecido,omitempty"`
+	ChequeoColorAt       int64 `json:"chequeo_color_at,omitempty"`
 }
 
 // Lineas devuelve las líneas de la espera: la lista si la hay, o la única de los campos
@@ -377,6 +382,10 @@ type PendingColorSwap struct {
 	ColorOriginal string `json:"color_original"`
 	ColorAlterno  string `json:"color_alterno"`
 	Cantidad      int    `json:"cantidad"`
+	// DuranteEspera: la oferta salio MIENTRAS el cliente esperaba repartidor para su color (el
+	// conductor con el color equivalente aparecio despues). Ahi "no" significa "sigo esperando el
+	// mio", no "dejalo": la busqueda sigue abierta.
+	DuranteEspera bool `json:"durante_espera,omitempty"`
 }
 
 // PendingGuardarUbicacion es la oferta de guardar la ubicación recién compartida con un nombre

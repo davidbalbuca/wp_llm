@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"wp-llm-gas/internal/conversation"
 	"wp-llm-gas/internal/georoutes"
@@ -62,6 +63,75 @@ func (a *Agent) ofrecerColorAlterno(t *turno, from string, lat, lng float64,
 // Botones del menú de cambio de color. El sí lleva el color (max ~20 chars en WhatsApp).
 const BotonNoCambioColor = "No, gracias"
 
+// BotonSeguirEsperando es el "no" de la oferta que sale DURANTE la espera: el cliente no quiere
+// cambiar de color y sigue esperando el suyo.
+const BotonSeguirEsperando = "No, espero el mío"
+
+// chequeoColorAlterno es cada cuanto se vuelve a preguntar por colores equivalentes mientras el
+// cliente espera. La busqueda se consulta cada 7 s; las alternativas no hace falta mirarlas tan
+// seguido.
+const chequeoColorAlterno = 30 * time.Second
+
+// revisarColorAlternoEnEspera: el cliente espera repartidor para su color y, MIENTRAS, puede
+// conectarse un conductor con un color equivalente. Antes eso no se miraba nunca: la oferta de
+// cambio solo se hacia al registrar el pedido. Jaime (11/10) pidio amarillo a las 09:31 sin nadie
+// cerca; a las 09:32 se conecto Juan Fajardo a 1,4 km con blanco (equivalente) y el bot siguio
+// esperando un amarillo que no llegaba. Se ofrece UNA vez por espera, de un solo color, y nunca
+// encima de otro menu que el cliente no haya contestado.
+func (a *Agent) revisarColorAlternoEnEspera(from string, lat, lng float64, ahora time.Time) {
+	w, ok := a.store.GetPendingWait(from)
+	if !ok || w.ColorAlternoOfrecido || len(w.Items) > 1 || w.IDProducto == 0 || w.IDColor == 0 {
+		return
+	}
+	if w.EsperandoRespuesta {
+		return // tiene sin contestar el menu de esperar: no se le encima otro
+	}
+	if _, hay := a.store.GetPendingColorSwap(from); hay {
+		return
+	}
+	if w.ChequeoColorAt > 0 && ahora.Sub(time.Unix(w.ChequeoColorAt, 0)) < chequeoColorAlterno {
+		return
+	}
+	w.ChequeoColorAt = ahora.Unix()
+	a.store.SetPendingWait(from, w)
+
+	alternativas, err := a.gr.CheckColorAlternatives(lat, lng, w.IDProducto, w.IDColor, w.Cantidad)
+	if err != nil {
+		log.Printf("[color-alterno] %s: no se pudieron consultar alternativas durante la espera (%v)", from, err)
+		return
+	}
+	if len(alternativas) == 0 {
+		return
+	}
+	alt := alternativas[0]
+	original := w.ColorNombre
+	if original == "" {
+		original = "que pediste"
+	}
+	cuerpo := fmt.Sprintf("Sigo buscando tu cilindro %s 🔎. Ahora sí tengo %s cerca, que es el "+
+		"mismo gas. ¿Te lo envío en %s?", original, alt.Color, alt.Color)
+	opciones := []string{botonSiAlterno(alt.Color), BotonSeguirEsperando}
+	if err := a.mandarMenu(from, cuerpo, opciones); err != nil {
+		log.Printf("[color-alterno] %s: la oferta durante la espera no salió (%v)", from, err)
+		return // no se marca: en el proximo chequeo se vuelve a intentar
+	}
+	a.store.SetPendingColorSwap(from, conversation.PendingColorSwap{
+		ColorOriginal: w.ColorNombre,
+		ColorAlterno:  alt.Color,
+		Cantidad:      w.Cantidad,
+		DuranteEspera: true,
+	})
+	if actual, sigue := a.store.GetPendingWait(from); sigue {
+		actual.ColorAlternoOfrecido = true
+		a.store.SetPendingWait(from, actual)
+	}
+	texto := cuerpo + " [" + strings.Join(opciones, " / ") + "]"
+	a.store.LogMessage(from, "system", texto)
+	a.store.AppendModel(from, texto)
+	log.Printf("[color-alterno] %s: durante la espera (busqueda %d) apareció %s con %d conductores; se ofrece",
+		from, w.IDBusqueda, alt.Color, alt.Conductores)
+}
+
 func botonSiAlterno(color string) string {
 	b := "Sí, " + strings.ToLower(color)
 	if len(b) > 20 {
@@ -85,6 +155,11 @@ func (a *Agent) ResponderCambioColor(from, texto string) (string, bool) {
 	case respuesta == normalizarRespuesta(botonSiAlterno(sw.ColorAlterno)) || respuestasAfirmativas[respuesta]:
 		a.store.ClearPendingColorSwap(from)
 		log.Printf("[color-alterno] %s aceptó el cambio a %s; se registra en código", from, sw.ColorAlterno)
+		if sw.DuranteEspera {
+			// Se cierra la busqueda del color original ANTES de registrar: si no, quedarian dos
+			// pedidos buscando conductor (el original y el del color nuevo).
+			a.cerrarEsperaYBusqueda(from, "acepto el color "+sw.ColorAlterno)
+		}
 		// Por runTool, como todos los interceptores: es quien crea el ticket si falla.
 		t := &turno{}
 		a.runTool(t, from, "registrar_pedido", map[string]any{
@@ -94,6 +169,15 @@ func (a *Agent) ResponderCambioColor(from, texto string) (string, bool) {
 			return "", true // registrarPedido mandó otro menú (p. ej. confirmar dirección)
 		}
 		return a.mensajeDelPedido(t, from), true
+
+	case sw.DuranteEspera && (respuesta == normalizarRespuesta(BotonSeguirEsperando) ||
+		respuesta == normalizarRespuesta(BotonNoCambioColor) || respuestasNegativas[respuesta]):
+		// Durante la espera, "no" es "sigo esperando el mio": la busqueda sigue abierta.
+		a.store.ClearPendingColorSwap(from)
+		log.Printf("[color-alterno] %s no quiso el cambio a %s; sigue esperando su %s", from,
+			sw.ColorAlterno, sw.ColorOriginal)
+		return fmt.Sprintf("Perfecto 👍 Sigo buscando un repartidor con tu cilindro %s y te aviso "+
+			"apenas lo tenga.", strings.ToLower(sw.ColorOriginal)), true
 
 	case respuesta == normalizarRespuesta(BotonNoCambioColor) || respuestasNegativas[respuesta]:
 		a.store.ClearPendingColorSwap(from)

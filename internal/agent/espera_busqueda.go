@@ -132,6 +132,9 @@ func (a *Agent) esperaBackend(from string, w conversation.PendingWait) {
 			return
 		}
 
+		// Sigue esperando: ¿aparecio, mientras, un conductor con un color equivalente?
+		a.revisarColorAlternoEnEspera(from, loc.Latitude, loc.Longitude, time.Now())
+
 		if time.Now().After(limite) {
 			log.Printf("[busqueda] %s se alcanzo el tope del bot para la busqueda %d", from, res.IDBusqueda)
 			a.avisarEsperaVencida(from, w, "La búsqueda pasó el tope de tiempo del bot.")
@@ -152,6 +155,11 @@ func (a *Agent) esperaBackend(from string, w conversation.PendingWait) {
 func (a *Agent) ofrecerEsperaAlCliente(from string, estado *georoutes.BusquedaResult) {
 	w, ok := a.store.GetPendingWait(from)
 	if !ok || w.EsperandoRespuesta {
+		return
+	}
+	// Con la oferta de cambio de color sin contestar no se le manda el menu de esperar encima:
+	// dos menus a la vez y no se sabe a cual responde.
+	if _, hay := a.store.GetPendingColorSwap(from); hay {
 		return
 	}
 	// Y que haya pasado la ronda. Los dos frenos se SUMAN: el de arriba evita repetirle el menú
