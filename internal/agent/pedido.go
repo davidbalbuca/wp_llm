@@ -486,6 +486,11 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 			a.store.ClearActivePedido(from)
 		} else {
 			log.Printf("[pedido] %s ya tiene el pedido #%d activo; no se crea otro", from, idPrevio)
+			// La ficha la acaba de llenar anotarDeTool con los argumentos de ESTA llamada, pero
+			// el pedido ya existe: se borra. Si no, el panel mostraba "Registrando pedido" en un
+			// chat con el pedido ya entregado (Raúl, 12/10: tras el #440 creado por el operador,
+			// el modelo llamó registrar_pedido en cada mensaje y la ficha volvía a quedar llena).
+			a.store.ClearPedidoEnCurso(from)
 			return fmt.Sprintf("El cliente YA tiene el pedido #%d en curso: NO se creó otro. "+
 				"Confírmale que su pedido sigue en camino. Si quiere cambiarlo o pedir más, primero "+
 				"hay que cancelar el actual con cancelar_pedido.", idPrevio)
