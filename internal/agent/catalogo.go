@@ -189,8 +189,12 @@ func renderServiceInfo(contexto *catalog.Context, disponible bool) string {
 	if negocio.FormasPago != "" {
 		fmt.Fprintf(&texto, "\nFormas de pago: %s\n", negocio.FormasPago)
 	} else if nombres := nombresDePago(contexto.Payments); nombres != "" {
-		fmt.Fprintf(&texto, "\nFormas de pago aceptadas: %s. Es el pago al recibir el pedido "+
-			"(contra entrega).\n", nombres)
+		// A quién se paga (dueño, 12/10): AL REPARTIDOR al entregar. Lo que no es efectivo (DeUna,
+		// transferencia, JEP Fast) va al QR o la cuenta del propio repartidor: no hay cuenta de la
+		// empresa, así que el bot no tiene números que dar y no puede inventarlos.
+		fmt.Fprintf(&texto, "\nFormas de pago aceptadas: %s. Se le paga AL REPARTIDOR cuando entrega "+
+			"el pedido (contra entrega). Si no es en efectivo, el repartidor le muestra su QR o le da "+
+			"sus datos en ese momento. NUNCA des números de cuenta ni datos bancarios: no los tenemos.\n", nombres)
 	}
 	if negocio.Seguridad != "" {
 		fmt.Fprintf(&texto, "Seguridad (fuga de gas): %s\n", negocio.Seguridad)
