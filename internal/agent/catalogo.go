@@ -17,6 +17,9 @@ import (
 // distinguir "sin cobertura" (negocio) de un fallo técnico real.
 var coberturaMarkers = []string{
 	"no existen conductores",
+	// En singular lo devolvía el backend cuando hay conductores en la zona pero ninguno dentro
+	// del radio por calle: sin este marcador se tomaba como fallo técnico (Raúl, 12/10).
+	"no existe conductores",
 	"no hay conductores",
 	"fuera de la zona",
 	"fuera de zona",
