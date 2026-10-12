@@ -264,6 +264,21 @@ func main() {
 	// Tras un reinicio, las goroutines de chequeo de entrega (pedidos del flujo manual) se pierden;
 	// se re-agendan desde el store para no dejar de preguntarle al cliente por su entrega.
 	ag.ReprogramarChequeosEntrega()
+	// Lo mismo con las esperas de repartidor (Jessi, 12/10: el deploy de las 07:43 la dejó
+	// esperando una búsqueda que ya nadie consultaba). El backend se reinicia en el MISMO deploy:
+	// se espera a que conteste antes de retomarlas, porque si el primer login falla al cliente le
+	// llegaría un "no pudimos buscar" por un reinicio nuestro.
+	go func() {
+		for i := 0; i < 36; i++ {
+			if _, err := grClient.GetBusinessInfo(); err == nil {
+				break
+			}
+			time.Sleep(5 * time.Second)
+		}
+		if n := ag.RetomarEsperas(); n > 0 {
+			log.Printf("[retomar] %d espera(s) de repartidor retomadas tras el reinicio", n)
+		}
+	}()
 
 	mux := http.NewServeMux()
 

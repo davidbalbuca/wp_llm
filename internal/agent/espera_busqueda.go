@@ -34,7 +34,7 @@ import (
 // aquí y 20 allá, los intentos caían cada 30 s y un pedido tardaba 34 s en asignarse con el
 // conductor ya en línea (medido el 19/09). Con 7 aquí y 10 en el panel, baja a ~10-15 s. Cada
 // consulta es un intento de asignación, así que tampoco conviene bajarlo mucho más.
-const intervaloBusqueda = 7 * time.Second
+var intervaloBusqueda = 7 * time.Second // var y no const: los tests lo acortan
 
 // topeBusqueda es una red de seguridad del bot, no un plazo del negocio: si el backend quedara
 // devolviendo "buscando" para siempre (un parámetro absurdo en el panel, por ejemplo), esta
@@ -76,21 +76,28 @@ func (a *Agent) esperaBackend(from string, w conversation.PendingWait) {
 		return
 	}
 
-	res, err := a.gr.BuscarConductor(tokens.Access, loc.Latitude, loc.Longitude, w.IDTipoPago,
-		orderProductsDeWait(w), "")
-	if err != nil {
-		a.fallaBusqueda(from, "el backend no aceptó la búsqueda: "+err.Error())
-		return
+	// Una espera que ya tiene su busqueda (el bot se reinicio y la esta RETOMANDO, ver
+	// RetomarEsperas) sigue esa misma: abrir otra le duplicaria el pedido al cliente.
+	idBusqueda := w.IDBusqueda
+	if idBusqueda > 0 {
+		log.Printf("[busqueda] %s retoma la busqueda %d", from, idBusqueda)
+	} else {
+		res, err := a.gr.BuscarConductor(tokens.Access, loc.Latitude, loc.Longitude, w.IDTipoPago,
+			orderProductsDeWait(w), "")
+		if err != nil {
+			a.fallaBusqueda(from, "el backend no aceptó la búsqueda: "+err.Error())
+			return
+		}
+		if res.Estado == georoutes.BusquedaAsignado && res.Pedido != nil {
+			a.avisarRepartidorAsignado(from, w, res.Pedido)
+			return
+		}
+		// El id se guarda en la espera para poder cerrarla si el cliente se arrepiente.
+		idBusqueda = res.IDBusqueda
+		w.IDBusqueda = idBusqueda
+		a.store.SetPendingWait(from, w)
+		log.Printf("[busqueda] %s espera la busqueda %d (estado %s)", from, idBusqueda, res.Estado)
 	}
-	if res.Estado == georoutes.BusquedaAsignado && res.Pedido != nil {
-		a.avisarRepartidorAsignado(from, w, res.Pedido)
-		return
-	}
-
-	// El id se guarda en la espera para poder cerrarla si el cliente se arrepiente.
-	w.IDBusqueda = res.IDBusqueda
-	a.store.SetPendingWait(from, w)
-	log.Printf("[busqueda] %s espera la busqueda %d (estado %s)", from, res.IDBusqueda, res.Estado)
 
 	limite := time.Now().Add(topeBusqueda)
 	ticker := time.NewTicker(intervaloBusqueda)
@@ -102,10 +109,10 @@ func (a *Agent) esperaBackend(from string, w conversation.PendingWait) {
 			return
 		}
 
-		estado, err := a.gr.EstadoBusqueda(tokens.Access, res.IDBusqueda)
+		estado, err := a.gr.EstadoBusqueda(tokens.Access, idBusqueda)
 		if err != nil {
 			// Un fallo puntual de red no cierra nada: se reintenta en la próxima vuelta.
-			log.Printf("[busqueda] %s no se pudo consultar la busqueda %d: %v", from, res.IDBusqueda, err)
+			log.Printf("[busqueda] %s no se pudo consultar la busqueda %d: %v", from, idBusqueda, err)
 			if time.Now().After(limite) {
 				a.avisarEsperaVencida(from, w, "No se pudo consultar la búsqueda en el backend.")
 				return
@@ -127,7 +134,7 @@ func (a *Agent) esperaBackend(from string, w conversation.PendingWait) {
 			a.avisarEsperaVencida(from, w, "El cliente esperó y no se le asignó nadie.")
 			return
 		case georoutes.BusquedaCancelado:
-			log.Printf("[busqueda] %s la busqueda %d quedo cancelada", from, res.IDBusqueda)
+			log.Printf("[busqueda] %s la busqueda %d quedo cancelada", from, idBusqueda)
 			a.store.ClearPendingWait(from)
 			return
 		}
@@ -136,11 +143,30 @@ func (a *Agent) esperaBackend(from string, w conversation.PendingWait) {
 		a.revisarColorAlternoEnEspera(from, loc.Latitude, loc.Longitude, time.Now())
 
 		if time.Now().After(limite) {
-			log.Printf("[busqueda] %s se alcanzo el tope del bot para la busqueda %d", from, res.IDBusqueda)
+			log.Printf("[busqueda] %s se alcanzo el tope del bot para la busqueda %d", from, idBusqueda)
 			a.avisarEsperaVencida(from, w, "La búsqueda pasó el tope de tiempo del bot.")
 			return
 		}
 	}
+}
+
+// maxEsperaRetomable: una espera que nadie tocó en este tiempo no se retoma al arrancar. Es más
+// que el tope del bot (topeBusqueda): para entonces la búsqueda ya se cerró, y avisarle al cliente
+// horas después de que se rindió solo confunde.
+const maxEsperaRetomable = 2 * time.Hour
+
+// RetomarEsperas vuelve a seguir, al arrancar el bot, las esperas de repartidor que quedaron
+// guardadas. La goroutine que pregunta por la búsqueda vive en memoria y muere con el proceso:
+// el deploy de las 07:43 del 12/10 dejó a Jessi esperando una búsqueda que ya nadie consultaba
+// (ni el menú de la siguiente ronda ni el aviso de repartidor le iban a llegar). Devuelve cuántas.
+func (a *Agent) RetomarEsperas() int {
+	n := 0
+	for from, w := range a.store.PendingWaits(maxEsperaRetomable) {
+		log.Printf("[retomar] %s: se retoma la espera (busqueda %d, ronda %d)", from, w.IDBusqueda, w.RondaEspera)
+		a.startWaitForDriver(from, w)
+		n++
+	}
+	return n
 }
 
 // ofrecerEsperaAlCliente le manda el menú cuando la búsqueda no encontró a nadie.

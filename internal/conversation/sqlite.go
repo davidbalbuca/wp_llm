@@ -1773,6 +1773,31 @@ func (s *sqliteStore) GetPendingWait(phone string) (PendingWait, bool) {
 	return w, true
 }
 
+func (s *sqliteStore) PendingWaits(max time.Duration) map[string]PendingWait {
+	out := map[string]PendingWait{}
+	rows, err := s.db.Query(`SELECT phone, data FROM pending_wait WHERE created_at >= ?`,
+		time.Now().Add(-max).Unix())
+	if err != nil {
+		log.Printf("[sqlite] PendingWaits: %v", err)
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var phone, data string
+		if err := rows.Scan(&phone, &data); err != nil {
+			log.Printf("[sqlite] PendingWaits scan: %v", err)
+			continue
+		}
+		var w PendingWait
+		if err := json.Unmarshal([]byte(data), &w); err != nil {
+			log.Printf("[sqlite] PendingWaits unmarshal %s: %v", phone, err)
+			continue
+		}
+		out[phone] = w
+	}
+	return out
+}
+
 func (s *sqliteStore) ClearPendingWait(phone string) {
 	if _, err := s.db.Exec(`DELETE FROM pending_wait WHERE phone = ?`, phone); err != nil {
 		log.Printf("[sqlite] ClearPendingWait %s: %v", phone, err)

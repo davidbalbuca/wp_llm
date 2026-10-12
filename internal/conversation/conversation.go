@@ -700,6 +700,10 @@ type Store interface {
 	GetPendingWait(phone string) (PendingWait, bool)
 	// ClearPendingWait elimina el pedido en espera (al asignarse, cancelar o expirar).
 	ClearPendingWait(phone string)
+	// PendingWaits devuelve las esperas guardadas (teléfono -> espera) que se tocaron dentro de
+	// `max`. Al arrancar, el bot las RETOMA: un reinicio (cada deploy) no puede dejar a un cliente
+	// esperando un aviso que nadie le va a mandar (Jessi, 12/10).
+	PendingWaits(max time.Duration) map[string]PendingWait
 
 	// --- Auditoría de conversaciones (durable, para revisar/gestionar desde la web) ---
 	// LogMessage añade una línea al registro de auditoría. NO la borra ClearHistory ni el TTL

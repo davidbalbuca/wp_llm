@@ -992,6 +992,18 @@ func (s *memStore) GetPendingWait(phone string) (PendingWait, bool) {
 	return w, ok
 }
 
+// PendingWaits en memoria devuelve todas: este store no sobrevive a un reinicio, así que no hay
+// esperas viejas que filtrar.
+func (s *memStore) PendingWaits(_ time.Duration) map[string]PendingWait {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]PendingWait, len(s.pendingWait))
+	for k, v := range s.pendingWait {
+		out[k] = v
+	}
+	return out
+}
+
 func (s *memStore) ClearPendingWait(phone string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
