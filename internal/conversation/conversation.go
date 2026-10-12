@@ -357,8 +357,10 @@ type PendingWait struct {
 	// ColorAlternoOfrecido: durante esta espera ya se le ofrecio el color equivalente (una sola
 	// vez: si dijo que no, no se le insiste). ChequeoColorAt es el unix de la ultima consulta de
 	// alternativas, para no preguntarle al backend en cada vuelta de 7 s.
-	ColorAlternoOfrecido bool  `json:"color_alterno_ofrecido,omitempty"`
-	ChequeoColorAt       int64 `json:"chequeo_color_at,omitempty"`
+	ColorAlternoOfrecido bool `json:"color_alterno_ofrecido,omitempty"`
+	// RespaldoOfrecido: ya se le ofreció el color equivalente del camión de Ubi (una vez por espera).
+	RespaldoOfrecido bool  `json:"respaldo_ofrecido,omitempty"`
+	ChequeoColorAt   int64 `json:"chequeo_color_at,omitempty"`
 }
 
 // Lineas devuelve las líneas de la espera: la lista si la hay, o la única de los campos
@@ -386,6 +388,12 @@ type PendingColorSwap struct {
 	// conductor con el color equivalente aparecio despues). Ahi "no" significa "sigo esperando el
 	// mio", no "dejalo": la busqueda sigue abierta.
 	DuranteEspera bool `json:"durante_espera,omitempty"`
+	// Respaldo: la oferta es del repartidor de RESPALDO (el camión de Ubi), que lleva el color
+	// equivalente. "Sí" cambia el color de la búsqueda IDBusqueda a IDColorAlterno y se la asigna;
+	// "no" es "espero el mío" (se acepta la espera en el backend).
+	Respaldo       bool `json:"respaldo,omitempty"`
+	IDColorAlterno int  `json:"id_color_alterno,omitempty"`
+	IDBusqueda     int  `json:"id_busqueda,omitempty"`
 }
 
 // PendingGuardarUbicacion es la oferta de guardar la ubicación recién compartida con un nombre

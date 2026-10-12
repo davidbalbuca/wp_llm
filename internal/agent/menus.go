@@ -39,6 +39,12 @@ func (a *Agent) ResponderMenuEspera(from, texto string) (string, bool) {
 	if _, hayEspera := a.store.GetPendingWait(from); !hayEspera {
 		return "", false
 	}
+	// Lo último que se le preguntó es el cambio de color (el del camión de respaldo o el que
+	// apareció durante la espera): su "sí" / "no" es para ESE menú, que resuelve
+	// ResponderCambioColor. Este va antes en el webhook y sin esto un "no" cancelaba la espera.
+	if _, hayCambio := a.store.GetPendingColorSwap(from); hayCambio {
+		return "", false
+	}
 	respuesta := normalizarRespuesta(texto)
 
 	switch {

@@ -150,6 +150,9 @@ func (a *Agent) ResponderCambioColor(from, texto string) (string, bool) {
 		return "", false
 	}
 	respuesta := normalizarRespuesta(texto)
+	if sw.Respaldo {
+		return a.responderColorDelRespaldo(from, respuesta, sw)
+	}
 
 	switch {
 	case respuesta == normalizarRespuesta(botonSiAlterno(sw.ColorAlterno)) || respuestasAfirmativas[respuesta]:
@@ -199,4 +202,121 @@ func (a *Agent) ResponderCambioColor(from, texto string) (string, bool) {
 
 	// Una pregunta, un matiz ("¿y cuánto cuesta el azul?"): la atiende el modelo.
 	return "", false
+}
+
+// ofrecerColorDelRespaldo: nadie tomó el pedido y el repartidor de RESPALDO (el camión de Ubi)
+// no lleva el color pedido pero sí uno equivalente. Dueño, 12/10: "antes de asignar a William
+// debe preguntar que hay un blanco, si desea realizar el cambio". Se ofrece UNA vez por espera y
+// ANTES de "¿deseas esperar?". Devuelve true si la oferta está en pie (salió ahora o ya estaba sin
+// contestar): entonces no se le manda encima el menú de esperar.
+func (a *Agent) ofrecerColorDelRespaldo(from string, idBusqueda int, alt *georoutes.AlternativaRespaldo) bool {
+	if alt == nil || alt.IDColor == 0 {
+		return false
+	}
+	if sw, hay := a.store.GetPendingColorSwap(from); hay {
+		return sw.Respaldo // ya se le preguntó y no contesta: no se le encima el menú de esperar
+	}
+	w, ok := a.store.GetPendingWait(from)
+	if !ok || w.RespaldoOfrecido {
+		return false
+	}
+	cuerpo := TextoColorDelRespaldo(w.ColorNombre, alt)
+	opciones := []string{botonSiAlterno(alt.Color), BotonSeguirEsperando}
+	if err := a.mandarMenu(from, cuerpo, opciones); err != nil {
+		log.Printf("[respaldo-color] %s: la oferta no salió (%v); va el menú de esperar", from, err)
+		return false
+	}
+	a.store.SetPendingColorSwap(from, conversation.PendingColorSwap{
+		ColorOriginal: w.ColorNombre, ColorAlterno: alt.Color, Cantidad: w.Cantidad,
+		DuranteEspera: true, Respaldo: true, IDColorAlterno: alt.IDColor, IDBusqueda: idBusqueda,
+	})
+	w.RespaldoOfrecido = true
+	a.store.SetPendingWait(from, w)
+	texto := cuerpo + " [" + strings.Join(opciones, " / ") + "]"
+	a.store.LogMessage(from, "system", texto)
+	a.store.AppendModel(from, texto)
+	log.Printf("[respaldo-color] %s: sin repartidor para %s; el camión ofrece %s (busqueda %d)",
+		from, w.ColorNombre, alt.Color, idBusqueda)
+	return true
+}
+
+// TextoColorDelRespaldo: corto, con el color que pidió, el que le llevamos y cuándo llega.
+func TextoColorDelRespaldo(original string, alt *georoutes.AlternativaRespaldo) string {
+	if original == "" {
+		original = "que pediste"
+	}
+	llega := ""
+	if alt.Minutos > 0 {
+		llega = fmt.Sprintf(" y llega en unos %d min", alt.Minutos)
+	}
+	return fmt.Sprintf("No encontramos repartidor con tu cilindro %s cerca 😕. Nuestro camión Ubi te "+
+		"lo lleva en %s (es el mismo gas)%s. ¿Te sirve?", strings.ToUpper(original), strings.ToUpper(alt.Color), llega)
+}
+
+// responderColorDelRespaldo resuelve el sí / no de la oferta del camión de respaldo.
+func (a *Agent) responderColorDelRespaldo(from, respuesta string, sw conversation.PendingColorSwap) (string, bool) {
+	switch {
+	case respuesta == normalizarRespuesta(botonSiAlterno(sw.ColorAlterno)) || respuestasAfirmativas[respuesta]:
+		a.store.ClearPendingColorSwap(from)
+		if err := a.aceptarColorDelRespaldo(from, sw); err != nil {
+			log.Printf("[respaldo-color] %s: no se pudo asignar al camión (%v); sigue esperando su %s",
+				from, err, sw.ColorOriginal)
+			a.seguirEsperandoElSuyo(from, sw)
+			return fmt.Sprintf("Uy, nuestro camión ya no puede llevarlo 😕. Sigo buscando tu cilindro %s "+
+				"y te aviso apenas lo tenga.", strings.ToLower(sw.ColorOriginal)), true
+		}
+		log.Printf("[respaldo-color] %s aceptó %s; se lo lleva el camión", from, sw.ColorAlterno)
+		// El aviso con el repartidor, la placa y el seguimiento lo manda la búsqueda al verla ASIGNADA.
+		return fmt.Sprintf("¡Listo! 🚚 Te lo llevamos en %s con nuestro camión. En un momento te paso "+
+			"los datos del repartidor.", strings.ToLower(sw.ColorAlterno)), true
+
+	case respuesta == normalizarRespuesta(BotonSeguirEsperando) ||
+		respuesta == normalizarRespuesta(BotonNoCambioColor) || respuestasNegativas[respuesta]:
+		a.store.ClearPendingColorSwap(from)
+		a.seguirEsperandoElSuyo(from, sw)
+		log.Printf("[respaldo-color] %s no quiso %s; sigue esperando su %s", from, sw.ColorAlterno, sw.ColorOriginal)
+		return fmt.Sprintf("Perfecto 👍 Sigo buscando un repartidor con tu cilindro %s y te aviso apenas "+
+			"lo tenga.", strings.ToLower(sw.ColorOriginal)), true
+	}
+	return "", false
+}
+
+// aceptarColorDelRespaldo le pide al backend el cambio de color y la asignación al camión, y deja
+// la espera con el color nuevo para que el aviso de "ya tienes repartidor" lo diga bien.
+func (a *Agent) aceptarColorDelRespaldo(from string, sw conversation.PendingColorSwap) error {
+	account, ok := a.store.GetAccount(from)
+	if !ok {
+		return fmt.Errorf("sin cuenta")
+	}
+	tokens, err := a.gr.Login(account.Username, account.Password)
+	if err != nil {
+		return err
+	}
+	res, err := a.gr.RespaldoCambioColor(tokens.Access, sw.IDBusqueda, sw.IDColorAlterno)
+	if err != nil {
+		return err
+	}
+	if res == nil || res.Estado != georoutes.BusquedaAsignado {
+		return fmt.Errorf("la búsqueda quedó en %v", res)
+	}
+	if w, ok := a.store.GetPendingWait(from); ok {
+		w.IDColor, w.ColorNombre = sw.IDColorAlterno, sw.ColorAlterno
+		a.store.SetPendingWait(from, w)
+	}
+	return nil
+}
+
+// seguirEsperandoElSuyo: dijo que no al color del camión (o falló). La búsqueda está en
+// SIN_CONDUCTOR esperando una decisión: se acepta la espera, que es lo que el cliente quiere, y
+// cuenta como la primera ronda (para que no le llegue enseguida el "¿deseas esperar?").
+func (a *Agent) seguirEsperandoElSuyo(from string, sw conversation.PendingColorSwap) {
+	if w, ok := a.store.GetPendingWait(from); ok {
+		w.EsperandoRespuesta = false
+		if w.RondaEspera == 0 {
+			w.RondaEspera = 1
+		}
+		w.UltimaRondaAt = time.Now().Unix()
+		a.store.SetPendingWait(from, w)
+	}
+	a.decidirEsperaBackend(from, sw.IDBusqueda, true)
 }

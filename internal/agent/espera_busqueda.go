@@ -122,13 +122,21 @@ func (a *Agent) esperaBackend(from string, w conversation.PendingWait) {
 
 		switch estado.Estado {
 		case georoutes.BusquedaAsignado:
+			// La espera guardada, no la copia del arranque: si aceptó el color del camión de
+			// respaldo, el aviso tiene que decir el color nuevo.
+			if actual, ok := a.store.GetPendingWait(from); ok {
+				w = actual
+			}
 			a.avisarRepartidorAsignado(from, w, estado.Pedido)
 			return
 		case georoutes.BusquedaSinConductor:
 			// Venció la búsqueda inicial sin nadie. ESTE es el momento de preguntarle al cliente
 			// si quiere esperar: ya se buscó de verdad, y el número que se le dice (lo que dura la
 			// espera) sale del backend, no del bot.
-			a.ofrecerEsperaAlCliente(from, estado)
+			// Si el camión de respaldo lleva un color equivalente, se le ofrece ESO primero.
+			if !a.ofrecerColorDelRespaldo(from, idBusqueda, estado.AlternativaRespaldo) {
+				a.ofrecerEsperaAlCliente(from, estado)
+			}
 		case georoutes.BusquedaNoAsignado:
 			// El backend ya lo dejó en no asignados y abrió el ticket: acá solo se avisa.
 			a.avisarEsperaVencida(from, w, "El cliente esperó y no se le asignó nadie.")
