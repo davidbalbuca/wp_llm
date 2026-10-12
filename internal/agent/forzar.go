@@ -363,7 +363,7 @@ func afirmaAvisoAlEquipo(texto string) bool {
 		return false
 	}
 	// "avisé al equipo" ya hecho, o "te van a contactar" prometido, en cualquier redacción.
-	return afirmaSecuencia(texto, [][]string{
+	if afirmaSecuencia(texto, [][]string{
 		{"avise", "equipo"}, {"notifique", "equipo"}, {"informe", "equipo"},
 		{"avise", "dueno"}, {"ya", "le", "avise"},
 		{"se", "pondra", "en", "contacto"}, {"se", "pondran", "en", "contacto"},
@@ -371,13 +371,24 @@ func afirmaAvisoAlEquipo(texto string) bool {
 		{"te", "van", "a", "contactar"}, {"te", "contactara"}, {"te", "contactaran"},
 		{"alguien", "te", "contactara"}, {"alguien", "te", "escribira"},
 		{"asesor", "se", "comunicara"},
-		// Aviso al repartidor / cambio de dirección inventado (caso 593959499118, 12/09).
-		{"avise", "repartidor"}, {"aviso", "repartidor"}, {"notifique", "repartidor"},
-		{"le", "aviso", "repartidor"}, {"le", "avise", "repartidor"},
-		{"le", "paso", "repartidor"}, {"le", "pasare", "repartidor"},
 		{"repartidor", "va", "nueva", "direccion"}, {"repartidor", "ira", "nueva", "direccion"},
 		{"repartidor", "vaya", "nueva", "direccion"},
-	}, 3)
+		// Con "le" delante es al repartidor aunque haya palabras en medio: "Le paso esa
+		// referencia al repartidor" (caso 593959499118, 12/09).
+		{"le", "paso", "al", "repartidor"}, {"le", "pasare", "al", "repartidor"},
+		{"le", "aviso", "al", "repartidor"}, {"le", "avise", "al", "repartidor"},
+	}, 3) {
+		return true
+	}
+	// Aviso AL repartidor / cambio de dirección inventado (caso 593959499118, 12/09). Con las
+	// palabras PEGADAS ("aviso al repartidor", "avisé a tu repartidor"): con holgura 3, "Ya te
+	// AVISO apenas tu REPARTIDOR esté llegando" -- una promesa AL CLIENTE de lo que el bot sí hace --
+	// contaba como aviso al equipo y abría un ticket sin motivo (Xavi, 12/10, ticket #113).
+	return afirmaSecuencia(texto, [][]string{
+		{"avise", "al", "repartidor"}, {"aviso", "al", "repartidor"}, {"notifique", "al", "repartidor"},
+		{"avise", "a", "repartidor"}, {"aviso", "a", "repartidor"}, {"notifique", "a", "repartidor"},
+		{"paso", "al", "repartidor"}, {"pasare", "al", "repartidor"},
+	}, 1)
 }
 
 // forzarAvisoAlEquipoSiHaceFalta se llama cuando el modelo prometió que el equipo contactaría
