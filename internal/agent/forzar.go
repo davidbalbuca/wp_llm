@@ -79,10 +79,7 @@ func (a *Agent) forzarRegistroSiHaceFalta(t *turno, from string) (string, bool) 
 		}
 		return msg + "\n\nCualquier cosa, aquí estoy 😊", true
 	case t.ultimoPedido.enEspera:
-		// Sin repartidor: registrarPedido ya dejó el PendingWait. Ofrecemos esperar.
-		return "¡Anotado tu pedido de " + describeItems(lineas) + "! 🙌 En este momento " +
-			"los repartidores están un poco lejos. ¿Deseas que busque uno para ti? Puede tardar hasta " +
-			"5 minutos. Escríbeme \"sí\" para esperar o \"no\" si prefieres que lo dejemos.", true
+		return a.mensajeRescateEnEspera(lineas), true
 	case t.ultimoPedido.faltaDato != "":
 		// FALTA UN DATO, que es un fallo RECUPERABLE EN ESTE MISMO TURNO: no hay nada roto, solo
 		// una pregunta sin hacer. Se pide el dato y se sigue.
@@ -101,6 +98,23 @@ func (a *Agent) forzarRegistroSiHaceFalta(t *turno, from string) (string, bool) 
 		return "Disculpa 🙏, no pude completar tu pedido ahora mismo. Ya avisé al equipo para que te " +
 			"contacte y lo resuelva. ¿Me confirmas tu ubicación 📎 mientras tanto?", true
 	}
+}
+
+// mensajeRescateEnEspera es lo que se le dice cuando el rescate registró el pedido y no hay
+// repartidor libre. Con la búsqueda del backend, registrarPedido YA la arrancó: no se le pregunta
+// nada, igual que en el camino normal (mensajeBuscandoRepartidor). Antes este rescate le
+// preguntaba "sí/no" con la búsqueda corriendo (Jessi, 12/10): contestó "Si" y no había nada que
+// decidir.
+func (a *Agent) mensajeRescateEnEspera(lineas []conversation.ItemPedido) string {
+	if a.cfg.UsarBusquedaBackend {
+		return "¡Listo! 🎉 Tu pedido de " + describeItems(lineas) + " quedó registrado. Estoy " +
+			"buscando al repartidor más cercano para ti 🚚. Te confirmo en unos minutos; no tienes " +
+			"que hacer nada."
+	}
+	// Sin búsqueda del backend: registrarPedido dejó el PendingWait. Se ofrece esperar.
+	return "¡Anotado tu pedido de " + describeItems(lineas) + "! 🙌 En este momento " +
+		"los repartidores están un poco lejos. ¿Deseas que busque uno para ti? Puede tardar hasta " +
+		"5 minutos. Escríbeme \"sí\" para esperar o \"no\" si prefieres que lo dejemos."
 }
 
 // pedirElDatoQueFalta redacta la pregunta por el dato que impidió registrar el pedido.
