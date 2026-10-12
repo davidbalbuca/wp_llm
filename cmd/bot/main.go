@@ -1370,12 +1370,9 @@ func notifyOrderFinished(cfg config.Config, store conversation.Store, pedidoID i
 	// Va ANTES de la pregunta y no después: lo último que se lee tiene que ser aquello para lo
 	// que están los botones, o el cliente se queda mirando unas estrellas sin saber qué contestan.
 	msg += agent.MensajeGuardarContacto() + "\n\n"
-	// La invitación a la app, como mucho una vez cada 30 días (ver agent.MensajeInvitarApp). Va con
+	// La invitación a la app, en CADA entrega (dueño, 12/10: "vender la app por todo lado"). Va con
 	// lo de guardar el contacto: las dos son "cómo encontrarnos la próxima vez".
-	invitaApp := agent.TocaInvitarApp(store, phone, time.Now())
-	if invitaApp {
-		msg += agent.MensajeInvitarApp() + "\n\n"
-	}
+	msg += agent.MensajeInvitarApp() + "\n\n"
 	if conductor != "" {
 		msg += fmt.Sprintf("¿Cómo calificarías a tu repartidor %s?", conductor)
 	} else {
@@ -1390,10 +1387,8 @@ func notifyOrderFinished(cfg config.Config, store conversation.Store, pedidoID i
 			fmt.Sprintf("Pedido #%d. El mensaje no salió: %v", pedidoID, err))
 		return
 	}
-	// Se anota solo si el aviso salió: si no llegó, la invitación tampoco.
-	if invitaApp {
-		store.MarcarInvitacionApp(phone, time.Now())
-	}
+	// Queda anotado cuándo se le invitó por última vez (solo si el aviso salió).
+	store.MarcarInvitacionApp(phone, time.Now())
 }
 
 // notifyOrderArrived avisa al cliente por WhatsApp que el conductor LLEGÓ y salga a recibir.
@@ -1514,7 +1509,7 @@ func notifyOrderReassigned(cfg config.Config, store conversation.Store, pedidoID
 		// El enlace vigente del pedido: el candado de seguimiento compara contra este.
 		store.SetSeguimientoActivo(phone, enlace)
 	}
-	msg := agent.MensajeReasignado(conductor, placa, minutos, enlace)
+	msg := agent.ConInvitacionApp(agent.MensajeReasignado(conductor, placa, minutos, enlace))
 	if err := avisarCliente(cfg, store, phone, msg); err != nil {
 		reportarFallo(cfg, store, phone, "No se pudo avisar la REASIGNACIÓN a otro conductor",
 			fmt.Sprintf("Pedido #%d. El mensaje no salió: %v", pedidoID, err))

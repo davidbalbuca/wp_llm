@@ -352,7 +352,7 @@ func mensajeAsignado(a *Agent, w conversation.PendingWait, res *georoutes.OrderR
 		b.WriteString("\n" + bloque + "\n")
 	}
 	b.WriteString("\nYa va en camino. ¡Gracias por tu paciencia!")
-	return b.String()
+	return ConInvitacionApp(b.String())
 }
 
 // avisarEsperaVencida cierra una espera sin repartidor: avisa al grupo, limpia el estado y le

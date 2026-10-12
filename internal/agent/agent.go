@@ -580,6 +580,10 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	if t.ultimoPedido.ok && t.ultimoPedido.Seguimiento != "" {
 		reply = a.garantizarEnlaceDeSeguimiento(from, reply, t.ultimoPedido.Seguimiento)
 	}
+	// Con el pedido confirmado, una línea para bajar la app (ver LineaAppEnCamino).
+	if t.ultimoPedido.ok {
+		reply = ConInvitacionApp(reply)
+	}
 
 	// Candado de COBERTURA: el modelo no puede rechazar a un cliente por el NOMBRE de su
 	// barrio. El 11/09 le dijo a Israel que no llegábamos a La Gloria (un barrio de Cuenca,

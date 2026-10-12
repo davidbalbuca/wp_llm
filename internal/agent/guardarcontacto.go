@@ -14,11 +14,7 @@
 // teléfono o pidiéndole a otro.
 package agent
 
-import (
-	"time"
-
-	"wp-llm-gas/internal/conversation"
-)
+import "strings"
 
 // MensajeGuardarContacto es la invitación que va pegada al agradecimiento final.
 //
@@ -33,31 +29,39 @@ func MensajeGuardarContacto() string {
 }
 
 // INVITACIÓN A LA APP (pedido del dueño, 04/10): "comenzar a pedir al cliente que también se baje
-// la app, porque por ahí también puede hacer el pedido".
+// la app, porque por ahí también puede hacer el pedido". Y el 12/10: "tiene que vender la app por
+// todo lado, pero con texto no tan cargado".
 //
-// Solo en el aviso de ENTREGA: ya tiene su gas y está contento, que es cuando más probable es que
-// la descargue. En el saludo no, porque ahí lo que quiere es pedir y mandarlo a otro lado lo pierde.
+// Por eso va en CADA momento del pedido, siempre en UNA línea con el enlace al final:
+//   - el saludo (LineaApp, bienvenida.go),
+//   - la confirmación con repartidor y el cambio de repartidor (LineaAppEnCamino): es cuando más
+//     le sirve, porque en la app ve el pedido en curso en vivo,
+//   - la entrega (MensajeInvitarApp): ya tiene su gas, que la próxima vez la pida desde la app.
+// Antes la de la entrega salía como mucho una vez cada 30 días; el dueño la quiere siempre.
 //
-// Y como mucho una vez cada 30 días: quien pide cada semana la vería en cada entrega y se vuelve
-// publicidad.
-//
-// Lleva un VALOR concreto, no solo "descárgala": en la app ve su consumo de gas y cuándo le toca
-// pedir otra vez (pedido del dueño, 04/10). Es lo que el WhatsApp no le da.
+// Lleva un VALOR concreto, no solo "descárgala": lo que el WhatsApp no le da.
 
 // LinkApp es la página de DESCARGA de la app (botones de Google Play y App Store).
 const LinkApp = "https://ubi.ec/app.html"
 
-// intervaloInvitacionApp es lo mínimo que pasa entre dos invitaciones al mismo cliente.
-const intervaloInvitacionApp = 30 * 24 * time.Hour
-
 // MensajeInvitarApp es la línea que va dentro del aviso de entrega.
 func MensajeInvitarApp() string {
-	// Una línea (09/10): el párrafo de antes no se leía.
-	return "📲 La próxima vez pídelo desde nuestra app y revisa tu consumo 👉 " + LinkApp
+	return "📲 Tu próximo gas pídelo desde la app: lo ves llegar en vivo y revisas tu consumo 👉 " + LinkApp
 }
 
-// TocaInvitarApp dice si a este cliente le corresponde la invitación en esta entrega.
-func TocaInvitarApp(store conversation.Store, phone string, ahora time.Time) bool {
-	ultima, hubo := store.UltimaInvitacionApp(phone)
-	return !hubo || ahora.Sub(ultima) >= intervaloInvitacionApp
+// LineaAppEnCamino va con la confirmación del pedido y con el cambio de repartidor (dueño, 12/10:
+// "mientras esperas tu pedido te invito a descargar la app para dar seguimiento"). Es cierto:
+// quien se registra en la app con el MISMO celular ve ahí este pedido en curso (union_clientes
+// del backend, probado el 12/10).
+func LineaAppEnCamino() string {
+	return "📲 Mientras llega, baja nuestra app y sigue tu pedido en vivo 👉 " + LinkApp
+}
+
+// ConInvitacionApp anexa LineaAppEnCamino a un aviso de pedido en camino, salvo que el texto ya
+// lleve el enlace de la app (no se repite dos veces en el mismo mensaje).
+func ConInvitacionApp(reply string) string {
+	if strings.Contains(reply, LinkApp) {
+		return reply
+	}
+	return strings.TrimRight(reply, "\n ") + "\n\n" + LineaAppEnCamino()
 }
