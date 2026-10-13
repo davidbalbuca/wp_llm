@@ -275,13 +275,6 @@ func (a *Agent) cancelarLaEspera(from, texto string) string {
 	// app). Si lo hay, "Cancelar" tiene que cancelar ESE, que es lo que él entiende por
 	// cancelar; cortar solo la espera lo dejaría con gas en camino que creía haber parado.
 	if msg, hubo := a.cancelarPedidoVivoSiLoHay(from); hubo {
-		if msg == "" {
-			// Se le preguntó si de verdad cancela el pedido en camino (confirmarcancelacion.go): la
-			// espera del pedido nuevo NO se toca hasta que conteste.
-			a.store.AppendUser(from, texto)
-			a.store.AppendModel(from, a.preguntaDeCancelacion(from))
-			return ""
-		}
 		a.cancelarEspera(from) // y además se corta la espera del pedido nuevo
 		a.store.AppendUser(from, texto)
 		a.store.AppendModel(from, msg)

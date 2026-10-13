@@ -106,11 +106,6 @@ func (a *Agent) cancelarPedidoVivoSiLoHay(from string) (string, bool) {
 
 	t := &turno{}
 	salida := a.runTool(t, from, "cancelar_pedido", map[string]any{})
-	// Con el repartidor en camino se le PREGUNTÓ primero (menú ya enviado): todavía no hay nada
-	// que verificar; la respuesta la resuelve ResponderConfirmacionCancelacion.
-	if t.menuSent {
-		return "", true
-	}
 	// La verdad es el ESTADO, no el texto de la herramienta.
 	if _, sigue := a.store.GetActivePedido(from); sigue {
 		log.Printf("[cancelacion] %s: el backend NO canceló el pedido en camino; se avisa al equipo", from)
@@ -139,12 +134,6 @@ func (a *Agent) ResponderCancelacion(from, texto string) (string, bool) {
 	// Devuelve hubo=false cuando de verdad no hay nada que cancelar: puede ser una programación o
 	// una confusión, y eso lo explica mejor el modelo.
 	msg, hubo := a.cancelarPedidoVivoSiLoHay(from)
-	if hubo && msg == "" {
-		// Con el repartidor en camino se le preguntó (menú ya enviado): eso queda en el historial.
-		a.store.AppendUser(from, texto)
-		a.store.AppendModel(from, a.preguntaDeCancelacion(from))
-		return "", true
-	}
 	if !hubo {
 		// NO HAY PEDIDO. Antes se cedía el turno aquí y el modelo llamaba a cancelar_pedido por su
 		// cuenta; la herramienta le devolvía "No encuentro la cuenta del cliente…" y el modelo lo

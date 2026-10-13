@@ -1182,20 +1182,9 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		// 6 cancelaciones reales — las seis las salvó el candado de frases, que se dispara
 		// leyendo el texto que el modelo redacta y falla si elige otras palabras (pasó el
 		// 09/09: el cliente insistió tres veces con su pedido todavía vivo). Ver cancelacion.go.
-		// La respuesta a "¿igual quieres cancelar?" (repartidor en camino) va ANTES que la orden de
-		// cancelar: "Sí, cancelar" contiene "cancelar". Ver internal/agent/confirmarcancelacion.go.
-		if reply, manejado := ag.ResponderConfirmacionCancelacion(inc.From, inc.Text); manejado {
-			log.Printf("[webhook] confirmacion de cancelacion resuelta para %s", inc.From)
-			if reply != "" {
-				_ = replyClient(cfg, store, inc.From, reply)
-			}
-			return
-		}
 		if reply, manejado := ag.ResponderCancelacion(inc.From, inc.Text); manejado {
 			log.Printf("[webhook] cancelacion resuelta en código para %s", inc.From)
-			if reply != "" {
-				_ = replyClient(cfg, store, inc.From, reply)
-			}
+			_ = replyClient(cfg, store, inc.From, reply)
 			return
 		}
 		// CANCELAR LA ENTREGA AGENDADA, también en código. Va junto a su gemelo porque es el
@@ -1224,9 +1213,7 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		}
 		if reply, manejado := ag.ResponderMenuEspera(inc.From, inc.Text); manejado {
 			log.Printf("[webhook] respuesta al menu de espera resuelta para %s", inc.From)
-			if reply != "" {
-				_ = replyClient(cfg, store, inc.From, reply)
-			}
+			_ = replyClient(cfg, store, inc.From, reply)
 			return
 		}
 		// Respuesta a "¿ya te entregaron tu pedido?" (pedidos del flujo manual, sin app de conductor

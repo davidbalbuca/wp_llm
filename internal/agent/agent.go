@@ -92,11 +92,6 @@ type Agent struct {
 	// (teléfono -> true). Sin esto, cada "ok" o "dale" del cliente mientras espera abría otra
 	// goroutine, y cada una podía crear su propio pedido en el backend.
 	buscandoRepartidor sync.Map
-	// cancelacionPorConfirmar: teléfono -> time.Time de cuando se le preguntó "¿igual quieres
-	// cancelar?" con el repartidor en camino. cancelacionConfirmada: teléfono -> true, el "Sí" ya
-	// llegó y la próxima llamada a cancelar_pedido pasa. Ver confirmarcancelacion.go.
-	cancelacionPorConfirmar sync.Map
-	cancelacionConfirmada   sync.Map
 	// esperasArrancadas cuenta cuántas veces se lanzó la búsqueda de repartidor. Es una señal
 	// observable (atómica: se lee desde otra goroutine) para verificar en tests que aceptar
 	// "Esperar" REALMENTE arranca la búsqueda y no solo se lo dice al cliente.
@@ -503,10 +498,7 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// tu pedido" y la hizo repetir color, cantidad y ubicación de un pedido que ya existía.
 	// Por eso se pregunta por el estado DURABLE (igual que hace la cancelación), no por un
 	// booleano del turno: si el pedido ya vive, no hay nada que rescatar.
-	// Tampoco si en este turno se DERIVÓ al equipo: el cliente se quejaba (Edison, 12/10: "Nunka
-	// llego" con el pedido recién cancelado -> ticket #119) y el modelo le hablaba de su pedido;
-	// forzar un registro le mandaba el menú de colores como si quisiera pedir otra vez.
-	if !t.menuSent && !t.escalado && !t.ultimoPedido.ok && !t.ultimoPedido.enEspera &&
+	if !t.menuSent && !t.ultimoPedido.ok && !t.ultimoPedido.enEspera &&
 		(afirmaPedidoConfirmado(reply) || (!t.programo && afirmaProgramado(reply))) {
 		// Si el cliente pidió PROGRAMAR (dijo una hora) y el modelo afirmó sin llamar la tool, lo
 		// que hay que forzar es la PROGRAMACIÓN, no un registro inmediato. Pasó con María Elena el
@@ -839,11 +831,6 @@ func (a *Agent) runToolInterno(t *turno, from, name string, args map[string]any)
 		return result
 
 	case "cancelar_pedido":
-		// Con el repartidor ya en camino, primero se le pregunta (Edison, 12/10: canceló con
-		// William a la vuelta de su casa). Ver confirmarcancelacion.go.
-		if guia, preguntado := a.preguntarAntesDeCancelar(t, from); preguntado {
-			return guia
-		}
 		t.cancelo = true
 		return a.cancelarPedido(from)
 
