@@ -144,7 +144,7 @@ func mayusculaInicial(s string) string {
 // Ahora el código marca una bandera de estado al presentarse (ver bienvenidaunida.go) y el
 // historial queda limpio. Se conserva la lectura del historial como RESPALDO porque los avisos que
 // sí salen solos (`avisarCliente`) hacen AppendModel con el saludo, y esos caminos seguirían
-// necesitándolo. La marca es el texto fijo —"Soy *UbiGas*: tú no te preocupes"— que solo escribe el saludo (ganchoDeEntrada).
+// necesitándolo. La marca es el texto fijo —"Tú no te preocupes, yo te busco al repartidor más cercano"— que solo escribe el saludo (ganchoDeEntrada).
 func (a *Agent) yaSePresentoElCodigo(from string) bool {
 	if a.store.YaSePresento(from) {
 		return true
@@ -169,7 +169,7 @@ func (a *Agent) yaSePresentoElCodigo(from string) bool {
 
 // marcaDePresentacion es el trozo del saludo de bienvenida que lo identifica sin ambigüedad. Vive
 // aquí junto a quien lo busca; textoBienvenidaA es quien lo escribe.
-const marcaDePresentacion = "Soy *UbiGas*: tú no te preocupes"
+const marcaDePresentacion = "Tú no te preocupes, yo te busco al repartidor más cercano"
 
 // nombresDelCliente devuelve cómo lo conoce el código: el primer nombre (el que usa la bienvenida)
 // y el completo (el modelo a veces usa ese). Vacío si no se sabe.

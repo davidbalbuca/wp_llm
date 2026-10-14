@@ -44,11 +44,7 @@ func (a *Agent) SaludoDeBienvenida(from string) (string, bool) {
 	nombre := conversation.NombreUsable(a.store, from)
 	log.Printf("[bienvenida] %s empieza conversación; se presenta el bot", from)
 	ahora := a.ahora()
-	saludo := a.textoBienvenidaSegunHorario(nombre, ahora) + "\n\n" + lineaAppDeEntrada()
-	if a.avisoFueraDeHorario(ahora) == "" {
-		saludo += "\n\n" + pideloAqui
-	}
-	return saludo, true
+	return a.textoBienvenidaSegunHorario(nombre, ahora) + "\n\n" + lineaAppDeEntrada() + "\n" + pideloAqui, true
 }
 
 // lineaAppDeEntrada es la invitación a la app del SALUDO (13/10). Dueño: "el saludo no está
@@ -57,14 +53,13 @@ func (a *Agent) SaludoDeBienvenida(from string) (string, bool) {
 // existe, no POR QUÉ bajarla: aquí va lo que se gana (pedir más fácil y seguir al repartidor en el
 // mapa) y el enlace solo en su línea, para que sea lo que se toca. Texto del dueño.
 func lineaAppDeEntrada() string {
-	return "📲 *Descarga nuestra app:* la próxima vez pides en segundos y ves al repartidor llegar " +
-		"en el mapa 👇\n👉 " + LinkApp
+	return "📲 Descarga nuestra app y pide más fácil, viendo al repartidor llegar en el mapa 👇\n👉 " + LinkApp
 }
 
-// pideloAqui cierra el saludo en horario sin pedir nada (dueño, 13/10: "no pedir nada antes,
-// porque ya le hago que pida el color o el número"): la pregunta del color va justo debajo, en el
-// mismo mensaje (cuerpoMenuColores).
-const pideloAqui = "O pídelo aquí mismo, de una 👇"
+// pideloAqui va justo después de la app, de día y de noche (dueño, 14/10: "descarga, o también te
+// puedo ayudar por aquí"): las dos opciones juntas. No pregunta nada ("no pedir nada antes, porque
+// ya le hago que pida el color o el número"): la pregunta del color va debajo, en el mismo mensaje.
+const pideloAqui = "💬 O también te puedo ayudar por aquí mismo 👇"
 
 // LineaApp invita a la app en CADA saludo (dueño, 09/10: "cada que se pueda va lo de la app, pero
 // que no sea tanto texto, las personas no leen y no se están bajando la app"). Una línea, el
@@ -89,7 +84,7 @@ func (a *Agent) textoBienvenidaSegunHorario(nombre string, ahora time.Time) stri
 	if cerrado == "" {
 		return textoBienvenidaA(nombre, ahora)
 	}
-	return saludoDeFranja(nombre, ahora) + "\n" + ganchoDeEntrada + " 🔥\n\n" + cerrado
+	return saludoDeFranja(nombre, ahora) + " Soy *UbiGas*.\n" + ganchoDeEntrada + " 🔥\n\n" + cerrado
 }
 
 // avisoFueraDeHorario dice que ahora no atendemos y cuándo sí; "" si estamos en horario (o si el
@@ -242,16 +237,16 @@ func textoBienvenidaEn(nombre string, ahora time.Time, ciudad string) string {
 // y te lo envío en minutos". Quién es (UbiGas), que se encarga él y lo que gana (en minutos), en una
 // línea que se lee de un vistazo. Sin la ciudad ("en todo Cuenca" sonaba feo) ni "pagas al recibir".
 func saludoConGancho(nombre string, ahora time.Time, ciudad string) string {
-	return saludoDeFranja(nombre, ahora) + "\n" + ganchoDeEntrada + ", yo te busco el repartidor más cercano y " +
-		"te lo envío en minutos 🚚🔥"
+	return saludoDeFranja(nombre, ahora) + " Soy *UbiGas*.\n" + ganchoDeEntrada + " y te lo envío en minutos 🚚🔥"
 }
 
 // ganchoDeEntrada va en los dos saludos (en horario y cerrado) y lleva la marca que saludounico.go
 // reconoce (marcaDePresentacion).
 //
-// De noche se queda en "tú no te preocupes": "te busco el repartidor más cercano" no tiene
-// sentido cuando no estamos atendiendo (dueño, 13/10). Tampoco va "pagas al recibir".
-const ganchoDeEntrada = "¿Se te acabó el gas? Soy *UbiGas*: tú no te preocupes"
+// Va igual de día y de noche (de noche sin "te lo envío en minutos", que choca con el aviso de que
+// no atendemos). "Soy UbiGas" va aparte, en el saludo: pegado ("Soy UbiGas: tú no te preocupes")
+// se leía raro (dueño, 14/10). Sin "pagas al recibir".
+const ganchoDeEntrada = "¿Se te acabó el gas? Tú no te preocupes, yo te busco al repartidor más cercano"
 
 // saludoDeFranja es "¡Buenas noches, Ana! 👋" (o sin nombre si su WhatsApp no dice uno).
 func saludoDeFranja(nombre string, ahora time.Time) string {

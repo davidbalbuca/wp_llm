@@ -21,7 +21,7 @@ func agenteConHora(hora int) *Agent {
 
 func TestElSaludoDiceQueElSeEncarga(t *testing.T) {
 	saludo := textoBienvenidaA("Ana", time.Date(2026, 10, 13, 10, 0, 0, 0, zonaEcuador))
-	for _, quiero := range []string{"tú no te preocupes", "yo te busco el repartidor más cercano", "te lo envío en minutos"} {
+	for _, quiero := range []string{"Soy *UbiGas*", "Tú no te preocupes, yo te busco al repartidor más cercano", "te lo envío en minutos"} {
 		if !strings.Contains(saludo, quiero) {
 			t.Errorf("el saludo no dice %q: %q", quiero, saludo)
 		}
@@ -31,13 +31,30 @@ func TestElSaludoDiceQueElSeEncarga(t *testing.T) {
 	}
 }
 
-func TestDeNocheElSaludoNoPrometeBuscarRepartidor(t *testing.T) {
+// DE NOCHE dice lo mismo (sin "en minutos", que choca con el aviso de cierre), y la app va siempre
+// junto a "o también te puedo ayudar por aquí" (dueño, 14/10).
+func TestDeNocheElSaludoDiceLoMismoYOfreceAyudarPorAqui(t *testing.T) {
 	ag := agenteConHora(22)
-	saludo := ag.textoBienvenidaSegunHorario("Ana", ag.ahora())
-	if strings.Contains(saludo, "más cercano") || strings.Contains(saludo, "en minutos") {
-		t.Errorf("de noche el saludo no promete buscar ni llevar en minutos: %q", saludo)
+	ag.store.SetLastOrder("593900960001", conversation.LastOrder{})
+	saludo, hay := ag.SaludoDeBienvenida("593900960001")
+	if !hay {
+		t.Fatal("no se saludó")
 	}
-	if !strings.Contains(saludo, marcaDePresentacion) {
-		t.Errorf("sin la marca, saludounico.go no reconoce la presentación: %q", saludo)
+	for _, quiero := range []string{"Soy *UbiGas*.", "Tú no te preocupes, yo te busco al repartidor más cercano",
+		"Ahora no estamos atendiendo", "Descarga nuestra app", "O también te puedo ayudar por aquí mismo"} {
+		if !strings.Contains(saludo, quiero) {
+			t.Errorf("de noche el saludo no dice %q:\n%s", quiero, saludo)
+		}
+	}
+	if strings.Contains(saludo, "en minutos") {
+		t.Errorf("de noche no se promete en minutos:\n%s", saludo)
+	}
+}
+
+func TestDeDiaLaAppVaJuntoAAyudarPorAqui(t *testing.T) {
+	ag := agenteConHora(10)
+	saludo, _ := ag.SaludoDeBienvenida("593900960002")
+	if !strings.Contains(saludo, LinkApp+"\n"+pideloAqui) {
+		t.Errorf("la app y el \"por aquí\" van juntos:\n%s", saludo)
 	}
 }
