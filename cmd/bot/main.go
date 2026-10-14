@@ -1236,6 +1236,14 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 			}
 			return
 		}
+		// El "Agendar" del saludo de noche: agenda su último pedido para la apertura (13/10).
+		if reply, manejado := ag.ResponderAgendarRepetir(inc.From, inc.Text); manejado {
+			log.Printf("[webhook] agendar el último pedido resuelto para %s", inc.From)
+			if reply != "" {
+				_ = replyClient(cfg, store, inc.From, reply)
+			}
+			return
+		}
 		if reply, manejado := ag.ResponderRepetirPedido(inc.From, inc.Text); manejado {
 			log.Printf("[webhook] repetir pedido resuelto para %s", inc.From)
 			if reply != "" {

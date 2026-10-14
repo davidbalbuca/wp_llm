@@ -25,6 +25,9 @@ import (
 const (
 	BotonRepetirPedido = "Repetir lo mismo"
 	BotonCambiarPedido = "Cambiar el pedido"
+	// BotonAgendarRepetir es el "Repetir lo mismo" de noche: agenda su último pedido para la
+	// apertura (ver ResponderAgendarRepetir).
+	BotonAgendarRepetir = "Agendar"
 )
 
 // ResponderMenuEspera resuelve la respuesta del cliente al menú "¿Deseas esperar?" que se le
@@ -303,4 +306,59 @@ func (a *Agent) cancelarLaEspera(from, texto string) string {
 	a.store.AppendUser(from, texto)
 	a.store.AppendModel(from, respuesta)
 	return respuesta
+}
+
+// ResponderAgendarRepetir resuelve el botón "Agendar" del saludo de noche (13/10). Dueño: "cuando
+// ya es noche el botón que debería aparecer es agendar, y ahí sí agendar". Carga su último pedido
+// en la ficha como ENTREGA PROGRAMADA para la apertura y, si ya tenemos su ubicación, la agenda en
+// código; si no, se la pide (con la hora ya en la ficha, el rescate de forzar.go agenda en cuanto
+// llegue aunque el modelo se lo salte).
+func (a *Agent) ResponderAgendarRepetir(from, texto string) (string, bool) {
+	if normalizarRespuesta(texto) != normalizarRespuesta(BotonAgendarRepetir) {
+		return "", false
+	}
+	last, hay := a.store.GetLastOrder(from)
+	if !hay || last.Cantidad < 1 || last.Color == "" || a.tienePedidoVivo(from) {
+		return "", false
+	}
+	lineas := last.ItemsDelPedido()
+	ahora := a.ahora()
+	abre, ok := a.aperturaAgendable(ahora)
+	if !ok || len(lineas) != 1 {
+		return "", false // ya abrimos, o no se puede agendar: que siga el flujo normal
+	}
+	hora, cuando := abre.Format("15:04"), cuandoAbre(ahora, abre)
+	a.store.SetPedidoEnCurso(from, conversation.PedidoEnCurso{
+		Flujo: conversation.FlujoProgramacion, Hora: hora, Color: lineas[0].Color, Cantidad: lineas[0].Cantidad})
+	log.Printf("[menu-agendar] %s agenda su último pedido (%s) para %s %s", from, describirPedido(last), cuando, hora)
+
+	if _, hayUbicacion := a.store.GetLocation(from); !hayUbicacion {
+		respuesta := fmt.Sprintf("¡Listo! Te agendo %s para %s desde las %s 🙌 ", describeItems(lineas), cuando,
+			horaAmigable(hora))
+		if destino := last.Destino(); destino != "" {
+			respuesta += fmt.Sprintf("La última vez te lo entregamos en %s. ¿Me ayudas con tu ubicación 📍 "+
+				"para dejarlo agendado?", destino)
+		} else {
+			respuesta += "¿Me ayudas con tu ubicación 📍 para dejarlo agendado?"
+		}
+		a.store.AppendUser(from, texto)
+		a.store.AppendModel(from, respuesta)
+		return respuesta, true
+	}
+
+	args := argsDeLineas(lineas, map[string]any{"hora": hora})
+	if diasEntre(ahora, abre) >= 1 {
+		args["dia"] = "mañana"
+	}
+	t := &turno{}
+	a.store.AppendUser(from, texto)
+	salida := a.runTool(t, from, "programar_entrega", args)
+	if !a.store.TieneProgramacionViva(from) {
+		log.Printf("[menu-agendar] %s: la programación NO quedó viva; lo atiende el modelo. Detalle: %s", from, salida)
+		return "", false
+	}
+	respuesta := fmt.Sprintf("¡Listo! 📅 Tu %s quedó agendado para %s a las %s. Te escribo a esa hora para "+
+		"confirmarte antes de enviarlo 😊", describeItems(lineas), cuando, horaAmigable(hora))
+	a.store.AppendModel(from, respuesta)
+	return respuesta, true
 }

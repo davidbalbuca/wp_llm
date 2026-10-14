@@ -108,6 +108,18 @@ type Agent struct {
 	// pasa aunque el menú salga con otra cosa. Pasó con la dirección, que mostraba la calle sin
 	// el nombre que el cliente le había puesto.
 	enviarMenu func(from, cuerpo string, opciones []string) error
+
+	// reloj da la hora en Ecuador; nil = time.Now(). Existe para probar lo que depende de si
+	// estamos en horario (el saludo de noche y su botón de Agendar) sin esperar a que anochezca.
+	reloj func() time.Time
+}
+
+// ahora es la hora en Ecuador (o la del reloj de la prueba).
+func (a *Agent) ahora() time.Time {
+	if a.reloj != nil {
+		return a.reloj().In(zonaEcuador)
+	}
+	return time.Now().In(zonaEcuador)
 }
 
 // mandarMenu envía un menú interactivo por WhatsApp. Único camino: así los tests pueden leer el

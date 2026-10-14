@@ -78,6 +78,14 @@ func (a *Agent) ResponderAperturaConColores(from, texto string) (string, bool) {
 	if last, hay := a.store.GetLastOrder(from); hay && last.Cantidad > 0 && last.Color != "" && !a.tienePedidoVivo(from) {
 		cuerpo = "👇 ¿Te envío lo mismo de la última vez: " + describeItems(last.ItemsDelPedido()) + "?"
 		opciones, que = []string{BotonRepetirPedido, BotonCambiarPedido}, "repetir"
+		// De noche no se le puede "enviar" nada: el botón es AGENDAR (dueño, 13/10). Solo con un
+		// color, que es lo que agenda programar_entrega.
+		ahora := a.ahora()
+		// El cuándo ("mañana desde las 7 am") ya lo dice el saludo de cierre, justo arriba.
+		if _, ok := a.aperturaAgendable(ahora); ok && len(last.ItemsDelPedido()) == 1 {
+			cuerpo = "👇 ¿Te agendo lo mismo de la última vez: " + describeItems(last.ItemsDelPedido()) + "?"
+			opciones, que = []string{BotonAgendarRepetir, BotonCambiarPedido}, "agendar"
+		}
 	}
 	if len(opciones) < 2 {
 		return "", false // sin catálogo no hay menú: que lo lleve el modelo

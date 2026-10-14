@@ -43,7 +43,7 @@ func (a *Agent) SaludoDeBienvenida(from string) (string, bool) {
 	// Solo un nombre que sirva: "¡Buenas noches, @sd2!" suena a robot (05/10).
 	nombre := conversation.NombreUsable(a.store, from)
 	log.Printf("[bienvenida] %s empieza conversación; se presenta el bot", from)
-	ahora := time.Now().In(zonaEcuador)
+	ahora := a.ahora()
 	saludo := a.textoBienvenidaSegunHorario(nombre, ahora) + "\n\n" + lineaAppDeEntrada()
 	if a.avisoFueraDeHorario(ahora) == "" {
 		saludo += "\n\n" + pideloAqui
@@ -127,6 +127,30 @@ func (a *Agent) avisoFueraDeHorario(ahora time.Time) string {
 			": escríbenos y te lo llevamos en minutos 🚚"
 	}
 	return motivo + ", pero te agendo tu pedido " + cuando + " " + desde + " 🚚"
+}
+
+// aperturaAgendable es la próxima apertura si AHORA estamos fuera de horario y se puede agendar
+// para ella (dentro de las 24 h de WhatsApp). Es lo que hace que de noche el botón sea "Agendar".
+func (a *Agent) aperturaAgendable(ahora time.Time) (time.Time, bool) {
+	if a.avisoFueraDeHorario(ahora) == "" {
+		return time.Time{}, false
+	}
+	abre, ok := a.proximaApertura(ahora)
+	if !ok || abre.Sub(ahora) > 24*time.Hour {
+		return time.Time{}, false
+	}
+	return abre, true
+}
+
+// cuandoAbre dice "mañana" / "hoy" / "el lunes" para la apertura, como en el aviso de cierre.
+func cuandoAbre(ahora, abre time.Time) string {
+	switch dias := diasEntre(ahora, abre); {
+	case dias == 0:
+		return "hoy"
+	case dias > 1:
+		return "el " + diasEnEspanol[isoDelDia(abre)]
+	}
+	return "mañana"
 }
 
 // proximaApertura es el próximo momento en que empezamos a atender (hoy o un día siguiente).
@@ -238,16 +262,16 @@ func textoBienvenidaEn(nombre string, ahora time.Time, ciudad string) string {
 // Las dos versiones (en horario y cerrado) llevan "*UbiGas*, tu repartidor aquísito", que es lo
 // que saludounico.go reconoce para no repetir la presentación.
 //
-// 13/10, sobre un ejemplo del dueño: más cercano ("Tranqui") y con lo que gana el que llega de la
-// publicidad (hasta su puerta, en minutos, paga al recibir), en UNA línea que se lee de un vistazo.
-// Sin la ciudad: "en todo Cuenca" sonaba feo.
+// 13/10, dueño: "que le diga algo como tú no te preocupes, yo te busco al distribuidor más cercano
+// y te lo envío en minutos". Quién es (UbiGas), que se encarga él y lo que gana (en minutos, paga
+// al recibir), en una línea que se lee de un vistazo. Sin la ciudad: "en todo Cuenca" sonaba feo.
 func saludoConGancho(nombre string, ahora time.Time, ciudad string) string {
-	return saludoDeFranja(nombre, ahora) + "\n" + ganchoDeEntrada + " hasta tu puerta en minutos y pagas al recibir 🚚🔥"
+	return saludoDeFranja(nombre, ahora) + "\n" + ganchoDeEntrada + " y te lo envío en minutos 🚚🔥 Pagas al recibir."
 }
 
 // ganchoDeEntrada va en los dos saludos (en horario y cerrado) y lleva la marca que saludounico.go
 // reconoce (marcaDePresentacion).
-const ganchoDeEntrada = "¿Se te acabó el gas? Tranqui, *UbiGas* te lo lleva"
+const ganchoDeEntrada = "¿Se te acabó el gas? Soy *UbiGas*: tú no te preocupes, yo te busco el distribuidor más cercano"
 
 // saludoDeFranja es "¡Buenas noches, Ana! 👋" (o sin nombre si su WhatsApp no dice uno).
 func saludoDeFranja(nombre string, ahora time.Time) string {
