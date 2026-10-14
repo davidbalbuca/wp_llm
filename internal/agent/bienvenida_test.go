@@ -128,7 +128,8 @@ func TestElSaludoEsCorto(t *testing.T) {
 	clienteQueVuelveTrasLargoSilencio(store, from)
 
 	saludo, _ := ag.SaludoDeBienvenida(from)
-	if n := len([]rune(saludo)); n > 320 {
+	// 13/10: el dueño eligió un saludo más completo (qué ganas, la app, pedir por aquí): ~400.
+	if n := len([]rune(saludo)); n > 450 {
 		t.Errorf("el saludo tiene %d caracteres: demasiado para lo primero que se lee.\n%q", n, saludo)
 	}
 }
@@ -156,7 +157,7 @@ func TestDespuesDelCierreElSaludoEsElDeCerrado(t *testing.T) {
 
 	got := a.textoBienvenidaSegunHorario("Lucia Paredes", lunes2052)
 
-	want := "¡Buenas noches, Lucia! 👋 Soy *UbiGas*, tu repartidor aquísito no más 🔥\n\n" +
+	want := "¡Buenas noches, Lucia! 👋😊\n¿Se te acabó el gas? ¡Tranqui, veci, que *UbiGas* te ayuda! 🔥\n\n" +
 		"🌙 Ahora no estamos atendiendo (hoy atendimos hasta las 8:30 pm), pero te agendo tu pedido " +
 		"para mañana desde las 7 am 🚚"
 	if got != want {
