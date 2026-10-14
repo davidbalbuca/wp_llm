@@ -758,10 +758,24 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 	}
 
 	seguimiento := a.urlSeguimiento(resultado.SeguimientoToken)
-	// El VALOR A PAGAR se calcula con el precio del catálogo (unitario + envío + instalación +
-	// servicio, ver Product.PrecioTotal) sumando TODAS las líneas, NO con resultado.Total: el
-	// backend en wppOrder devuelve solo total_productos (el cilindro suelto, sin los rubros).
-	totalPagar := totalPagarDe(lineas)
+	// El VALOR A PAGAR es EL DEL BACKEND. Él acaba de registrar el pedido y sabe exactamente
+	// cuánto grabó -incluidas las listas de precios y promociones, que el catálogo cacheado del
+	// bot puede no reflejar-. El bot es un canal, no la fuente de los precios.
+	//
+	// Antes se recalculaba aquí con `totalPagarDe(lineas)` porque un comentario afirmaba que
+	// "wppOrder devuelve solo total_productos (el cilindro suelto)". ERA FALSO: en
+	// catalog_selectors.py `total_productos` es la suma de los CUATRO rubros, y es eso lo que
+	// client_selectors.py devuelve como "total". El nombre engañoso provocó el cálculo duplicado
+	// (memory/17-bot-no-calcula-precios.md).
+	//
+	// Se cae al cálculo local solo si el backend no manda total (versión vieja): más vale el del
+	// catálogo que ninguno, pero queda en el log para que se note.
+	totalPagar := resultado.Total
+	if totalPagar <= 0 {
+		totalPagar = totalPagarDe(lineas)
+		log.Printf("[pedido] el backend no devolvió total del pedido %d; se usa el del catálogo ($%.2f)",
+			resultado.IDPedido, totalPagar)
+	}
 	// Tiempo estimado de llegada: tiempo de ruta del backend (OSRM) + margen de preparación. 0 si
 	// el backend no calculó un tiempo real (sin conductor con GPS): ahí no se promete nada.
 	minutosEntrega, _ := resultado.MinutosEntregaConMargen(a.cfg.MargenEntregaMin)

@@ -94,8 +94,24 @@ type Payment struct {
 }
 
 // GetProducts devuelve el catálogo de productos con colores y precio (getProductXCategory).
+//
+// Lo pide COMO CANAL WHATSAPP: el backend resuelve las listas de precios y devuelve el precio
+// que de verdad se le va a cobrar por este canal. Sin ese parámetro devolvería el precio base y
+// el bot anunciaría un precio distinto del que el backend cobra al registrar el pedido. El bot
+// es un canal, no la fuente de los precios (memory/17-bot-no-calcula-precios.md).
 func (c *Client) GetProducts() ([]Product, error) {
-	res, err := c.get("/getProductXCategory/")
+	return c.GetProductsCtx(0)
+}
+
+// GetProductsCtx trae el catálogo para un contexto concreto. `tipoCliente` 0 = desconocido: el
+// backend aplica solo las listas generales, que es el default seguro (nadie obtiene un precio de
+// mayorista por omisión).
+func (c *Client) GetProductsCtx(tipoCliente int) ([]Product, error) {
+	ruta := "/getProductXCategory/?canal=WHATSAPP"
+	if tipoCliente > 0 {
+		ruta += fmt.Sprintf("&tipo_cliente=%d", tipoCliente)
+	}
+	res, err := c.get(ruta)
 	if err != nil {
 		return nil, err
 	}
