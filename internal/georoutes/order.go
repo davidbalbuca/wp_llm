@@ -44,9 +44,9 @@ type OrderResult struct {
 	Tiempo string `json:"tiempo"`
 }
 
-// MinutosEntregaConMargen convierte el "HH:MM:SS" de OSRM en minutos y le SUMA el margen de
-// preparación del pedido (el conductor no sale en el instante cero: carga el cilindro, arranca).
-// Decisión del negocio: mostrar al cliente el tiempo de ruta + 5 min. Devuelve (minutos, true) si
+// MinutosEntregaConMargen convierte el "HH:MM:SS" del backend en minutos y le SUMA margenMin.
+// Desde el 13/10 el backend ya lo manda con el margen del cliente (TIEMPO_MARGEN_CLIENTE_MINUTOS)
+// y el bot usa margenMin = 0 (ver config.MargenEntregaMin). Devuelve (minutos, true) si
 // hay un tiempo real; (0, false) si el backend no calculó ninguno ("", "00:00:00" o ilegible), y
 // entonces al cliente NO se le promete un tiempo.
 func (r *OrderResult) MinutosEntregaConMargen(margenMin int) (int, bool) {

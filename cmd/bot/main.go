@@ -1513,7 +1513,7 @@ func notifyOrderReassigned(cfg config.Config, store conversation.Store, pedidoID
 		return
 	}
 	// El mismo mensaje que cualquier asignación (agent.MensajeRepartidor): nombre, placa, minutos y
-	// enlace. Los minutos llevan el mismo margen de preparación que la primera asignación.
+	// enlace. Los minutos ya vienen del backend con el margen del cliente (13/10); MargenEntregaMin es 0.
 	minutos := 0
 	if minutosRuta > 0 {
 		minutos = minutosRuta + cfg.MargenEntregaMin
