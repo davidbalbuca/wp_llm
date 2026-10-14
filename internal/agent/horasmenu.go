@@ -52,7 +52,7 @@ const maxHorasSugeridas = 4
 // Si hoy ya no cabe ninguna (es tarde), sigue con las primeras de MAÑANA: quien escribe a las
 // 21:00 quiere que le llegue mañana temprano, y ofrecerle una lista vacía sería inútil.
 func (a *Agent) horasSugeridas(ahora time.Time) []string {
-	ini, fin := parseHoraHHMM(a.cfg.BotHorarioInicio), parseHoraHHMM(a.cfg.BotHorarioFin)
+	ini, fin := a.minutosDeHoy(ahora)
 	if ini < 0 || fin < 0 || ini >= fin {
 		return nil // configuración inválida: mejor sin menú que con horas imposibles
 	}

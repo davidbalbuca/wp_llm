@@ -16,6 +16,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"wp-llm-gas/internal/conversation"
 )
@@ -91,10 +92,11 @@ func (a *Agent) ResponderMenuEspera(from, texto string) (string, bool) {
 		if yaHabiaEsperado {
 			respuesta = MensajeDespedidaTrasCancelar()
 		} else {
+			desdeHoy, hastaHoy := a.horarioDeHoy(time.Now().In(zonaEcuador))
 			respuesta = fmt.Sprintf("Listo, ya no te busco repartidor 🙏. Dejé tu pedido anotado por si "+
 				"quieres retomarlo, y si prefieres puedo agendarte la entrega para más tarde: atendemos "+
 				"de %s a %s, dime a qué hora te viene bien. Y si ya no lo necesitas, aquí estoy cuando "+
-				"me busques 😊", a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
+				"me busques 😊", desdeHoy, hastaHoy)
 		}
 		// El turno queda en el HISTORIAL. Sin esto el modelo no se entera de que el cliente
 		// canceló la espera: el 15/09, dos horas después, le volvió a ofrecer esperar o programar

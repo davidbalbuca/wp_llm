@@ -13,6 +13,7 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"time"
 
 	"wp-llm-gas/internal/conversation"
 	"wp-llm-gas/internal/georoutes"
@@ -293,7 +294,7 @@ func (a *Agent) horaEnMensaje(texto string) (pareceHora bool, hora string) {
 		return false, ""
 	}
 	// Desde aquí, el cliente SÍ estaba diciendo una hora (aunque no podamos atenderla).
-	ini, fin := parseHoraHHMM(a.cfg.BotHorarioInicio), parseHoraHHMM(a.cfg.BotHorarioFin)
+	ini, fin := a.minutosDeHoy(time.Now().In(zonaEcuador))
 	if ini < 0 || fin < 0 {
 		return true, h // sin horario configurado no se filtra nada
 	}

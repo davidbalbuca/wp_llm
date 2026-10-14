@@ -134,16 +134,17 @@ func (a *Agent) mensajeDelPedido(t *turno, from string) string {
 		// "inconveniente técnico, ya avisé al equipo" lo asusta y además MIENTE (nadie fue
 		// avisado, no hay ticket). Se le dice la verdad y se le ofrece agendar.
 		ahoraEc := time.Now().In(zonaEcuador)
+		desdeHoy, hastaHoy := a.horarioDeHoy(ahoraEc)
 		if !a.esDiaLaborable(ahoraEc) {
 			// El dia, no la hora: decirle "a esta hora" un domingo le haria esperar a la tarde.
 			return fmt.Sprintf("Hoy no tenemos servicio 🙏. Atendemos %s de %s a %s. ¿Quieres que "+
 				"te lo agende para otro día? 😊",
-				a.textoDiasLaborables(), a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
+				a.textoDiasLaborables(), desdeHoy, hastaHoy)
 		}
 		if !a.dentroDeHorario(ahoraEc) {
 			return fmt.Sprintf("A esta hora ya no tenemos repartidores en ruta 🙏. Atendemos %s de %s "+
 				"a %s: dime a qué hora te viene bien mañana y te la dejo agendada 😊",
-				a.textoDiasLaborables(), a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
+				a.textoDiasLaborables(), desdeHoy, hastaHoy)
 		}
 		// Cualquier otro motivo sí es un problema nuestro: se DERIVA de verdad (crea el ticket)
 		// antes de prometerle al cliente que el equipo lo va a contactar.

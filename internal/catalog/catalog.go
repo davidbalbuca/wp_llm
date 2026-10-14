@@ -22,6 +22,10 @@ type Context struct {
 	// Cambios de color que el negocio acepta. Mapa VACÍO = no hay ninguno configurado, que es
 	// distinto de "no se pudo consultar": el candado de color solo afirma con datos en mano.
 	Equivalencias georoutes.Equivalencias
+	// Horario de atención del backend, la ÚNICA fuente de verdad (lo edita el panel y lo lee
+	// también la app móvil). nil = no se pudo consultar: ahí el bot cae al BOT_HORARIO_* de su
+	// .env, que queda como RESPALDO y no como fuente. Ver specs/horarios-franjas-y-rubros.md §3.
+	Horario *georoutes.HorarioSemanal
 }
 
 // Client obtiene y cachea el catálogo del backend (vía el cliente georoutes).
@@ -98,6 +102,16 @@ func (c *Client) fetch() (*Context, error) {
 	} else {
 		log.Printf("[catalog] sin equivalencias de color: %v", err)
 	}
+	// Horario: secundario en el sentido de que su fallo no impide servir (se cae al .env), pero
+	// NO en el de que da igual. Si falla, el bot puede decirle al cliente un horario distinto del
+	// que atiende el negocio, que es justo el problema que este endpoint vino a resolver — por eso
+	// el fallo se registra con el motivo y no en silencio.
+	var horario *georoutes.HorarioSemanal
+	if h, err := c.gr.GetHorarioAtencion(); err == nil {
+		horario = h
+	} else {
+		log.Printf("[catalog] sin horario de atención del backend, se usará el del .env: %v", err)
+	}
 	return &Context{Business: business, Products: products, Payments: payments, Zonas: zonas,
-		Equivalencias: equivalencias}, nil
+		Equivalencias: equivalencias, Horario: horario}, nil
 }

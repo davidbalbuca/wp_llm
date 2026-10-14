@@ -39,7 +39,8 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	_, esperandoConductor := a.store.GetPendingWait(from)
 	if a.dentroDeHorario(time.Now().In(zonaEcuador)) && strings.TrimSpace(str(args["hora"])) == "" &&
 		!esperandoConductor {
-		return "ESTAMOS DENTRO DEL HORARIO (" + a.cfg.BotHorarioInicio + " a " + a.cfg.BotHorarioFin + "): " +
+		desde, hasta := a.horarioDeHoy(time.Now().In(zonaEcuador))
+		return "ESTAMOS DENTRO DEL HORARIO (" + desde + " a " + hasta + "): " +
 			"no se programa nada porque el servicio está ACTIVO ahora. Usa registrar_pedido para tomar el " +
 			"pedido de una vez. Solo programa si el cliente pidió EXPRESAMENTE otra hora."
 	}
@@ -91,6 +92,7 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	//   3) si el modelo no pasó nada usable, se busca la hora que el CLIENTE ya escribió.
 	// Programar es un COMPROMISO, así que la hora tiene que venir del cliente: por eso el paso 3
 	// mira el message_log (lo que de verdad se recibió), no algo inventado por el modelo.
+	desdeTexto, hastaTexto := a.horarioDeHoy(time.Now().In(zonaEcuador))
 	horaTxt := strings.TrimSpace(str(args["hora"]))
 	mins := parseHoraHHMM(horaTxt)
 	if mins < 0 {
@@ -106,10 +108,9 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	if mins < 0 {
 		return fmt.Sprintf("El cliente aún no ha dicho a qué hora quiere su entrega (no inventes una tú). "+
 			"Pregúntale si desea PROGRAMAR y dile que atendemos de %s a %s; apenas te diga una hora, "+
-			"agéndala sin volver a preguntar.", a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
+			"agéndala sin volver a preguntar.", desdeTexto, hastaTexto)
 	}
-	ini := parseHoraHHMM(a.cfg.BotHorarioInicio)
-	fin := parseHoraHHMM(a.cfg.BotHorarioFin)
+	ini, fin := a.minutosDeHoy(time.Now().In(zonaEcuador))
 	// Horario de entregas CERRADO en ambos extremos [ini, fin]: la hora de cierre es válida para
 	// AGENDAR. Antes era `mins >= fin` (exclusivo), así que "7 de la noche" == 19:00 == la hora de
 	// cierre que el bot anuncia ("atendemos de 07:00 a 19:00, apenas me digas una hora la agendo")
@@ -118,7 +119,7 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	// mira la hora ACTUAL, y a las 19:00 en punto ya no hay margen para despachar ahora.
 	if mins < ini || mins > fin {
 		return fmt.Sprintf("Esa hora está fuera del horario de entregas (%s a %s). Pídele al cliente una hora "+
-			"dentro del horario.", a.cfg.BotHorarioInicio, a.cfg.BotHorarioFin)
+			"dentro del horario.", desdeTexto, hastaTexto)
 	}
 
 	ahora := time.Now().In(zonaEcuador)
@@ -229,28 +230,38 @@ func (a *Agent) cancelarProgramacion(from string) string {
 	return "Entrega programada CANCELADA. Confirmaselo al cliente y ofrecele hacer un pedido cuando lo necesite."
 }
 
-// dentroDeHorario indica si `t` cae dentro del horario laboral de entregas configurado.
+// dentroDeHorario indica si `t` cae dentro del horario de atención.
+//
+// El horario lo manda el BACKEND (la tabla que edita el panel, la misma que lee la app móvil);
+// el .env de este bot es solo el respaldo. Ver horarioatencion.go para el por qué: eran dos
+// fuentes con valores distintos y se contradecían en producción.
 func (a *Agent) dentroDeHorario(t time.Time) bool {
-	if !a.esDiaLaborable(t) {
+	f, _ := a.horarioDelDia(t)
+	if !f.abierto {
 		return false
 	}
-	ini := parseHoraHHMM(a.cfg.BotHorarioInicio)
-	fin := parseHoraHHMM(a.cfg.BotHorarioFin)
-	if ini < 0 || fin < 0 {
-		return true // configuración inválida: no bloquear el servicio
+	// Horas DESCONOCIDAS (respaldo con configuración ilegible): se atiende. Es la decisión que ya
+	// estaba —un error de configuración no puede cerrar el negocio— y aquí conviene, porque la
+	// alternativa es rechazar pedidos buenos. Lo que NO se hace sin horas es OFRECER horas
+	// concretas: ver minutosDeHoy. Aceptar de más es recuperable; prometer de más, no.
+	if f.desde < 0 || f.hasta < 0 {
+		return true
 	}
 	mins := t.Hour()*60 + t.Minute()
-	return mins >= ini && mins < fin
+	return mins >= f.desde && mins < f.hasta
 }
 
 // diasEnEspanol traduce los numeros ISO de dia a su nombre, para poder decirselo al cliente.
 var diasEnEspanol = map[int]string{1: "lunes", 2: "martes", 3: "miércoles", 4: "jueves",
 	5: "viernes", 6: "sábado", 7: "domingo"}
 
-// diasLaborables devuelve los dias que se trabaja, leidos de la configuracion. Acepta "1-6" y
+// diasLaborablesDelEnv son los dias que se trabaja segun BOT_DIAS_LABORABLES. Acepta "1-6" y
 // "1,2,3": lo primero es lo comun y lo segundo permite un horario con huecos. Si la configuracion
 // esta mal, se devuelven TODOS los dias: un error de configuracion no puede cerrar el negocio.
-func (a *Agent) diasLaborables() map[int]bool {
+//
+// RESPALDO: la fuente de verdad son los dias `abierto` del backend (diasAbiertos, en
+// horarioatencion.go). Esto solo manda cuando el backend no pudo decirlo.
+func (a *Agent) diasLaborablesDelEnv() map[int]bool {
 	dias := map[int]bool{}
 	texto := strings.TrimSpace(a.cfg.BotDiasLaborables)
 	for _, parte := range strings.Split(texto, ",") {
@@ -277,21 +288,34 @@ func (a *Agent) diasLaborables() map[int]bool {
 	return dias
 }
 
-// esDiaLaborable dice si ESE dia se trabaja. time.Weekday() pone el domingo en 0; los numeros de
-// la configuracion son ISO (lunes=1, domingo=7), que es como los lee la gente.
-func (a *Agent) esDiaLaborable(t time.Time) bool {
+// esDiaLaborableDelEnv dice si ESE dia se trabaja segun el .env. time.Weekday() pone el domingo
+// en 0; los numeros de la configuracion son ISO (lunes=1, domingo=7), que es como los lee la
+// gente. RESPALDO: lo que manda es `abierto` del backend (ver esDiaLaborable).
+func (a *Agent) esDiaLaborableDelEnv(t time.Time) bool {
 	iso := int(t.Weekday())
 	if iso == 0 {
 		iso = 7
 	}
-	return a.diasLaborables()[iso]
+	return a.diasLaborablesDelEnv()[iso]
+}
+
+// esDiaLaborable dice si ESE dia se trabaja, segun el BACKEND (con el .env de respaldo). Es la
+// que usa el resto del bot.
+func (a *Agent) esDiaLaborable(t time.Time) bool {
+	f, _ := a.horarioDelDia(t)
+	return f.abierto
 }
 
 // textoDiasLaborables arma "lunes a sábado" (o la lista, si los dias no son seguidos) para
-// decirselo al cliente. El bot no puede decir "de lunes a sabado" a secas: si manana alguien
-// cambia la configuracion, el mensaje tiene que cambiar con ella.
+// decirselo al cliente. Toma los dias del BACKEND: si el panel abre el domingo, el mensaje lo
+// dice sin que haya que tocar el bot.
 func (a *Agent) textoDiasLaborables() string {
-	dias := a.diasLaborables()
+	return a.textoDiasAbiertos(time.Now().In(zonaEcuador))
+}
+
+// textoDiasLaborablesDelEnv es la version de respaldo, sobre BOT_DIAS_LABORABLES.
+func (a *Agent) textoDiasLaborablesDelEnv() string {
+	dias := a.diasLaborablesDelEnv()
 	var nombres []string
 	for i := 1; i <= 7; i++ {
 		if dias[i] {
