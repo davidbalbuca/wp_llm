@@ -96,7 +96,7 @@ func textoRecordatorio(nombre, falta, color string) string {
 }
 
 // textoDespedida es el segundo paso, si tampoco contestó el recordatorio. No lleva la marca de
-// la presentación ("que *UbiGas* te ayuda"): saludounico.go la usa para saber si el
+// la presentación ("Tranqui, *UbiGas* te lo lleva"): saludounico.go la usa para saber si el
 // bot ya se presentó, y una despedida no es una presentación.
 func textoDespedida(nombre string) string {
 	quien := ""
