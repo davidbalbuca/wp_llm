@@ -24,6 +24,7 @@ package agent
 import (
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 
 	"wp-llm-gas/internal/georoutes"
@@ -63,6 +64,13 @@ func afirmaCobertura(texto string) bool {
 	if pideLaUbicacion(texto) {
 		return false
 	}
+	// Hablar del HORARIO no es prometer cobertura (14/10, 593999614191): a "¿Lunes a sábados?" el
+	// modelo contestó "Sí, atendemos de lunes a sábado..." y el "sí atendemos" se tomó por un "sí
+	// llegamos a tu zona": el candado lo cambió por la lista de parroquias. Si la frase habla de
+	// días u horas y no nombra ningún lugar, se deja pasar.
+	if hablaDelHorario(texto) && !nombraUnLugar(texto) {
+		return false
+	}
 	return afirmaSecuencia(texto, [][]string{
 		{"esta", "cubierto"}, {"esta", "cubierta"},
 		{"si", "llegamos"}, {"si", "atendemos"},
@@ -73,6 +81,34 @@ func afirmaCobertura(texto string) bool {
 		{"si", "cubrimos"}, {"cubrimos", "esa", "zona"},
 		{"si", "hay", "cobertura"},
 	}, 3)
+}
+
+var horaDelDia = regexp.MustCompile(`\b\d{1,2}(:\d{2})?\s*(am|pm|a\.m|p\.m|h)\b`)
+
+// hablaDelHorario dice si el texto habla de días u horas de atención ("de lunes a sábado",
+// "hasta las 8:30 pm", "nuestro horario").
+func hablaDelHorario(texto string) bool {
+	t := " " + normalizar(texto) + " "
+	for _, p := range []string{" lunes ", " martes ", " miercoles ", " jueves ", " viernes ", " sabado",
+		" domingo", " horario", " todos los dias ", " feriado"} {
+		if strings.Contains(t, p) {
+			return true
+		}
+	}
+	return horaDelDia.MatchString(strings.ToLower(texto))
+}
+
+// nombraUnLugar dice si el texto habla de un lugar (la zona, el barrio, su casa): ahí sí puede
+// haber una promesa de cobertura aunque también mencione el horario.
+func nombraUnLugar(texto string) bool {
+	t := " " + normalizar(texto) + " "
+	for _, p := range []string{" zona", " sector", " barrio", " parroquia", " canton", " ciudadela",
+		" tu casa", " tu direccion", " tu ubicacion", " ahi ", " alla ", " hasta alla"} {
+		if strings.Contains(t, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // pideLaUbicacion dice si el texto le está pidiendo al cliente que comparta su ubicación. Es la
