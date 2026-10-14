@@ -110,7 +110,7 @@ type Agent struct {
 	enviarMenu func(from, cuerpo string, opciones []string) error
 
 	// reloj da la hora en Ecuador; nil = time.Now(). Existe para probar lo que depende de si
-	// estamos en horario (el saludo de noche y su botón de Agendar) sin esperar a que anochezca.
+	// estamos en horario (el saludo de noche) sin esperar a que anochezca.
 	reloj func() time.Time
 }
 

@@ -21,10 +21,6 @@ import (
 // cuerpoMenuColores es la pregunta que va debajo de la presentación.
 const cuerpoMenuColores = "Cuéntame, ¿de qué color es tu cilindro? 👇 Así te busco a quien lo tenga más cerca"
 
-// cuerpoMenuColoresNoche es la misma pregunta FUERA de horario: de noche no se le busca a nadie
-// (dueño, 13/10), se le agenda; la hora la elige después, como siempre.
-const cuerpoMenuColoresNoche = "Cuéntame, ¿de qué color es tu cilindro? 👇 Así te lo dejo agendado"
-
 // palabrasDeApertura son las únicas que puede traer un mensaje para contestarlo con el menú.
 var palabrasDeApertura = map[string]bool{
 	"hola": true, "holi": true, "ola": true, "alo": true, "buenas": true, "buenos": true,
@@ -79,20 +75,9 @@ func (a *Agent) ResponderAperturaConColores(from, texto string) (string, bool) {
 	// Si ya nos compró, se le OFRECE repetir su último pedido en vez de preguntarle el color de
 	// cero (04/10). Es una pregunta con botones: nada de lo anterior se reutiliza sin que lo toque.
 	cuerpo, opciones, que := cuerpoMenuColores, a.coloresDisponibles(), "colores"
-	if a.avisoFueraDeHorario(a.ahora()) != "" {
-		cuerpo = cuerpoMenuColoresNoche
-	}
 	if last, hay := a.store.GetLastOrder(from); hay && last.Cantidad > 0 && last.Color != "" && !a.tienePedidoVivo(from) {
 		cuerpo = "👇 ¿Te envío lo mismo de la última vez: " + describeItems(last.ItemsDelPedido()) + "?"
 		opciones, que = []string{BotonRepetirPedido, BotonCambiarPedido}, "repetir"
-		// De noche no se le puede "enviar" nada: el botón es AGENDAR (dueño, 13/10). Solo con un
-		// color, que es lo que agenda programar_entrega.
-		ahora := a.ahora()
-		// El cuándo ("mañana desde las 7 am") ya lo dice el saludo de cierre, justo arriba.
-		if _, ok := a.aperturaAgendable(ahora); ok && len(last.ItemsDelPedido()) == 1 {
-			cuerpo = "👇 ¿Te agendo lo mismo de la última vez: " + describeItems(last.ItemsDelPedido()) + "?"
-			opciones, que = []string{BotonAgendarRepetir, BotonCambiarPedido}, "agendar"
-		}
 	}
 	if len(opciones) < 2 {
 		return "", false // sin catálogo no hay menú: que lo lleve el modelo
