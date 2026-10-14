@@ -103,4 +103,25 @@ func TestElSaludoDiceQueElSeEncarga(t *testing.T) {
 			t.Errorf("el saludo no dice %q: %q", quiero, saludo)
 		}
 	}
+	if strings.Contains(saludo, "recibir") {
+		t.Errorf("el saludo ya no dice \"pagas al recibir\" (dueño, 13/10): %q", saludo)
+	}
+}
+
+// DE NOCHE NO SE LE "BUSCA" A NADIE: ni el saludo ni la pregunta del color lo prometen.
+func TestDeNocheNoSePrometeBuscarRepartidor(t *testing.T) {
+	const from = "593900950006"
+	store := conversation.NewMemStore()
+	ag := agenteDeNoche(store, 22)
+	cuerpo, _ := menuDeApertura(t, ag, from)
+	if !strings.HasSuffix(cuerpo, cuerpoMenuColoresNoche) || strings.Contains(cuerpo, "más cerca") {
+		t.Errorf("de noche la pregunta del color es la de agendar: %q", cuerpo)
+	}
+	saludo := ag.textoBienvenidaSegunHorario("Ana", ag.ahora())
+	if strings.Contains(saludo, "más cercano") || strings.Contains(saludo, "en minutos") {
+		t.Errorf("de noche el saludo no promete buscar ni llevar en minutos: %q", saludo)
+	}
+	if !strings.Contains(saludo, marcaDePresentacion) {
+		t.Errorf("sin la marca, saludounico.go no reconoce la presentación: %q", saludo)
+	}
 }

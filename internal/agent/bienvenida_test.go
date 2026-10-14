@@ -157,8 +157,7 @@ func TestDespuesDelCierreElSaludoEsElDeCerrado(t *testing.T) {
 
 	got := a.textoBienvenidaSegunHorario("Lucia Paredes", lunes2052)
 
-	want := "¡Buenas noches, Lucia! 👋😊\n¿Se te acabó el gas? Soy *UbiGas*: tú no te preocupes, yo te busco " +
-		"el distribuidor más cercano 🔥\n\n" +
+	want := "¡Buenas noches, Lucia! 👋😊\n¿Se te acabó el gas? Soy *UbiGas*: tú no te preocupes 🔥\n\n" +
 		"🌙 Ahora no estamos atendiendo (hoy atendimos hasta las 8:30 pm), pero te agendo tu pedido " +
 		"para mañana desde las 7 am 🚚"
 	if got != want {

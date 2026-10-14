@@ -263,15 +263,19 @@ func textoBienvenidaEn(nombre string, ahora time.Time, ciudad string) string {
 // que saludounico.go reconoce para no repetir la presentación.
 //
 // 13/10, dueño: "que le diga algo como tú no te preocupes, yo te busco al distribuidor más cercano
-// y te lo envío en minutos". Quién es (UbiGas), que se encarga él y lo que gana (en minutos, paga
-// al recibir), en una línea que se lee de un vistazo. Sin la ciudad: "en todo Cuenca" sonaba feo.
+// y te lo envío en minutos". Quién es (UbiGas), que se encarga él y lo que gana (en minutos), en una
+// línea que se lee de un vistazo. Sin la ciudad ("en todo Cuenca" sonaba feo) ni "pagas al recibir".
 func saludoConGancho(nombre string, ahora time.Time, ciudad string) string {
-	return saludoDeFranja(nombre, ahora) + "\n" + ganchoDeEntrada + " y te lo envío en minutos 🚚🔥 Pagas al recibir."
+	return saludoDeFranja(nombre, ahora) + "\n" + ganchoDeEntrada + ", yo te busco el distribuidor más cercano y " +
+		"te lo envío en minutos 🚚🔥"
 }
 
 // ganchoDeEntrada va en los dos saludos (en horario y cerrado) y lleva la marca que saludounico.go
 // reconoce (marcaDePresentacion).
-const ganchoDeEntrada = "¿Se te acabó el gas? Soy *UbiGas*: tú no te preocupes, yo te busco el distribuidor más cercano"
+//
+// De noche se queda en "tú no te preocupes": "te busco el distribuidor más cercano" no tiene
+// sentido cuando no estamos atendiendo (dueño, 13/10). Tampoco va "pagas al recibir".
+const ganchoDeEntrada = "¿Se te acabó el gas? Soy *UbiGas*: tú no te preocupes"
 
 // saludoDeFranja es "¡Buenas noches, Ana! 👋" (o sin nombre si su WhatsApp no dice uno).
 func saludoDeFranja(nombre string, ahora time.Time) string {
