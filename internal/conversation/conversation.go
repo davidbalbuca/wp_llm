@@ -77,6 +77,9 @@ type ConversationSummary struct {
 	// NoAsignado: su pedido se quedo sin conductor y todavia nadie lo ha resuelto. Lo calcula
 	// el BACKEND con su propia base y sobreescribe lo que venga de aqui.
 	NoAsignado bool `json:"no_asignado"`
+	// Armando: tiene un pedido a medio armar y vigente (dijo color o cantidad y todavía no se
+	// registra). Lo pone el endpoint del panel; el panel lo muestra como "Registrando pedido".
+	Armando bool `json:"armando"`
 	// NoLeido: el cliente escribio despues de la ultima vez que alguien abrio este chat en el
 	// panel. Que el bot ya le haya contestado no cuenta: lo que se marca es si una PERSONA lo
 	// vio, igual que en WhatsApp.
@@ -351,6 +354,13 @@ type PendingWait struct {
 	// seguia en SIN_CONDUCTOR y se le ofrecia la ronda siguiente. Quien ignoraba el mensaje
 	// conservaba sus rondas.
 	UltimaRondaAt int64 `json:"ultima_ronda_at,omitempty"`
+	// ColorAlternoOfrecido: durante esta espera ya se le ofrecio el color equivalente (una sola
+	// vez: si dijo que no, no se le insiste). ChequeoColorAt es el unix de la ultima consulta de
+	// alternativas, para no preguntarle al backend en cada vuelta de 7 s.
+	ColorAlternoOfrecido bool `json:"color_alterno_ofrecido,omitempty"`
+	// RespaldoOfrecido: ya se le ofreció el color equivalente del camión de Ubi (una vez por espera).
+	RespaldoOfrecido bool  `json:"respaldo_ofrecido,omitempty"`
+	ChequeoColorAt   int64 `json:"chequeo_color_at,omitempty"`
 }
 
 // Lineas devuelve las líneas de la espera: la lista si la hay, o la única de los campos
@@ -374,6 +384,16 @@ type PendingColorSwap struct {
 	ColorOriginal string `json:"color_original"`
 	ColorAlterno  string `json:"color_alterno"`
 	Cantidad      int    `json:"cantidad"`
+	// DuranteEspera: la oferta salio MIENTRAS el cliente esperaba repartidor para su color (el
+	// conductor con el color equivalente aparecio despues). Ahi "no" significa "sigo esperando el
+	// mio", no "dejalo": la busqueda sigue abierta.
+	DuranteEspera bool `json:"durante_espera,omitempty"`
+	// Respaldo: la oferta es del repartidor de RESPALDO (el camión de Ubi), que lleva el color
+	// equivalente. "Sí" cambia el color de la búsqueda IDBusqueda a IDColorAlterno y se la asigna;
+	// "no" es "espero el mío" (se acepta la espera en el backend).
+	Respaldo       bool `json:"respaldo,omitempty"`
+	IDColorAlterno int  `json:"id_color_alterno,omitempty"`
+	IDBusqueda     int  `json:"id_busqueda,omitempty"`
 }
 
 // PendingGuardarUbicacion es la oferta de guardar la ubicación recién compartida con un nombre
@@ -451,6 +471,20 @@ func (p PedidoEnCurso) Lineas() []ItemPedido {
 		lineas = append(lineas, ItemPedido{Color: p.Color, Cantidad: p.Cantidad})
 	}
 	return lineas
+}
+
+// PrimeraSinCantidad es la línea por la que hay que preguntar "¿cuántos?": la PRIMERA sin
+// cantidad, en el orden en que el cliente nombró los colores. Es la misma que llena un número
+// suelto (ver cantidadSuelta en agent/encurso.go): el prompt, los rescates y la ficha tienen que
+// hablar de la misma línea, o el cliente responde "2" a una pregunta y se anota en otra (Alicia,
+// 08/10: le preguntaron por los amarillos y el 2 quedó en los blancos).
+func (p PedidoEnCurso) PrimeraSinCantidad() (ItemPedido, bool) {
+	for _, l := range p.Lineas() {
+		if l.Cantidad < 1 {
+			return l, true
+		}
+	}
+	return ItemPedido{}, false
 }
 
 // Completo dice si el pedido está listo para registrarse: al menos una línea y TODAS con color
@@ -638,6 +672,12 @@ type Store interface {
 	BienvenidaPendiente(phone string) string
 	// LimpiarBienvenidaPendiente la consume: la presentación es de UN mensaje, no de cada uno.
 	LimpiarBienvenidaPendiente(phone string)
+	// MarcarInvitacionApp anota cuándo se le invitó a descargar la app (en el aviso de entrega).
+	// Durable: la invitación sale como mucho una vez cada 30 días y eso tiene que sobrevivir a un
+	// reinicio del bot, o se le repetiría al cliente en cada entrega.
+	MarcarInvitacionApp(phone string, cuando time.Time)
+	// UltimaInvitacionApp devuelve cuándo se le invitó por última vez (ok=false si nunca).
+	UltimaInvitacionApp(phone string) (time.Time, bool)
 	// MarcarYaSePresento deja constancia de que el código se presentó en ESTE turno. Es el dato
 	// que usa el candado del doble saludo, y vive aparte del historial del modelo justamente para
 	// no contaminar su memoria de trabajo.
@@ -668,6 +708,10 @@ type Store interface {
 	GetPendingWait(phone string) (PendingWait, bool)
 	// ClearPendingWait elimina el pedido en espera (al asignarse, cancelar o expirar).
 	ClearPendingWait(phone string)
+	// PendingWaits devuelve las esperas guardadas (teléfono -> espera) que se tocaron dentro de
+	// `max`. Al arrancar, el bot las RETOMA: un reinicio (cada deploy) no puede dejar a un cliente
+	// esperando un aviso que nadie le va a mandar (Jessi, 12/10).
+	PendingWaits(max time.Duration) map[string]PendingWait
 
 	// --- Auditoría de conversaciones (durable, para revisar/gestionar desde la web) ---
 	// LogMessage añade una línea al registro de auditoría. NO la borra ClearHistory ni el TTL

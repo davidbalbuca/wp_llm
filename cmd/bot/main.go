@@ -264,6 +264,21 @@ func main() {
 	// Tras un reinicio, las goroutines de chequeo de entrega (pedidos del flujo manual) se pierden;
 	// se re-agendan desde el store para no dejar de preguntarle al cliente por su entrega.
 	ag.ReprogramarChequeosEntrega()
+	// Lo mismo con las esperas de repartidor (Jessi, 12/10: el deploy de las 07:43 la dejó
+	// esperando una búsqueda que ya nadie consultaba). El backend se reinicia en el MISMO deploy:
+	// se espera a que conteste antes de retomarlas, porque si el primer login falla al cliente le
+	// llegaría un "no pudimos buscar" por un reinicio nuestro.
+	go func() {
+		for i := 0; i < 36; i++ {
+			if _, err := grClient.GetBusinessInfo(); err == nil {
+				break
+			}
+			time.Sleep(5 * time.Second)
+		}
+		if n := ag.RetomarEsperas(); n > 0 {
+			log.Printf("[retomar] %d espera(s) de repartidor retomadas tras el reinicio", n)
+		}
+	}()
 
 	mux := http.NewServeMux()
 
@@ -377,17 +392,23 @@ func main() {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
+		// placa, minutos y seguimiento_token llegan desde el 05/10 (el backend viejo no los manda:
+		// sin ellos el mensaje sale igual, solo con el nombre).
 		var payload struct {
-			PedidoID  int    `json:"pedido_id"`
-			Telefono  string `json:"telefono"`
-			Conductor string `json:"conductor"`
+			PedidoID         int    `json:"pedido_id"`
+			Telefono         string `json:"telefono"`
+			Conductor        string `json:"conductor"`
+			Placa            string `json:"placa"`
+			Minutos          int    `json:"minutos"`
+			SeguimientoToken string `json:"seguimiento_token"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		go notifyOrderReassigned(cfg, store, payload.PedidoID, payload.Telefono, payload.Conductor)
+		go notifyOrderReassigned(cfg, store, payload.PedidoID, payload.Telefono, payload.Conductor,
+			payload.Placa, payload.Minutos, payload.SeguimientoToken)
 	})
 
 	// El pedido perdio a su repartidor y el backend se lo esta ofreciendo a otros. El pedido
@@ -409,6 +430,28 @@ func main() {
 		go notifyOrderSearching(cfg, store, payload.PedidoID, payload.Telefono)
 	})
 
+	// Aviso al grupo de Telegram de un pedido HECHO DESDE LA APP (no pasa por el bot, así que el
+	// grupo no se enteraba). El backend arma el texto (core/georoutes_admin/eventos_pedido.py) y
+	// aquí solo se publica en el hilo "📱 Pedidos de la App".
+	mux.HandleFunc("POST /internal/aviso-pedido", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			PedidoID int    `json:"pedido_id"`
+			Texto    string `json:"texto"`
+			Urgente  bool   `json:"urgente"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Texto) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		log.Printf("[aviso-pedido] pedido %d: %.80q", payload.PedidoID, payload.Texto)
+		avisos.AvisoPedidoApp(payload.Texto, payload.Urgente)
+	})
+
 	log.Printf("Servidor escuchando en http://localhost:%s", cfg.Port)
 	// --- Web/panel: revisar y controlar conversaciones (protegido por el secreto de canal) ---
 	// Lista de chats recientes (número, último mensaje, modo bot/humano).
@@ -417,7 +460,16 @@ func main() {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		writeJSON(w, store.ListConversations(atoiDefault(r.URL.Query().Get("limit"), 100)))
+		convs := store.ListConversations(atoiDefault(r.URL.Query().Get("limit"), 100))
+		// Para el estado de cada chat en el panel (06/10): "Registrando pedido" mientras tenga un
+		// pedido a medio armar que no ha vencido (la misma vigencia que usa el agente).
+		for i := range convs {
+			if p, ok := store.GetPedidoEnCurso(convs[i].Phone); ok && !p.Vacio() &&
+				time.Since(p.UpdatedAt) < agent.VencimientoFicha {
+				convs[i].Armando = true
+			}
+		}
+		writeJSON(w, convs)
 	})
 	// Conversación completa de un número (para revisarla).
 	mux.HandleFunc("GET /internal/conversation", func(w http.ResponseWriter, r *http.Request) {
@@ -471,6 +523,9 @@ func main() {
 		salida := map[string]any{}
 		_, tieneCuenta := store.GetAccount(phone)
 		salida["tiene_cuenta"] = tieneCuenta
+		// El nombre con el que se va a crear el pedido (vacío si su WhatsApp no dice un nombre):
+		// el panel lo muestra para que el operador lo confirme o lo corrija.
+		salida["nombre"] = conversation.NombreUsable(store, phone)
 		if loc, ok := store.GetLocation(phone); ok {
 			salida["latitude"] = loc.Latitude
 			salida["longitude"] = loc.Longitude
@@ -1007,7 +1062,7 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 				messageForAgent = "He compartido mi ubicación actual."
 			} else {
 				log.Printf("[webhook] link corto de Maps sin coordenadas para %s: %q", inc.From, inc.Text)
-				_ = replyClient(cfg, store, inc.From, "No pude abrir tu enlace de Google Maps 🙏. Por favor, compárteme tu ubicación con el pin nativo de WhatsApp: adjuntar 📎 → Ubicación → Enviar ubicación actual.")
+				_ = replyClient(cfg, store, inc.From, "No pude abrir tu enlace de Google Maps 🙏. ¿Me compartes tu ubicación directo desde WhatsApp? Tocas el 📎 → *Ubicación* → *Enviar tu ubicación actual* 😊")
 				return
 			}
 		} else {
@@ -1218,6 +1273,16 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 			}
 			return
 		}
+		// Apertura simple ("Hola", "quiero gas"): la presentación y los botones de colores en UN
+		// mensaje, sin pasar por el modelo. Va al final: todo lo anterior tiene prioridad, y si el
+		// cliente trae algo más que un saludo, el turno sigue al modelo. Ver internal/agent/apertura.go.
+		if reply, manejado := ag.ResponderAperturaConColores(inc.From, inc.Text); manejado {
+			log.Printf("[webhook] apertura con menú de colores para %s", inc.From)
+			if reply != "" {
+				_ = replyClient(cfg, store, inc.From, reply)
+			}
+			return
+		}
 	}
 
 	// Timeout del turno: si el proveedor del modelo se cuelga, el turno se aborta, el cliente
@@ -1320,6 +1385,9 @@ func notifyOrderFinished(cfg config.Config, store conversation.Store, pedidoID i
 	// Va ANTES de la pregunta y no después: lo último que se lee tiene que ser aquello para lo
 	// que están los botones, o el cliente se queda mirando unas estrellas sin saber qué contestan.
 	msg += agent.MensajeGuardarContacto() + "\n\n"
+	// La invitación a la app, en CADA entrega (dueño, 12/10: "vender la app por todo lado"). Va con
+	// lo de guardar el contacto: las dos son "cómo encontrarnos la próxima vez".
+	msg += agent.MensajeInvitarApp() + "\n\n"
 	if conductor != "" {
 		msg += fmt.Sprintf("¿Cómo calificarías a tu repartidor %s?", conductor)
 	} else {
@@ -1332,7 +1400,10 @@ func notifyOrderFinished(cfg config.Config, store conversation.Store, pedidoID i
 	if err := avisarClienteMenu(cfg, store, phone, msg, agent.BotonesCalificacion(), respaldo); err != nil {
 		reportarFallo(cfg, store, phone, "No se pudo avisar la ENTREGA ni pedir la calificación",
 			fmt.Sprintf("Pedido #%d. El mensaje no salió: %v", pedidoID, err))
+		return
 	}
+	// Queda anotado cuándo se le invitó por última vez (solo si el aviso salió).
+	store.MarcarInvitacionApp(phone, time.Now())
 }
 
 // notifyOrderArrived avisa al cliente por WhatsApp que el conductor LLEGÓ y salga a recibir.
@@ -1431,7 +1502,8 @@ func notifyOrderSearching(cfg config.Config, store conversation.Store, pedidoID 
 
 // notifyOrderReassigned avisa al cliente por WhatsApp que su pedido fue REASIGNADO a un nuevo
 // repartidor (el anterior canceló). El pedido sigue vivo, así que NO se limpia el historial.
-func notifyOrderReassigned(cfg config.Config, store conversation.Store, pedidoID int, telefono, conductor string) {
+func notifyOrderReassigned(cfg config.Config, store conversation.Store, pedidoID int, telefono, conductor,
+	placa string, minutosRuta int, token string) {
 	phone := telefono
 	if p, ok := store.GetOrderPhone(pedidoID); ok && p != "" {
 		phone = p
@@ -1440,11 +1512,19 @@ func notifyOrderReassigned(cfg config.Config, store conversation.Store, pedidoID
 		log.Printf("[order-reassigned] pedido %d sin teléfono de contacto; se ignora", pedidoID)
 		return
 	}
-	msg := "🚚 Tu pedido fue asignado a un nuevo repartidor"
-	if conductor != "" {
-		msg += ": " + conductor
+	// El mismo mensaje que cualquier asignación (agent.MensajeRepartidor): nombre, placa, minutos y
+	// enlace. Los minutos ya vienen del backend con el margen del cliente (13/10); MargenEntregaMin es 0.
+	minutos := 0
+	if minutosRuta > 0 {
+		minutos = minutosRuta + cfg.MargenEntregaMin
 	}
-	msg += ". ¡Ya va en camino!"
+	enlace := ""
+	if base := strings.TrimRight(cfg.SeguimientoBaseURL, "/"); base != "" && token != "" {
+		enlace = base + "/seguimiento/" + token + "/"
+		// El enlace vigente del pedido: el candado de seguimiento compara contra este.
+		store.SetSeguimientoActivo(phone, enlace)
+	}
+	msg := agent.ConInvitacionApp(agent.MensajeReasignado(conductor, placa, minutos, enlace))
 	if err := avisarCliente(cfg, store, phone, msg); err != nil {
 		reportarFallo(cfg, store, phone, "No se pudo avisar la REASIGNACIÓN a otro conductor",
 			fmt.Sprintf("Pedido #%d. El mensaje no salió: %v", pedidoID, err))

@@ -98,8 +98,8 @@ func (a *Agent) ConfirmarDireccion(from, texto string) (string, bool) {
 		// Se BORRA la ubicacion vieja: si no, el proximo intento volveria a proponerla.
 		a.store.ClearLocation(from)
 		log.Printf("[direccion] %s pidió otra dirección", from)
-		return "Perfecto 👍 Compárteme tu ubicación actual por WhatsApp 📎 (botón de adjuntar → " +
-			"Ubicación) y con eso te lo enviamos.", true
+		return "Perfecto 👍 ¿Me compartes tu ubicación de ahora? 😊 Tocas el 📎 → *Ubicación* y " +
+			"con eso te lo enviamos.", true
 
 	default:
 		// Cualquier otra cosa NO se interpreta: podria ser "sí pero a la casa de mi mamá".
@@ -134,17 +134,14 @@ func (a *Agent) mensajeDelPedido(t *turno, from string) string {
 		// "inconveniente técnico, ya avisé al equipo" lo asusta y además MIENTE (nadie fue
 		// avisado, no hay ticket). Se le dice la verdad y se le ofrece agendar.
 		ahoraEc := time.Now().In(zonaEcuador)
-		desdeHoy, hastaHoy := a.horarioDeHoy(ahoraEc)
 		if !a.esDiaLaborable(ahoraEc) {
 			// El dia, no la hora: decirle "a esta hora" un domingo le haria esperar a la tarde.
-			return fmt.Sprintf("Hoy no tenemos servicio 🙏. Atendemos %s de %s a %s. ¿Quieres que "+
-				"te lo agende para otro día? 😊",
-				a.textoDiasLaborables(), desdeHoy, hastaHoy)
+			return fmt.Sprintf("Hoy no tenemos servicio 🙏. Atendemos %s. ¿Quieres que "+
+				"te lo agende para otro día? 😊", a.textoHorario())
 		}
 		if !a.dentroDeHorario(ahoraEc) {
-			return fmt.Sprintf("A esta hora ya no tenemos repartidores en ruta 🙏. Atendemos %s de %s "+
-				"a %s: dime a qué hora te viene bien mañana y te la dejo agendada 😊",
-				a.textoDiasLaborables(), desdeHoy, hastaHoy)
+			return fmt.Sprintf("A esta hora ya no tenemos repartidores en ruta 🙏. Atendemos %s: "+
+				"dime a qué hora te viene bien mañana y te la dejo agendada 😊", a.textoHorario())
 		}
 		// Cualquier otro motivo sí es un problema nuestro: se DERIVA de verdad (crea el ticket)
 		// antes de prometerle al cliente que el equipo lo va a contactar.

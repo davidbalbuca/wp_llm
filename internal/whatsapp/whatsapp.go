@@ -193,8 +193,8 @@ func sendPayload(cfg config.Config, payload map[string]any) error {
 	if cfg.WhatsAppToken == "" || cfg.PhoneNumberID == "" {
 		return fmt.Errorf("WhatsApp no está configurado (falta el token o el phone number id)")
 	}
-	url := fmt.Sprintf("https://graph.facebook.com/%s/%s/messages",
-		cfg.GraphAPIVersion, cfg.PhoneNumberID)
+	url := fmt.Sprintf("%s/%s/%s/messages",
+		cfg.GraphAPIBase(), cfg.GraphAPIVersion, cfg.PhoneNumberID)
 	b, _ := json.Marshal(payload)
 
 	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(b))

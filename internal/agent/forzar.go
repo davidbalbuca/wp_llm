@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"wp-llm-gas/internal/conversation"
 	"wp-llm-gas/internal/georoutes"
@@ -32,13 +33,14 @@ import (
 func (a *Agent) forzarRegistroSiHaceFalta(t *turno, from string) (string, bool) {
 	lineas, ok := a.inferirLineas(from)
 	if !ok {
-		// No sabemos qué pedir con certeza: honesto y sin inventar.
+		// No sabemos qué pedir con certeza: honesto y sin inventar. Y sin decir "tuve un problema
+		// al registrar": no se intentó registrar nada. Pasaba al PRIMER mensaje ("Deseo pedir GAS
+		// 😄" -> "Disculpa, tuve un problema al registrar tu pedido"), 4 veces entre el 23/09 y el
+		// 06/10. Se le pregunta con amabilidad lo que falta, como en cualquier conversación.
 		notify.Default.Fallo(from, a.nombreDe(from), "Pedido fantasma — no se pudo autorregistrar",
 			"El modelo afirmó un pedido sin llamar registrar_pedido y el código no pudo inferir "+
-				"color/cantidad con seguridad. El cliente NO tiene pedido; hay que atenderlo.")
-		return "Disculpa 🙏, tuve un problema al registrar tu pedido. ¿Me confirmas qué cilindro " +
-			"necesitas (color) y cuántos, y me compartes tu ubicación 📎? Quiero asegurarme de que " +
-			"te llegue tu gas.", true
+				"color/cantidad con seguridad. Se le preguntó al cliente lo que falta.")
+		return a.loQueFaltaParaElPedido(from), true
 	}
 
 	log.Printf("[forzar] %s: el modelo confirmó sin registrar; se registra en código (%s)", from, describeItems(lineas))
@@ -77,10 +79,7 @@ func (a *Agent) forzarRegistroSiHaceFalta(t *turno, from string) (string, bool) 
 		}
 		return msg + "\n\nCualquier cosa, aquí estoy 😊", true
 	case t.ultimoPedido.enEspera:
-		// Sin repartidor: registrarPedido ya dejó el PendingWait. Ofrecemos esperar.
-		return "¡Anotado tu pedido de " + describeItems(lineas) + "! 🙌 En este momento " +
-			"los repartidores están un poco lejos. ¿Deseas que busque uno para ti? Puede tardar hasta " +
-			"5 minutos. Escríbeme \"sí\" para esperar o \"no\" si prefieres que lo dejemos.", true
+		return a.mensajeRescateEnEspera(lineas), true
 	case t.ultimoPedido.faltaDato != "":
 		// FALTA UN DATO, que es un fallo RECUPERABLE EN ESTE MISMO TURNO: no hay nada roto, solo
 		// una pregunta sin hacer. Se pide el dato y se sigue.
@@ -101,6 +100,23 @@ func (a *Agent) forzarRegistroSiHaceFalta(t *turno, from string) (string, bool) 
 	}
 }
 
+// mensajeRescateEnEspera es lo que se le dice cuando el rescate registró el pedido y no hay
+// repartidor libre. Con la búsqueda del backend, registrarPedido YA la arrancó: no se le pregunta
+// nada, igual que en el camino normal (mensajeBuscandoRepartidor). Antes este rescate le
+// preguntaba "sí/no" con la búsqueda corriendo (Jessi, 12/10): contestó "Si" y no había nada que
+// decidir.
+func (a *Agent) mensajeRescateEnEspera(lineas []conversation.ItemPedido) string {
+	if a.cfg.UsarBusquedaBackend {
+		return "¡Listo! 🎉 Tu pedido de " + describeItems(lineas) + " quedó registrado. Estoy " +
+			"buscando al repartidor más cercano para ti 🚚. Te confirmo en unos minutos; no tienes " +
+			"que hacer nada."
+	}
+	// Sin búsqueda del backend: registrarPedido dejó el PendingWait. Se ofrece esperar.
+	return "¡Anotado tu pedido de " + describeItems(lineas) + "! 🙌 En este momento " +
+		"los repartidores están un poco lejos. ¿Deseas que busque uno para ti? Puede tardar hasta " +
+		"5 minutos. Escríbeme \"sí\" para esperar o \"no\" si prefieres que lo dejemos."
+}
+
 // pedirElDatoQueFalta redacta la pregunta por el dato que impidió registrar el pedido.
 //
 // La cédula NO se pide directamente: se pasa por el camino de protección de datos que ya existe
@@ -113,7 +129,7 @@ func (a *Agent) pedirElDatoQueFalta(from, falta string) string {
 		return a.revisarPeticionDeCedula(&turno{}, from,
 			"¡Ya casi! 😊 Para emitir tu factura necesito tu número de cédula.")
 	}
-	return "¡Ya casi! 😊 Solo me falta tu nombre completo para dejar tu pedido listo."
+	return "¡Ya casi! " + PreguntaNombre
 }
 
 // tienePedidoVivo dice si el cliente TIENE AHORA un pedido en marcha: uno registrado en el
@@ -347,7 +363,7 @@ func afirmaAvisoAlEquipo(texto string) bool {
 		return false
 	}
 	// "avisé al equipo" ya hecho, o "te van a contactar" prometido, en cualquier redacción.
-	return afirmaSecuencia(texto, [][]string{
+	if afirmaSecuencia(texto, [][]string{
 		{"avise", "equipo"}, {"notifique", "equipo"}, {"informe", "equipo"},
 		{"avise", "dueno"}, {"ya", "le", "avise"},
 		{"se", "pondra", "en", "contacto"}, {"se", "pondran", "en", "contacto"},
@@ -355,13 +371,24 @@ func afirmaAvisoAlEquipo(texto string) bool {
 		{"te", "van", "a", "contactar"}, {"te", "contactara"}, {"te", "contactaran"},
 		{"alguien", "te", "contactara"}, {"alguien", "te", "escribira"},
 		{"asesor", "se", "comunicara"},
-		// Aviso al repartidor / cambio de dirección inventado (caso 593959499118, 12/09).
-		{"avise", "repartidor"}, {"aviso", "repartidor"}, {"notifique", "repartidor"},
-		{"le", "aviso", "repartidor"}, {"le", "avise", "repartidor"},
-		{"le", "paso", "repartidor"}, {"le", "pasare", "repartidor"},
 		{"repartidor", "va", "nueva", "direccion"}, {"repartidor", "ira", "nueva", "direccion"},
 		{"repartidor", "vaya", "nueva", "direccion"},
-	}, 3)
+		// Con "le" delante es al repartidor aunque haya palabras en medio: "Le paso esa
+		// referencia al repartidor" (caso 593959499118, 12/09).
+		{"le", "paso", "al", "repartidor"}, {"le", "pasare", "al", "repartidor"},
+		{"le", "aviso", "al", "repartidor"}, {"le", "avise", "al", "repartidor"},
+	}, 3) {
+		return true
+	}
+	// Aviso AL repartidor / cambio de dirección inventado (caso 593959499118, 12/09). Con las
+	// palabras PEGADAS ("aviso al repartidor", "avisé a tu repartidor"): con holgura 3, "Ya te
+	// AVISO apenas tu REPARTIDOR esté llegando" -- una promesa AL CLIENTE de lo que el bot sí hace --
+	// contaba como aviso al equipo y abría un ticket sin motivo (Xavi, 12/10, ticket #113).
+	return afirmaSecuencia(texto, [][]string{
+		{"avise", "al", "repartidor"}, {"aviso", "al", "repartidor"}, {"notifique", "al", "repartidor"},
+		{"avise", "a", "repartidor"}, {"aviso", "a", "repartidor"}, {"notifique", "a", "repartidor"},
+		{"paso", "al", "repartidor"}, {"pasare", "al", "repartidor"},
+	}, 1)
 }
 
 // forzarAvisoAlEquipoSiHaceFalta se llama cuando el modelo prometió que el equipo contactaría
@@ -429,9 +456,17 @@ func coloresEnTexto(products []georoutes.Product, texto string) []string {
 	for _, prod := range products {
 		for _, col := range prod.Colores {
 			clave := normalizar(col.Nombre)
-			if pos, ok := posiciones[clave]; ok && !vistos[clave] {
-				vistos[clave] = true
-				hallados = append(hallados, hallazgo{col.Nombre, pos})
+			if vistos[clave] {
+				continue
+			}
+			// También en plural ("2 blancos", "dos azules"): la gente pide así, y sin esto el
+			// color no se anotaba y la cantidad pegada a él se perdía.
+			for _, forma := range []string{clave, clave + "s", clave + "es"} {
+				if pos, ok := posiciones[forma]; ok {
+					vistos[clave] = true
+					hallados = append(hallados, hallazgo{col.Nombre, pos})
+					break
+				}
 			}
 		}
 	}
@@ -491,4 +526,27 @@ func (a *Agent) forzarProgramacionSiHaceFalta(t *turno, from string) (string, bo
 		"El modelo dijo agendado, el código intentó programar y NO quedó. Detalle: "+conversation.Recortar(salida, 200))
 	return "Disculpa 🙏, tuve un problema al agendar tu entrega. Ya avisé al equipo para que te " +
 		"contacte y la deje lista. Lamento la molestia.", true
+}
+
+// loQueFaltaParaElPedido pregunta, con amabilidad, el siguiente dato que falta según la ficha:
+// el color, la cantidad o la ubicación. Es la respuesta honesta cuando el modelo dio por hecho un
+// pedido que no existe: no se inventa nada ni se culpa a un "problema".
+func (a *Agent) loQueFaltaParaElPedido(from string) string {
+	p, _ := a.store.GetPedidoEnCurso(from)
+	switch {
+	case len(p.Lineas()) == 0:
+		return "Para ayudarte con tu gas, cuéntame de qué color es tu cilindro (blanco, amarillo, " +
+			"naranja o azul) 😊"
+	case !p.Completo():
+		l, _ := p.PrimeraSinCantidad()
+		return "¿Cuántos cilindros de " + strings.ToLower(l.Color) + " te mando? 😊"
+	}
+	if _, hay := a.store.GetLocation(from); !hay {
+		return "¿Me ayudas con tu ubicación? 📍 Así el repartidor más cercano llega directo a ti " +
+			"(tocas el 📎 y luego *Ubicación*)."
+	}
+	if !a.dentroDeHorario(time.Now().In(zonaEcuador)) {
+		return "¿A qué hora te viene bien recibirlo? Atendemos " + a.textoHorario() + " 😊"
+	}
+	return "Ya casi está 😊 ¿Me confirmas que te lo envío ahora?"
 }

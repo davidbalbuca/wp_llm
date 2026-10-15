@@ -98,8 +98,8 @@ func (a *Agent) ResponderDireccionGuardada(from, texto string) (string, bool) {
 
 	// El botón "Otra ubicación" pide el pin de siempre, sin tocar nada más.
 	if normalizarRespuesta(texto) == normalizarRespuesta(BotonOtraUbicacion) {
-		return "Perfecto 👍 Compárteme tu ubicación por WhatsApp 📎 (botón de adjuntar → " +
-			"Ubicación) y te lo envío enseguida.", true
+		return "Perfecto 👍 ¿Me compartes tu ubicación? 😊 Tocas el 📎 → *Ubicación* y así el " +
+			"repartidor más cercano llega directo a ti.", true
 	}
 
 	dirs := a.direccionesConNombre(from)

@@ -2,6 +2,7 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -29,6 +30,10 @@ type Config struct {
 	VerifyToken     string
 	Port            string
 	GraphAPIVersion string
+	// WhatsAppAPIBase es la base de la Graph API de Meta (por defecto https://graph.facebook.com).
+	// Solo se cambia para probar en local con cmd/simulador, que hace de Meta falsa: así el bot
+	// corre igual que en producción pero sus mensajes no salen a WhatsApp.
+	WhatsAppAPIBase string
 	// BackendURL es la URL base del backend GEOWARE. El bot consume {BackendURL}/georoutes/.
 	BackendURL string
 	// SeguimientoBaseURL es el dominio PÚBLICO de la página de seguimiento en vivo
@@ -66,7 +71,15 @@ type Config struct {
 	// pedidos y no hay forma de probarlo sin clientes reales, asi que esto se enciende
 	// mirando los logs y se apaga en segundos si hace falta.
 	UsarBusquedaBackend bool
+	// PedirConsentimiento enciende el menú de autorización de datos antes de pedir la cédula
+	// (BOT_PEDIR_CONSENTIMIENTO). Apagado por defecto desde el 04/10: el bot ya no pide cédula ni
+	// autorización para tomar un pedido; el cliente se registra por su teléfono. El código del
+	// consentimiento se conserva para poder volver a encenderlo sin tocar código.
+	PedirConsentimiento bool
 	CierreVentanaMax    time.Duration
+	// CierreDespedida: si el cliente tampoco contesta el recordatorio, cuánto se espera antes de
+	// despedirse (06/10: primero un recordatorio según dónde se quedó, después la despedida).
+	CierreDespedida time.Duration
 	// Telegram: alertas de operación (test productivo). Sin token o chat queda APAGADO y el bot
 	// sigue igual. TelegramAvisarInicio permite dejar solo errores (los verdes son ruidosos).
 	TelegramBotToken     string
@@ -80,6 +93,10 @@ type Config struct {
 	// separados por coma o en rango: "1-6" es lunes a sabado. Se configura en el .env del bot
 	// para poder cambiarlo sin recompilar (feriados, un domingo que si se trabaja).
 	BotDiasLaborables string
+	// BotHorarioFinPorDia cambia la hora de CIERRE de días puntuales: "7=19:00" es que el domingo
+	// se cierra a las 19:00 y el resto de días a BotHorarioFin. Varios con coma: "6=20:00,7=19:00".
+	// Días ISO, como BotDiasLaborables. Vacía = todos los días cierran a BotHorarioFin.
+	BotHorarioFinPorDia string
 	// BotCentroLat/BotCentroLng es el centro de la zona donde se opera. Solo se usa para
 	// recuperar el prefijo de un Plus Code corto cuando el cliente manda un enlace de Google
 	// Maps (ver internal/whatsapp/pluscode.go): esos codigos vienen sin la parte que dice en que
@@ -102,9 +119,10 @@ type Config struct {
 	// escritos en el codigo y a Carlos (23/09) se le despidio a los ocho minutos de pedir.
 	EsperaRonda time.Duration
 
-	// MargenEntregaMin es el margen (en MINUTOS) que se le SUMA al tiempo de ruta que calcula el
-	// backend (OSRM, conductor -> cliente) antes de decírselo al cliente. El conductor no sale en
-	// el instante cero: carga el cilindro y arranca. Decisión del negocio: tiempo de ruta + 5 min.
+	// MargenEntregaMin es el margen (en MINUTOS) que el BOT le suma al tiempo que le da el backend.
+	// Desde el 13/10 es 0: el margen lo pone el BACKEND (parámetro TIEMPO_MARGEN_CLIENTE_MINUTOS, 6
+	// min, desde el panel) para que la app y el bot prometan lo mismo; antes eran 5 y solo en el
+	// bot, y la app del cliente prometía la ruta pelada. Con algo distinto de 0 se sumaría dos veces.
 	MargenEntregaMin int
 
 	// ChequeoEntrega es cuánto espera el bot, tras confirmar un pedido del FLUJO MANUAL (posible
@@ -112,6 +130,18 @@ type Config struct {
 	// ese flujo nadie más marca la entrega, así que el cliente es la única fuente. 30 min por
 	// defecto: tiempo razonable para que una entrega urbana ya haya ocurrido.
 	ChequeoEntrega time.Duration
+}
+
+// graphAPIBasePorDefecto es la Graph API real de Meta. Exportada vía GraphAPIBase para que quien
+// arme un Config a mano (los tests) no termine con una URL sin host.
+const graphAPIBasePorDefecto = "https://graph.facebook.com"
+
+// GraphAPIBase devuelve la base de la Graph API a usar: la configurada o, si está vacía, la real.
+func (c Config) GraphAPIBase() string {
+	if c.WhatsAppAPIBase == "" {
+		return graphAPIBasePorDefecto
+	}
+	return c.WhatsAppAPIBase
 }
 
 func required(k string) string {
@@ -182,6 +212,7 @@ func Load() Config {
 		VerifyToken:          required("WEBHOOK_VERIFY_TOKEN"),
 		Port:                 optional("PORT", "3000"),
 		GraphAPIVersion:      "v21.0",
+		WhatsAppAPIBase:      strings.TrimRight(optional("WHATSAPP_API_BASE", graphAPIBasePorDefecto), "/"),
 		BackendURL:           strings.TrimRight(optional("BACKEND_URL", "http://127.0.0.1:8000"), "/"),
 		SeguimientoBaseURL:   strings.TrimRight(os.Getenv("SEGUIMIENTO_BASE_URL"), "/"),
 		ChannelSecret:        os.Getenv("BACKEND_CHANNEL_SECRET"),
@@ -192,17 +223,20 @@ func Load() Config {
 		HumanTakeoverTimeout: time.Duration(optionalInt("HUMAN_TAKEOVER_TIMEOUT_MIN", 15)) * time.Minute,
 		CierreInactividad:    time.Duration(optionalInt("BOT_CIERRE_INACTIVIDAD_MIN", 7)) * time.Minute,
 		UsarBusquedaBackend:  optionalBool("BOT_USAR_BUSQUEDA", false),
+		PedirConsentimiento:  optionalBool("BOT_PEDIR_CONSENTIMIENTO", false),
 		CierreVentanaMax:     time.Duration(optionalInt("BOT_CIERRE_VENTANA_MAX_MIN", 60)) * time.Minute,
+		CierreDespedida:      time.Duration(optionalInt("BOT_CIERRE_DESPEDIDA_MIN", 15)) * time.Minute,
 		BotHorarioInicio:     optional("BOT_HORARIO_INICIO", "07:00"),
 		BotHorarioFin:        optional("BOT_HORARIO_FIN", "19:00"),
 		BotDiasLaborables:    optional("BOT_DIAS_LABORABLES", "1-6"),
+		BotHorarioFinPorDia:  optional("BOT_HORARIO_FIN_POR_DIA", ""),
 		// Centro de Cuenca (Parque Calderón). Ver BotCentroLat en la Config.
 		BotCentroLat: optionalFloat("BOT_CENTRO_LAT", -2.9001),
 		BotCentroLng: optionalFloat("BOT_CENTRO_LNG", -79.0059),
 		// Misma variable que usa el backend Django, para no tener dos claves distintas de lo mismo.
 		GeocodingAPIKey:      os.Getenv("KEY_GOOGLE_MAPS"),
 		EsperaRonda:          time.Duration(optionalInt("BOT_ESPERA_RONDA_MIN", 10)) * time.Minute,
-		MargenEntregaMin:     optionalInt("BOT_MARGEN_ENTREGA_MIN", 5),
+		MargenEntregaMin:     optionalInt("BOT_MARGEN_ENTREGA_MIN", 0),
 		ChequeoEntrega:       time.Duration(optionalInt("BOT_CHEQUEO_ENTREGA_MIN", 30)) * time.Minute,
 		SMTPHost:             os.Getenv("SMTP_HOST"),
 		SMTPPort:             optional("SMTP_PORT", "587"),
@@ -223,4 +257,29 @@ func optionalBool(k string, def bool) bool {
 		return def
 	}
 	return v != "0" && v != "false" && v != "no"
+}
+
+// HorarioFin es la hora de cierre ("HH:MM") de ese día de la semana: la de BotHorarioFinPorDia si
+// ese día tiene una propia, si no BotHorarioFin. Una entrada mal escrita se ignora: un error de
+// configuración no puede cerrar el negocio ni cambiarle el horario a otro día.
+func (c Config) HorarioFin(dia time.Weekday) string {
+	iso := int(dia)
+	if iso == 0 {
+		iso = 7 // time.Weekday pone el domingo en 0; la configuración usa ISO (domingo=7)
+	}
+	for _, parte := range strings.Split(c.BotHorarioFinPorDia, ",") {
+		d, hora, ok := strings.Cut(strings.TrimSpace(parte), "=")
+		if !ok {
+			continue
+		}
+		hora = strings.TrimSpace(hora)
+		var h, m int
+		if n, err := fmt.Sscanf(hora, "%d:%d", &h, &m); n != 2 || err != nil || h < 0 || h > 23 || m < 0 || m > 59 {
+			continue
+		}
+		if n, err := strconv.Atoi(strings.TrimSpace(d)); err == nil && n == iso {
+			return fmt.Sprintf("%02d:%02d", h, m)
+		}
+	}
+	return c.BotHorarioFin
 }

@@ -43,7 +43,7 @@ func clienteQueYaDioLaCedula(store conversation.Store, from string) {
 func TestSiAceptaTardeYaNoSeLePideLaCedulaOtraVez(t *testing.T) {
 	const from = "593968179884"
 	store := conversation.NewMemStore()
-	ag := agentDePrueba(nil, store)
+	ag := agenteConConsentimiento(nil, store)
 	clienteQueYaDioLaCedula(store, from)
 
 	msg, manejado := ag.ResponderConsentimiento(from, "Sí, acepto")
@@ -65,7 +65,7 @@ func TestSiAceptaTardeYaNoSeLePideLaCedulaOtraVez(t *testing.T) {
 func TestSiAceptaConElPedidoYaRegistradoNoSeLePideNada(t *testing.T) {
 	const from = "593986140905"
 	store := conversation.NewMemStore()
-	ag := agentDePrueba(nil, store)
+	ag := agenteConConsentimiento(nil, store)
 	store.SetConsentimientoPendiente(from)
 	store.AppendModel(from, cuerpoConsentimiento())
 	store.SetProfile(from, conversation.Profile{Identificacion: "0103519336", Nombres: "Carlos Fajardo"})
@@ -94,7 +94,7 @@ func TestSiAceptaConElPedidoYaRegistradoNoSeLePideNada(t *testing.T) {
 func TestSiAceptaSinHaberDadoLaCedulaSiSeLePide(t *testing.T) {
 	const from = "593999850001"
 	store := conversation.NewMemStore()
-	ag := agentDePrueba(nil, store)
+	ag := agenteConConsentimiento(nil, store)
 	store.SetConsentimientoPendiente(from)
 	store.AppendModel(from, cuerpoConsentimiento())
 
@@ -113,7 +113,7 @@ func TestSiAceptaSinHaberDadoLaCedulaSiSeLePide(t *testing.T) {
 func TestSiAceptaConCedulaYNombreSeSigueElFlujo(t *testing.T) {
 	const from = "593999850002"
 	store := conversation.NewMemStore()
-	ag := agentDePrueba(nil, store)
+	ag := agenteConConsentimiento(nil, store)
 	store.SetConsentimientoPendiente(from)
 	store.AppendModel(from, cuerpoConsentimiento())
 	store.SetProfile(from, conversation.Profile{

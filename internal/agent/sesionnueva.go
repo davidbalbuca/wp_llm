@@ -34,6 +34,8 @@ package agent
 import (
 	"log"
 	"time"
+
+	"wp-llm-gas/internal/conversation"
 )
 
 // VentanaConversacionSeguida es el silencio a partir del cual el próximo mensaje se considera una
@@ -45,6 +47,40 @@ import (
 // sin ningún pedido abierto, viene a empezar algo nuevo.
 const VentanaConversacionSeguida = 30 * time.Minute
 
+// VencimientoFicha es cuánto vive un pedido A MEDIO ARMAR sin que el cliente lo toque (dueño,
+// 04/10: 2 horas). Antes no vencía nunca, y eso hacía dos daños:
+//
+//   - El 04/10 había 27 fichas guardadas en prod, 19 VACÍAS (solo dijeron "Hola"). Cada una
+//     contaba como "a mitad de algo": a ese cliente no se le limpiaba la conversación ni se le
+//     daba la bienvenida, aunque volviera al día siguiente.
+//   - Las que sí tenían color se reutilizaban: un "hola quisiera un gas" registró el AMARILLO de
+//     una conversación anterior que el cliente no pidió de nuevo.
+//
+// Quien vuelve antes de 2 horas retoma donde quedó. Después empieza limpio; si ya compró antes,
+// se le OFRECE repetir (apertura.go), nunca se reutiliza en silencio.
+const VencimientoFicha = 2 * time.Hour
+
+// fichaVigente dice si el pedido a medio armar todavía cuenta: tiene algún dato y el cliente lo
+// tocó hace menos de VencimientoFicha.
+func fichaVigente(p conversation.PedidoEnCurso, ahora time.Time) bool {
+	return !p.Vacio() && ahora.Sub(p.UpdatedAt) < VencimientoFicha
+}
+
+// descartarFichaVencida borra el pedido a medio armar si está vacío o venció. Va aparte de la
+// limpieza general porque aplica AUNQUE haya otra cosa pendiente (una calificación sin dar, por
+// ejemplo): esa otra cosa no justifica arrastrar un color de hace horas.
+func (a *Agent) descartarFichaVencida(from string) {
+	p, hay := a.store.GetPedidoEnCurso(from)
+	if !hay || fichaVigente(p, time.Now()) {
+		return
+	}
+	if !p.Vacio() {
+		log.Printf("[sesion-nueva] %s: se descarta el pedido a medio armar de hace %s (%s)",
+			from, time.Since(p.UpdatedAt).Round(time.Minute), describeItems(p.Lineas()))
+	}
+	a.store.ClearPedidoEnCurso(from)
+}
+
 // EmpezarConversacionSiCorresponde limpia el rastro de la conversación anterior cuando el cliente
 // vuelve a escribir y no tiene NADA pendiente. Devuelve true si limpió.
 //
@@ -55,6 +91,7 @@ func (a *Agent) EmpezarConversacionSiCorresponde(from string) bool {
 	if !hay || time.Since(ultima) < VentanaConversacionSeguida {
 		return false
 	}
+	a.descartarFichaVencida(from)
 	if motivo, ocupado := a.tienePendiente(from); ocupado {
 		log.Printf("[sesion-nueva] %s volvió tras %s pero tiene %s; NO se limpia",
 			from, time.Since(ultima).Round(time.Minute), motivo)
@@ -79,7 +116,7 @@ func (a *Agent) tienePendiente(from string) (string, bool) {
 	if _, hay := a.store.GetPendingWait(from); hay {
 		return "una espera de repartidor", true
 	}
-	if _, hay := a.store.GetPedidoEnCurso(from); hay {
+	if p, hay := a.store.GetPedidoEnCurso(from); hay && fichaVigente(p, time.Now()) {
 		return "un pedido a medio armar", true
 	}
 	if _, hay := a.store.GetPedidoEsperandoDireccion(from); hay {

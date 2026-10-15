@@ -73,7 +73,9 @@ func (a *Agent) horarioDeRespaldo(t time.Time) ventanaDeAtencion {
 	if !a.esDiaLaborableDelEnv(t) {
 		return ventanaDeAtencion{abierto: false}
 	}
-	desde, hasta := parseHoraHHMM(a.cfg.BotHorarioInicio), parseHoraHHMM(a.cfg.BotHorarioFin)
+	// Con el cierre de ESE día (BOT_HORARIO_FIN_POR_DIA: el domingo cierra antes), igual que antes
+	// de que el horario viniera del backend.
+	desde, hasta := parseHoraHHMM(a.cfg.BotHorarioInicio), parseHoraHHMM(a.cfg.HorarioFin(t.Weekday()))
 	if desde < 0 || hasta < 0 {
 		// Configuración inválida. Se mantiene el negocio ABIERTO (un error de configuración no
 		// puede cerrarlo, decisión que ya estaba) pero con las horas marcadas como DESCONOCIDAS,

@@ -16,7 +16,6 @@ import (
 	"log"
 	"strconv"
 	"strings"
-	"time"
 
 	"wp-llm-gas/internal/conversation"
 )
@@ -38,6 +37,12 @@ const (
 // también se resuelve en código: el cliente toca y listo.
 func (a *Agent) ResponderMenuEspera(from, texto string) (string, bool) {
 	if _, hayEspera := a.store.GetPendingWait(from); !hayEspera {
+		return "", false
+	}
+	// Lo último que se le preguntó es el cambio de color (el del camión de respaldo o el que
+	// apareció durante la espera): su "sí" / "no" es para ESE menú, que resuelve
+	// ResponderCambioColor. Este va antes en el webhook y sin esto un "no" cancelaba la espera.
+	if _, hayCambio := a.store.GetPendingColorSwap(from); hayCambio {
 		return "", false
 	}
 	respuesta := normalizarRespuesta(texto)
@@ -63,47 +68,7 @@ func (a *Agent) ResponderMenuEspera(from, texto string) (string, bool) {
 		return respuesta, true
 
 	case respuesta == "cancelar" || respuestasNegativas[respuesta]:
-		log.Printf("[menu-espera] %s no quiso esperar; se cancela la espera en código", from)
-		// La ronda se lee AQUÍ, antes de que cancelarEspera borre la espera: si no, al redactar
-		// la respuesta ya no hay estado que consultar y todo el mundo recibe el mismo texto.
-		yaHabiaEsperado := false
-		if espera, hay := a.store.GetPendingWait(from); hay && espera.RondaEspera > 1 {
-			yaHabiaEsperado = true
-		}
-		// ANTES DE NADA: ¿tiene un pedido de VERDAD en camino? Un cliente puede estar esperando
-		// repartidor para un pedido nuevo y tener otro ya asignado de antes (o hecho desde la
-		// app). Si lo hay, "Cancelar" tiene que cancelar ESE, que es lo que él entiende por
-		// cancelar; cortar solo la espera lo dejaría con gas en camino que creía haber parado.
-		if msg, hubo := a.cancelarPedidoVivoSiLoHay(from); hubo {
-			a.cancelarEspera(from) // y además se corta la espera del pedido nuevo
-			a.store.AppendUser(from, texto)
-			a.store.AppendModel(from, msg)
-			return msg, true
-		}
-		a.cancelarEspera(from) // deja el pedido como NO ASIGNADO y avisa al grupo
-		// EL MENSAJE DICE LO QUE DE VERDAD PASÓ. El 15/09 QA pulsó "Cancelar" y el bot contestó
-		// "Entendido 🙏" a secas: sonaba a cancelado, pero el pedido había quedado en la cola de
-		// No asignados, donde el equipo lo llama para ofrecérselo. Dos horas y media después
-		// seguía ahí. Llamar a alguien que cree haber cancelado es peor que no llamarlo.
-		// A quien YA ESPERÓ se le despide distinto: no se arrepintió, se quedó sin gas por algo
-		// nuestro. Ofrecerle otra vez agendar suena a insistencia después de media hora de
-		// espera fallida; lo que corresponde es agradecerle y dejar la puerta abierta.
-		var respuesta string
-		if yaHabiaEsperado {
-			respuesta = MensajeDespedidaTrasCancelar()
-		} else {
-			desdeHoy, hastaHoy := a.horarioDeHoy(time.Now().In(zonaEcuador))
-			respuesta = fmt.Sprintf("Listo, ya no te busco repartidor 🙏. Dejé tu pedido anotado por si "+
-				"quieres retomarlo, y si prefieres puedo agendarte la entrega para más tarde: atendemos "+
-				"de %s a %s, dime a qué hora te viene bien. Y si ya no lo necesitas, aquí estoy cuando "+
-				"me busques 😊", desdeHoy, hastaHoy)
-		}
-		// El turno queda en el HISTORIAL. Sin esto el modelo no se entera de que el cliente
-		// canceló la espera: el 15/09, dos horas después, le volvió a ofrecer esperar o programar
-		// un pedido que ya no estaba en curso, porque para él ese turno nunca ocurrió.
-		a.store.AppendUser(from, texto)
-		a.store.AppendModel(from, respuesta)
-		return respuesta, true
+		return a.cancelarLaEspera(from, texto), true
 
 	case respuesta == "programar" || respuesta == "reprogramar" || respuesta == "programar entrega":
 		// Antes esto se dejaba al modelo porque hacía falta que el cliente ESCRIBIERA una hora.
@@ -259,10 +224,10 @@ func (a *Agent) ResponderRepetirPedido(from, texto string) (string, bool) {
 		// anterior para que entienda por qué se la pedimos otra vez.
 		texto := fmt.Sprintf("¡Listo! %s como la última vez 🙌 ", describeItems(lineas))
 		if destino := last.Destino(); destino != "" {
-			texto += fmt.Sprintf("La última vez te lo entregamos en %s. Compárteme tu ubicación "+
-				"por WhatsApp 📎 y te lo envío enseguida.", destino)
+			texto += fmt.Sprintf("La última vez te lo entregamos en %s. ¿Me ayudas con tu ubicación "+
+				"de hoy? 📍 Así el repartidor más cercano llega directo a ti.", destino)
 		} else {
-			texto += "Compárteme tu ubicación por WhatsApp 📎 y te lo envío enseguida."
+			texto += "¿Me ayudas con tu ubicación? 📍 Así el repartidor más cercano llega directo a ti."
 		}
 		return texto, true
 	}
@@ -291,4 +256,51 @@ func (a *Agent) ResponderRepetirPedido(from, texto string) (string, bool) {
 		a.store.AppendModel(from, respuesta)
 	}
 	return respuesta, true
+}
+
+// cancelarLaEspera es lo que pasa cuando el cliente dice "Cancelar" mientras se le busca repartidor
+// (botón del menú de espera, o "cancelar" escrito; ver también ResponderCancelacion). Si además
+// tiene un pedido de verdad en camino, se cancela ESE; si no, se corta la búsqueda y el pedido
+// queda como NO ASIGNADO. Devuelve el mensaje para el cliente (ya anotado en el historial).
+func (a *Agent) cancelarLaEspera(from, texto string) string {
+	log.Printf("[menu-espera] %s no quiso esperar; se cancela la espera en código", from)
+	// La ronda se lee AQUÍ, antes de que cancelarEspera borre la espera: si no, al redactar
+	// la respuesta ya no hay estado que consultar y todo el mundo recibe el mismo texto.
+	yaHabiaEsperado := false
+	if espera, hay := a.store.GetPendingWait(from); hay && espera.RondaEspera > 1 {
+		yaHabiaEsperado = true
+	}
+	// ANTES DE NADA: ¿tiene un pedido de VERDAD en camino? Un cliente puede estar esperando
+	// repartidor para un pedido nuevo y tener otro ya asignado de antes (o hecho desde la
+	// app). Si lo hay, "Cancelar" tiene que cancelar ESE, que es lo que él entiende por
+	// cancelar; cortar solo la espera lo dejaría con gas en camino que creía haber parado.
+	if msg, hubo := a.cancelarPedidoVivoSiLoHay(from); hubo {
+		a.cancelarEspera(from) // y además se corta la espera del pedido nuevo
+		a.store.AppendUser(from, texto)
+		a.store.AppendModel(from, msg)
+		return msg
+	}
+	a.cancelarEspera(from) // deja el pedido como NO ASIGNADO y avisa al grupo
+	// EL MENSAJE DICE LO QUE DE VERDAD PASÓ. El 15/09 QA pulsó "Cancelar" y el bot contestó
+	// "Entendido 🙏" a secas: sonaba a cancelado, pero el pedido había quedado en la cola de
+	// No asignados, donde el equipo lo llama para ofrecérselo. Dos horas y media después
+	// seguía ahí. Llamar a alguien que cree haber cancelado es peor que no llamarlo.
+	// A quien YA ESPERÓ se le despide distinto: no se arrepintió, se quedó sin gas por algo
+	// nuestro. Ofrecerle otra vez agendar suena a insistencia después de media hora de
+	// espera fallida; lo que corresponde es agradecerle y dejar la puerta abierta.
+	var respuesta string
+	if yaHabiaEsperado {
+		respuesta = MensajeDespedidaTrasCancelar()
+	} else {
+		respuesta = fmt.Sprintf("Listo, ya no te busco repartidor 🙏. Dejé tu pedido anotado por si "+
+			"quieres retomarlo, y si prefieres puedo agendarte la entrega para más tarde: atendemos "+
+			"%s, dime a qué hora te viene bien. Y si ya no lo necesitas, aquí estoy cuando "+
+			"me busques 😊", a.textoHorario())
+	}
+	// El turno queda en el HISTORIAL. Sin esto el modelo no se entera de que el cliente
+	// canceló la espera: el 15/09, dos horas después, le volvió a ofrecer esperar o programar
+	// un pedido que ya no estaba en curso, porque para él ese turno nunca ocurrió.
+	a.store.AppendUser(from, texto)
+	a.store.AppendModel(from, respuesta)
+	return respuesta
 }

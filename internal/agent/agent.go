@@ -108,6 +108,18 @@ type Agent struct {
 	// pasa aunque el menú salga con otra cosa. Pasó con la dirección, que mostraba la calle sin
 	// el nombre que el cliente le había puesto.
 	enviarMenu func(from, cuerpo string, opciones []string) error
+
+	// reloj da la hora en Ecuador; nil = time.Now(). Existe para probar lo que depende de si
+	// estamos en horario (el saludo de noche) sin esperar a que anochezca.
+	reloj func() time.Time
+}
+
+// ahora es la hora en Ecuador (o la del reloj de la prueba).
+func (a *Agent) ahora() time.Time {
+	if a.reloj != nil {
+		return a.reloj().In(zonaEcuador)
+	}
+	return time.Now().In(zonaEcuador)
 }
 
 // mandarMenu envía un menú interactivo por WhatsApp. Único camino: así los tests pueden leer el
@@ -224,14 +236,14 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 		Name: "registrar_pedido",
 		Description: "Registra un pedido de gas en el sistema (UN solo pedido, aunque lleve varios colores). " +
 			"Úsala solo cuando ya tienes el color/marca y la cantidad de CADA cilindro, el cliente compartió su " +
-			"ubicación de WhatsApp, y (si es un cliente NUEVO) su cédula y su nombre. Si el cliente pide MÁS DE UN " +
+			"ubicación de WhatsApp. NO hace falta su cédula: se registra por su número de WhatsApp. Si el cliente pide MÁS DE UN " +
 			"color, llámala UNA sola vez con 'items'; NUNCA la llames dos veces para un mismo pedido. " +
 			"No la uses para consultas; solo para concretar el pedido.",
 		Parameters: &genai.Schema{
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
-				"identificacion":    {Type: genai.TypeString, Description: "Cédula/identificación del cliente. Si ya está registrado (ver DATOS DEL CLIENTE), NO hace falta repetirla."},
-				"nombres_completos": {Type: genai.TypeString, Description: "Nombres y apellidos del cliente. Si ya está registrado, NO hace falta repetirlos."},
+				"identificacion":    {Type: genai.TypeString, Description: "OPCIONAL. Cédula del cliente SOLO si él la dio por su cuenta (p. ej. quiere factura con sus datos). NO la pidas."},
+				"nombres_completos": {Type: genai.TypeString, Description: "OPCIONAL. El nombre que el cliente te dijo. Si no lo dijo se usa el de su WhatsApp; si ese no sirve como nombre, la herramienta te pedirá preguntárselo."},
 				"color":             {Type: genai.TypeString, Description: "Color/marca del cilindro. Debe coincidir con uno de los colores de la INFORMACIÓN DEL SERVICIO. Para varios colores usa 'items' en su lugar."},
 				"cantidad":          {Type: genai.TypeInteger, Description: "Cantidad de cilindros solicitados (del color de 'color')."},
 				"items": {Type: genai.TypeArray, Description: "SOLO cuando el cliente pide MÁS DE UN color en el mismo pedido: " +
@@ -254,9 +266,8 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 	// el bot lo saluda por su nombre y NO le vuelve a pedir nombre/correo (igual que la app).
 	verificarCliente := &genai.FunctionDeclaration{
 		Name: "verificar_cliente",
-		Description: "Verifica si un cliente ya está registrado en el sistema por su cédula/identificación. " +
-			"Llámala EN CUANTO el cliente te dé su cédula, ANTES de pedirle el nombre o el correo. Si el " +
-			"cliente ya existe, te devolverá su nombre para saludarlo y NO tendrás que pedirle nombre ni correo.",
+		Description: "Verifica si un cliente ya está registrado en el sistema por su cédula. NO pidas la cédula para " +
+			"usarla: llámala solo si el cliente DIO su cédula por su cuenta. Si existe, te devuelve su nombre.",
 		Parameters: &genai.Schema{
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
@@ -332,8 +343,8 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 	programar := &genai.FunctionDeclaration{
 		Name: "programar_entrega",
 		Description: "Agenda una ENTREGA PROGRAMADA cuando estamos fuera del horario laboral. Antes de llamarla " +
-			"necesitas: color, cantidad, la ubicación de WhatsApp YA compartida, la cédula y el nombre (si es " +
-			"cliente nuevo) y la hora deseada. Solo horas dentro del horario laboral y de las próximas 24 horas.",
+			"necesitas: color, cantidad, la ubicación de WhatsApp YA compartida y la hora deseada (NO pidas cédula). " +
+			"Solo horas dentro del horario laboral y de las próximas 24 horas.",
 		Parameters: &genai.Schema{
 			Type: genai.TypeObject,
 			Properties: map[string]*genai.Schema{
@@ -341,8 +352,8 @@ func New(ctx context.Context, cfg config.Config, store conversation.Store, catal
 				"cantidad":       {Type: genai.TypeInteger, Description: "Cantidad de cilindros"},
 				"hora":           {Type: genai.TypeString, Description: "Hora deseada en formato HH:MM (24 horas)"},
 				"dia":            {Type: genai.TypeString, Description: "'hoy' o 'manana' (si no se indica, se asume la próxima ocurrencia de esa hora)"},
-				"identificacion": {Type: genai.TypeString, Description: "Cédula del cliente (si es nuevo)"},
-				"nombres":        {Type: genai.TypeString, Description: "Nombre completo del cliente (si es nuevo)"},
+				"identificacion": {Type: genai.TypeString, Description: "OPCIONAL. Cédula solo si el cliente la dio por su cuenta. NO la pidas."},
+				"nombres":        {Type: genai.TypeString, Description: "OPCIONAL. El nombre que el cliente te dijo. Si no lo dijo se usa el de su WhatsApp; si ese no sirve como nombre, la herramienta te pedirá preguntárselo."},
 			},
 			Required: []string{"color", "cantidad", "hora"},
 		},
@@ -373,7 +384,7 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// Ficha del pedido: se anota lo que el cliente acaba de decir (color, cantidad, hora) ANTES
 	// de llamar al modelo, para que el prompt ya lo refleje y los candados no tengan que
 	// adivinarlo del historial (ver internal/agent/encurso.go).
-	a.anotarDelMensaje(from, text)
+	notaFicha := a.anotarDelMensaje(from, text)
 
 	// Vigilancia pasiva: avisa al grupo si el mensaje parece un sondeo del negocio en vez de un
 	// pedido. Va en su propia goroutine y NO altera la respuesta: el modelo ya tiene prohibido
@@ -390,6 +401,9 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// productos, colores o precios sin reiniciar el agente. Se devuelve en DOS piezas para
 	// poder cachear la fija (ver construirSistema y internal/llm).
 	sistemaFijo, systemPrompt := a.construirSistema(from)
+	if notaFicha != "" {
+		systemPrompt += "\n\nÚLTIMO DATO DEL CLIENTE: " + notaFicha
+	}
 
 	reply := ""
 	for round := 0; round < maxToolRounds; round++ {
@@ -496,7 +510,10 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// tu pedido" y la hizo repetir color, cantidad y ubicación de un pedido que ya existía.
 	// Por eso se pregunta por el estado DURABLE (igual que hace la cancelación), no por un
 	// booleano del turno: si el pedido ya vive, no hay nada que rescatar.
-	if !t.menuSent && !t.ultimoPedido.ok && !t.ultimoPedido.enEspera &&
+	// Tampoco si en este turno se DERIVÓ al equipo: el cliente se quejaba (Edison, 12/10: "Nunka
+	// llego" con el pedido recién cancelado -> ticket #119) y el modelo le hablaba de su pedido;
+	// forzar un registro le mandaba el menú de colores como si quisiera pedir otra vez.
+	if !t.menuSent && !t.escalado && !t.ultimoPedido.ok && !t.ultimoPedido.enEspera &&
 		(afirmaPedidoConfirmado(reply) || (!t.programo && afirmaProgramado(reply))) {
 		// Si el cliente pidió PROGRAMAR (dijo una hora) y el modelo afirmó sin llamar la tool, lo
 		// que hay que forzar es la PROGRAMACIÓN, no un registro inmediato. Pasó con María Elena el
@@ -506,6 +523,12 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 		switch {
 		case a.tienePedidoVivo(from):
 			log.Printf("[fantasma] %s: el modelo afirmó un pedido y el pedido EXISTE; no se fuerza nada", from)
+		case !t.programo && a.store.TieneProgramacionViva(from):
+			// Le recordó una entrega que SÍ está agendada. Antes solo se miraba esto si el cliente
+			// estaba pidiendo agendar en ese momento: a Edgar (06/10 06:48) le recordó su entrega de
+			// las 08:00, el candado no la vio, forzó un pedido inmediato y le contestó "tuve un
+			// problema al registrar tu pedido".
+			log.Printf("[fantasma] %s: el modelo habló de una programación que EXISTE; no se fuerza nada", from)
 		case !t.programo && a.clienteQuiereProgramar(from):
 			if a.store.TieneProgramacionViva(from) {
 				log.Printf("[fantasma] %s: el modelo afirmó una programación y la programación EXISTE; no se fuerza nada", from)
@@ -515,6 +538,12 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 			if forzado, ok := a.forzarProgramacionSiHaceFalta(t, from); ok {
 				reply = forzado
 			}
+		case !a.dentroDeHorario(time.Now().In(zonaEcuador)):
+			// Fuera de horario no puede existir un pedido inmediato: forzarlo solo fallaba y el
+			// cliente recibía "tuve un problema al registrar" a la primera (23/09 y 02/10, ~22:40).
+			// Se le pide con amabilidad lo que falta y el modelo sigue con la programación.
+			log.Printf("[fantasma] %s: afirmó un pedido fuera de horario; no se fuerza, se pide lo que falta", from)
+			reply = a.loQueFaltaParaElPedido(from)
 		default:
 			log.Printf("[fantasma] %s: el modelo afirmó un pedido sin registrar_pedido; se fuerza el registro", from)
 			if forzado, ok := a.forzarRegistroSiHaceFalta(t, from); ok {
@@ -565,6 +594,10 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// backend mandó el token, pero el modelo no lo copió y el cliente no recibió el seguimiento.
 	if t.ultimoPedido.ok && t.ultimoPedido.Seguimiento != "" {
 		reply = a.garantizarEnlaceDeSeguimiento(from, reply, t.ultimoPedido.Seguimiento)
+	}
+	// Con el pedido confirmado, una línea para bajar la app (ver LineaAppEnCamino).
+	if t.ultimoPedido.ok {
+		reply = ConInvitacionApp(reply)
 	}
 
 	// Candado de COBERTURA: el modelo no puede rechazar a un cliente por el NOMBRE de su
@@ -634,7 +667,20 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// deja la conversación esperando a un bot que no va a volver a hablar. Ver turnocolgado.go
 	// y el caso de Doris (21/09).
 	if a.turnoQuedaColgado(t, from, reply, dijoElModelo) {
-		reply = a.rescatarTurnoColgado(from, reply)
+		if a.listoParaRegistrar(from) {
+			// Ya dio TODO (color, cantidad y la ubicación de ahora): lo que espera es su pedido,
+			// no un "¿Seguimos con tu pedido?". Ver listoParaRegistrar.
+			log.Printf("[colgado] %s: tenía todo para pedir y el modelo no registró; se registra en código", from)
+			if forzado, ok := a.forzarRegistroSiHaceFalta(t, from); ok {
+				if forzado == "" { // salió un menú (p. ej. confirmar la dirección)
+					reply = ""
+				} else {
+					reply = strings.TrimSpace(reply) + "\n\n" + forzado
+				}
+			}
+		} else {
+			reply = a.rescatarTurnoColgado(from, reply)
+		}
 	}
 
 	// UN SOLO SALUDO. Si el código acaba de presentarse (bienvenida.go), el modelo NO puede saludar

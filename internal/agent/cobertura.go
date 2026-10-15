@@ -24,6 +24,7 @@ package agent
 import (
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 
 	"wp-llm-gas/internal/georoutes"
@@ -63,6 +64,13 @@ func afirmaCobertura(texto string) bool {
 	if pideLaUbicacion(texto) {
 		return false
 	}
+	// Hablar del HORARIO no es prometer cobertura (14/10, 593999614191): a "¿Lunes a sábados?" el
+	// modelo contestó "Sí, atendemos de lunes a sábado..." y el "sí atendemos" se tomó por un "sí
+	// llegamos a tu zona": el candado lo cambió por la lista de parroquias. Si la frase habla de
+	// días u horas y no nombra ningún lugar, se deja pasar.
+	if hablaDelHorario(texto) && !nombraUnLugar(texto) {
+		return false
+	}
 	return afirmaSecuencia(texto, [][]string{
 		{"esta", "cubierto"}, {"esta", "cubierta"},
 		{"si", "llegamos"}, {"si", "atendemos"},
@@ -75,6 +83,34 @@ func afirmaCobertura(texto string) bool {
 	}, 3)
 }
 
+var horaDelDia = regexp.MustCompile(`\b\d{1,2}(:\d{2})?\s*(am|pm|a\.m|p\.m|h)\b`)
+
+// hablaDelHorario dice si el texto habla de días u horas de atención ("de lunes a sábado",
+// "hasta las 8:30 pm", "nuestro horario").
+func hablaDelHorario(texto string) bool {
+	t := " " + normalizar(texto) + " "
+	for _, p := range []string{" lunes ", " martes ", " miercoles ", " jueves ", " viernes ", " sabado",
+		" domingo", " horario", " todos los dias ", " feriado"} {
+		if strings.Contains(t, p) {
+			return true
+		}
+	}
+	return horaDelDia.MatchString(strings.ToLower(texto))
+}
+
+// nombraUnLugar dice si el texto habla de un lugar (la zona, el barrio, su casa): ahí sí puede
+// haber una promesa de cobertura aunque también mencione el horario.
+func nombraUnLugar(texto string) bool {
+	t := " " + normalizar(texto) + " "
+	for _, p := range []string{" zona", " sector", " barrio", " parroquia", " canton", " ciudadela",
+		" tu casa", " tu direccion", " tu ubicacion", " ahi ", " alla ", " hasta alla"} {
+		if strings.Contains(t, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // pideLaUbicacion dice si el texto le está pidiendo al cliente que comparta su ubicación. Es la
 // señal de que el modelo NO está decidiendo la cobertura: la está mandando a verificar.
 func pideLaUbicacion(texto string) bool {
@@ -83,6 +119,7 @@ func pideLaUbicacion(texto string) bool {
 		{"comparte", "tu", "ubicacion"}, {"me", "compartes", "tu", "ubicacion"},
 		{"envíame", "tu", "ubicacion"}, {"enviame", "tu", "ubicacion"},
 		{"mandame", "tu", "ubicacion"}, {"necesito", "tu", "ubicacion"},
+		{"me", "ayudas", "con", "tu", "ubicacion"},
 	}, 3)
 }
 
@@ -181,6 +218,15 @@ func (a *Agent) revisarCoberturaAfirmada(from, reply string) string {
 	if !afirmaCobertura(reply) {
 		return reply
 	}
+	// Prometió cobertura en OTRA CIUDAD (ciudadesfuera.go): ahí no llegamos, se le dice que no.
+	if ciudad := a.lugarFueraEnElMensaje(from); ciudad != "" {
+		var zonas []georoutes.ZonaCobertura
+		if contexto, ok := a.catalog.Get(); ok && contexto != nil {
+			zonas = contexto.Zonas
+		}
+		log.Printf("[cobertura] %s: el modelo prometió cobertura en %s, donde no operamos; se corrige", from, ciudad)
+		return mensajeCiudadFuera(ciudad, zonas)
+	}
 	// Ubicación de esta conversación = geocerca ya consultada y superada. El "sí" es cierto.
 	if a.ubicacionEsDeAhora(from) {
 		return reply
@@ -198,14 +244,16 @@ func (a *Agent) revisarCoberturaAfirmada(from, reply string) string {
 // mensajeCoberturaEnPositivo redacta la respuesta correcta: dice dónde SÍ atendemos (con las
 // zonas que informa el backend, nunca quemadas) y pide la ubicación para confirmar.
 func mensajeCoberturaEnPositivo(zonas []georoutes.ZonaCobertura) string {
-	base := "¡Claro que sí! 😊 "
+	// Sin "¡Claro que sí!" delante (06/10): este texto reemplaza una respuesta del modelo, y
+	// arrancar con un sí a una pregunta de cobertura promete justo lo que todavía no se sabe.
+	base := ""
 	if texto := ZonasEnTexto(zonas); texto != "" {
 		// "urbanas y rurales" es la frase que faltaba: la geocerca cubre el cantón completo, y
 		// sin decirlo el cliente de una parroquia rural asume que solo se atiende el centro.
-		base += "Atendemos en las parroquias urbanas y rurales de " + texto + ". "
+		base = "Atendemos en las parroquias urbanas y rurales de " + texto + ". "
 	}
-	return base + "Para confirmarte si llegamos justo a tu dirección, compárteme tu ubicación " +
-		"por WhatsApp 📎 y lo verifico al instante."
+	return base + "Si me compartes tu ubicación 📍, te confirmo al instante si llegamos justo " +
+		"a tu casa 😊"
 }
 
 // ejemplosPorZona es cuántas parroquias se nombran por zona EN EL MENSAJE AL CLIENTE. Seis, no
@@ -293,6 +341,12 @@ func (a *Agent) revisarNegativaDeCobertura(from, reply string) string {
 	// Taparla lo devolvería al bucle de pedirle el pin una y otra vez para darle la misma
 	// respuesta — el caso de Ambato del 08/09. La marca se limpia si comparte otra ubicación.
 	if a.store.FueraDeCoberturaVerificado(from) {
+		return reply
+	}
+	// Y si nombró OTRA CIUDAD (Loja, Machala, Gualaceo…), el "no llegamos" también es verdad: no
+	// es un barrio que el modelo no conoce (ciudadesfuera.go, caso del 06/10).
+	if ciudad := a.lugarFueraEnElMensaje(from); ciudad != "" {
+		log.Printf("[cobertura] %s: el modelo negó cobertura en %s, donde no operamos; se respeta", from, ciudad)
 		return reply
 	}
 	contexto, ok := a.catalog.Get()
