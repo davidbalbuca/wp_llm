@@ -37,10 +37,12 @@ func backendConPedidoVigente(t *testing.T, idPedido int) (*Agent, conversation.S
 		case strings.Contains(r.URL.Path, "getOrdersHistoryClient"):
 			// Solo se responde al filtro por EN CAMINO (estado=1), como hace el backend real.
 			if r.URL.Query().Get("estado") != "1" {
-				w.Write([]byte(`{"codigo":0,"mensaje":"ok","resultado":[]}`))
+				w.Write([]byte(`{"codigo":1,"mensaje":"Historial cliente obtenido exitosamente","resultado":[]}`))
 				return
 			}
-			w.Write([]byte(`{"codigo":0,"mensaje":"ok","resultado":[
+			// codigo 1 = CodigoRespuesta.OK, lo que responde el backend REAL. Este fake respondía 0 y
+			// por eso nunca se vio que el bot exigía 0 y tomaba como error toda respuesta correcta.
+			w.Write([]byte(`{"codigo":1,"mensaje":"Historial cliente obtenido exitosamente","resultado":[
                 {"idpedido":` + strconv.Itoa(idPedido) + `,"alias":"Casa","direccion":"Av. Solano 123",
                  "conductor":"Nelson","estado_pedido":"En camino","fecha":"2026-09-17"}
             ]}`))

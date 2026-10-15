@@ -24,6 +24,10 @@ const (
 	botFirebaseToken = "whatsapp-bot"
 )
 
+// codigoRespuestaError es el `codigo` con que el backend marca un fallo (CodigoRespuesta.ERROR en
+// core/georoutes/enums.py). El éxito es 1, no 0.
+const codigoRespuestaError = -1
+
 // envelope es el envoltorio estándar de respuesta de la API georoutes.
 type envelope struct {
 	Codigo    int             `json:"codigo"`
@@ -207,6 +211,28 @@ func (c *Client) WppGetOrCreateClient(identificacion, nombres, telefono string) 
 		"identificacion": identificacion,
 		"nombres":        nombres,
 		"telefono":       telefono,
+	}, "")
+	if err != nil {
+		return nil, err
+	}
+	var acc Account
+	if err := json.Unmarshal(res, &acc); err != nil {
+		return nil, fmt.Errorf("credenciales no válidas del backend: %w", err)
+	}
+	return &acc, nil
+}
+
+// WppActualizarNombre corrige el nombre de un cliente del bot que ya existe (registrado por su
+// teléfono, sin cédula) y devuelve sus credenciales nuevas: es el mismo endpoint que
+// WppGetOrCreateClient, que siempre las regenera. Se usa cuando el cliente da su nombre y el que
+// quedó en el backend era el de su perfil de WhatsApp ("@sd2", "😀"...), que es el que ve el
+// repartidor (05/10). Al cliente con cédula el backend no le toca el nombre.
+func (c *Client) WppActualizarNombre(nombres, telefono string) (*Account, error) {
+	res, err := c.post("/wppGetOrCreateClient/", map[string]any{
+		"identificacion":    "",
+		"nombres":           nombres,
+		"telefono":          telefono,
+		"actualizar_nombre": true,
 	}, "")
 	if err != nil {
 		return nil, err

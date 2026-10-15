@@ -145,12 +145,17 @@ func (a *Agent) confirmarYRegistrar(from string, sch conversation.ScheduledOrder
 
 	switch {
 	case res.ok:
+		// El mismo bloque que cualquier otra asignación (asignacion.go): repartidor, placa,
+		// minutos y enlace de seguimiento. Antes solo decía "Tu repartidor es X".
 		mensaje := fmt.Sprintf("¡Confirmado! 🎉 Tu pedido de %d x %s color %s ya está en camino.",
 			res.Cantidad, res.Producto, res.Color)
-		if res.Conductor != "" {
-			mensaje += fmt.Sprintf(" Tu repartidor es %s.", res.Conductor)
+		if bloque := MensajeRepartidor(res.Conductor, res.Placa, res.MinutosEntrega, res.Seguimiento); bloque != "" {
+			mensaje += "\n\n" + bloque
 		}
-		return mensaje + " Te aviso apenas esté llegando. ¡Gracias por tu confianza! 🙌"
+		if res.TotalPagar > 0 {
+			mensaje += fmt.Sprintf("\n💵 Valor a pagar: $%.2f", res.TotalPagar)
+		}
+		return mensaje + "\n\nTe aviso apenas esté llegando. ¡Gracias por tu confianza! 🙌"
 
 	case res.enEspera:
 		// No hay repartidor libre. NO se le vuelve a preguntar si quiere esperar: este cliente ya

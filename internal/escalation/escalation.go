@@ -40,7 +40,7 @@ func SendSupportEmail(cfg config.Config, ticketID int64, phone, motivo, resumen 
 		}
 	}
 
-	msg := []byte("From: Bot Ubi <" + cfg.SMTPUser + ">\r\n" +
+	msg := []byte("From: Bot UbiGas <" + cfg.SMTPUser + ">\r\n" +
 		"To: " + strings.Join(destinos, ", ") + "\r\n" +
 		"Subject: " + subject + "\r\n" +
 		"MIME-Version: 1.0\r\n" +

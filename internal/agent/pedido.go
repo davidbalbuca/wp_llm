@@ -415,21 +415,31 @@ func (a *Agent) startWaitForDriver(from string, w conversation.PendingWait) {
 	}()
 }
 
+// PreguntaNombre es cómo se le pide el nombre al cliente cuando el de su WhatsApp no sirve
+// ("@sd2", "😀", un correo...). Dice PARA QUÉ: el repartidor lo necesita para ubicarlo. Así se
+// entiende que no es un trámite (dueño, 05/10).
+const PreguntaNombre = "¿Me ayudas con tu nombre para que el repartidor te pueda ubicar en la entrega? 😊"
+
+// instruccionPedirNombre es lo que se le devuelve al modelo cuando falta el nombre.
+func instruccionPedirNombre(que string) string {
+	return "Falta el nombre del cliente (el de su perfil de WhatsApp no sirve como nombre). " + que +
+		": pídeselo con estas palabras: \"" + PreguntaNombre + "\" (solo el nombre, ningún otro dato). " +
+		"Apenas te lo diga, vuelve a llamar a la herramienta con ese nombre."
+}
+
 func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) string {
 	// REGLA DURA de horario: fuera del horario laboral NO se registran pedidos (no hay
 	// conductores). El prompt también lo dice; esto es la garantía en código.
 	ahoraEc := time.Now().In(zonaEcuador)
 	if !a.esDiaLaborable(ahoraEc) {
-		desde, hasta := a.horarioDeHoy(ahoraEc)
-		return "HOY NO SE TRABAJA (solo atendemos " + a.textoDiasLaborables() + " de " +
-			desde + " a " + hasta + "): NO se registró el pedido porque " +
+		return "HOY NO SE TRABAJA (solo atendemos " + a.textoHorario() + "): NO se registró el pedido porque " +
 			"hoy no hay conductores. Díselo al cliente con amabilidad, DILE QUE DÍAS Y EN QUÉ HORARIO " +
 			"atendemos, y PREGÚNTALE si quiere agendar su pedido para otro día; si acepta, usa la " +
 			"herramienta programar_entrega."
 	}
 	if !a.dentroDeHorario(ahoraEc) {
 		desde, hasta := a.horarioDeHoy(ahoraEc)
-		return "FUERA DE HORARIO (" + desde + " a " + hasta + "): NO se registró " +
+		return "FUERA DE HORARIO (hoy de " + desde + " a " + hasta + "): NO se registró " +
 			"el pedido porque a esta hora no hay conductores. Explícaselo al cliente con amabilidad y ofrécele " +
 			"PROGRAMAR la entrega con la herramienta programar_entrega."
 	}
@@ -477,6 +487,11 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 			a.store.ClearActivePedido(from)
 		} else {
 			log.Printf("[pedido] %s ya tiene el pedido #%d activo; no se crea otro", from, idPrevio)
+			// La ficha la acaba de llenar anotarDeTool con los argumentos de ESTA llamada, pero
+			// el pedido ya existe: se borra. Si no, el panel mostraba "Registrando pedido" en un
+			// chat con el pedido ya entregado (Raúl, 12/10: tras el #440 creado por el operador,
+			// el modelo llamó registrar_pedido en cada mensaje y la ficha volvía a quedar llena).
+			a.store.ClearPedidoEnCurso(from)
 			return fmt.Sprintf("El cliente YA tiene el pedido #%d en curso: NO se creó otro. "+
 				"Confírmale que su pedido sigue en camino. Si quiere cambiarlo o pedir más, primero "+
 				"hay que cancelar el actual con cancelar_pedido.", idPrevio)
@@ -492,7 +507,9 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 	}
 
 	identificacion := strings.TrimSpace(str(args["identificacion"]))
-	nombres := strings.TrimSpace(str(args["nombres_completos"]))
+	// Solo cuenta si sirve como nombre: el modelo a veces repite el del perfil ("@sd2").
+	nombres := conversation.NombreSiSirve(str(args["nombres_completos"]))
+	nombreDicho := nombres // el que el cliente acaba de dar en esta conversación
 	// El telefono es el de la CONVERSACION, punto. Antes salia de lo que el modelo escribiera en
 	// el argumento y solo se caia a `from` si venia vacio: el modelo lo rellenaba con etiquetas y
 	// en produccion quedaron clientes con telefono "wa", "WhatsApp", "+593" y "+593WHATSAPP". El
@@ -507,20 +524,30 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 		if identificacion == "" {
 			identificacion = perfil.Identificacion
 		}
-		if nombres == "" {
-			nombres = perfil.Nombres
-		}
 	}
-	if identificacion == "" || nombres == "" {
+	// La CÉDULA YA NO ES OBLIGATORIA (04/10): sin ella el backend registra al cliente por su
+	// teléfono. El NOMBRE lo ve el repartidor: el que el cliente dio, o el de su perfil de
+	// WhatsApp SI SIRVE como nombre (05/10: llegaban "@sd2", "😀", correos...).
+	if nombres == "" {
+		nombres = conversation.NombreUsable(a.store, from)
+	}
+	if nombres == "" {
 		// QUE dato falta se deja anotado para quien llame desde codigo: este fallo se arregla
 		// preguntandolo, no disculpandose ni derivando (ver resultadoPedido.faltaDato y el
 		// candado del fantasma en forzar.go).
-		falta := "nombre"
-		if identificacion == "" {
-			falta = "cedula" // la cedula va primero: sin ella no se puede ni verificar al cliente
+		t.ultimoPedido = resultadoPedido{faltaDato: "nombre"}
+		return instruccionPedirNombre("NO se registró el pedido todavía")
+	}
+	// El cliente acaba de dar su nombre: se guarda, y si ya tenía cuenta se corrige también en el
+	// backend (ver más abajo), porque ahí quedó el de su perfil y es el que ve el repartidor.
+	nombreNuevo := false
+	if nombreDicho != "" {
+		perfil, _ := a.store.GetProfile(from)
+		if conversation.NombreSiSirve(perfil.Nombres) != nombreDicho {
+			perfil.Nombres = nombreDicho
+			a.store.SetProfile(from, perfil)
+			nombreNuevo = true
 		}
-		t.ultimoPedido = resultadoPedido{faltaDato: falta}
-		return "Faltan datos del cliente (cédula o nombre). Pídeselos antes de registrar el pedido."
 	}
 
 	// COMPUERTA de protección de datos. Va ANTES de persistir el perfil y antes de llamar al
@@ -584,6 +611,17 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 
 	// Cuenta del bot (YA verificada, sin OTP): de la caché local, o del backend (get-or-create).
 	account, ok := a.store.GetAccount(from)
+	if ok && nombreNuevo && identificacion == "" {
+		// Ya tenía cuenta (con el nombre de su perfil): se corrige el nombre en el backend. Es un
+		// extra: si falla, el pedido sigue con la cuenta de siempre.
+		if nueva, err := a.gr.WppActualizarNombre(nombres, telefono); err == nil && nueva != nil {
+			account = conversation.Account{Username: nueva.Username, Password: nueva.Password}
+			a.store.SetAccount(from, account)
+			log.Printf("[nombre] %s: nombre actualizado en el backend (%s)", from, nombres)
+		} else if err != nil {
+			log.Printf("[nombre] %s: no se pudo actualizar el nombre en el backend: %v", from, err)
+		}
+	}
 	if !ok {
 		nueva, err := a.gr.WppGetOrCreateClient(identificacion, nombres, telefono)
 		if err != nil {

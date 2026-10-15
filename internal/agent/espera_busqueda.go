@@ -34,7 +34,7 @@ import (
 // aquí y 20 allá, los intentos caían cada 30 s y un pedido tardaba 34 s en asignarse con el
 // conductor ya en línea (medido el 19/09). Con 7 aquí y 10 en el panel, baja a ~10-15 s. Cada
 // consulta es un intento de asignación, así que tampoco conviene bajarlo mucho más.
-const intervaloBusqueda = 7 * time.Second
+var intervaloBusqueda = 7 * time.Second // var y no const: los tests lo acortan
 
 // topeBusqueda es una red de seguridad del bot, no un plazo del negocio: si el backend quedara
 // devolviendo "buscando" para siempre (un parámetro absurdo en el panel, por ejemplo), esta
@@ -76,21 +76,28 @@ func (a *Agent) esperaBackend(from string, w conversation.PendingWait) {
 		return
 	}
 
-	res, err := a.gr.BuscarConductor(tokens.Access, loc.Latitude, loc.Longitude, w.IDTipoPago,
-		orderProductsDeWait(w), "")
-	if err != nil {
-		a.fallaBusqueda(from, "el backend no aceptó la búsqueda: "+err.Error())
-		return
+	// Una espera que ya tiene su busqueda (el bot se reinicio y la esta RETOMANDO, ver
+	// RetomarEsperas) sigue esa misma: abrir otra le duplicaria el pedido al cliente.
+	idBusqueda := w.IDBusqueda
+	if idBusqueda > 0 {
+		log.Printf("[busqueda] %s retoma la busqueda %d", from, idBusqueda)
+	} else {
+		res, err := a.gr.BuscarConductor(tokens.Access, loc.Latitude, loc.Longitude, w.IDTipoPago,
+			orderProductsDeWait(w), "")
+		if err != nil {
+			a.fallaBusqueda(from, "el backend no aceptó la búsqueda: "+err.Error())
+			return
+		}
+		if res.Estado == georoutes.BusquedaAsignado && res.Pedido != nil {
+			a.avisarRepartidorAsignado(from, w, res.Pedido)
+			return
+		}
+		// El id se guarda en la espera para poder cerrarla si el cliente se arrepiente.
+		idBusqueda = res.IDBusqueda
+		w.IDBusqueda = idBusqueda
+		a.store.SetPendingWait(from, w)
+		log.Printf("[busqueda] %s espera la busqueda %d (estado %s)", from, idBusqueda, res.Estado)
 	}
-	if res.Estado == georoutes.BusquedaAsignado && res.Pedido != nil {
-		a.avisarRepartidorAsignado(from, w, res.Pedido)
-		return
-	}
-
-	// El id se guarda en la espera para poder cerrarla si el cliente se arrepiente.
-	w.IDBusqueda = res.IDBusqueda
-	a.store.SetPendingWait(from, w)
-	log.Printf("[busqueda] %s espera la busqueda %d (estado %s)", from, res.IDBusqueda, res.Estado)
 
 	limite := time.Now().Add(topeBusqueda)
 	ticker := time.NewTicker(intervaloBusqueda)
@@ -102,10 +109,10 @@ func (a *Agent) esperaBackend(from string, w conversation.PendingWait) {
 			return
 		}
 
-		estado, err := a.gr.EstadoBusqueda(tokens.Access, res.IDBusqueda)
+		estado, err := a.gr.EstadoBusqueda(tokens.Access, idBusqueda)
 		if err != nil {
 			// Un fallo puntual de red no cierra nada: se reintenta en la próxima vuelta.
-			log.Printf("[busqueda] %s no se pudo consultar la busqueda %d: %v", from, res.IDBusqueda, err)
+			log.Printf("[busqueda] %s no se pudo consultar la busqueda %d: %v", from, idBusqueda, err)
 			if time.Now().After(limite) {
 				a.avisarEsperaVencida(from, w, "No se pudo consultar la búsqueda en el backend.")
 				return
@@ -115,29 +122,59 @@ func (a *Agent) esperaBackend(from string, w conversation.PendingWait) {
 
 		switch estado.Estado {
 		case georoutes.BusquedaAsignado:
+			// La espera guardada, no la copia del arranque: si aceptó el color del camión de
+			// respaldo, el aviso tiene que decir el color nuevo.
+			if actual, ok := a.store.GetPendingWait(from); ok {
+				w = actual
+			}
 			a.avisarRepartidorAsignado(from, w, estado.Pedido)
 			return
 		case georoutes.BusquedaSinConductor:
 			// Venció la búsqueda inicial sin nadie. ESTE es el momento de preguntarle al cliente
 			// si quiere esperar: ya se buscó de verdad, y el número que se le dice (lo que dura la
 			// espera) sale del backend, no del bot.
-			a.ofrecerEsperaAlCliente(from, estado)
+			// Si el camión de respaldo lleva un color equivalente, se le ofrece ESO primero.
+			if !a.ofrecerColorDelRespaldo(from, idBusqueda, estado.AlternativaRespaldo) {
+				a.ofrecerEsperaAlCliente(from, estado)
+			}
 		case georoutes.BusquedaNoAsignado:
 			// El backend ya lo dejó en no asignados y abrió el ticket: acá solo se avisa.
 			a.avisarEsperaVencida(from, w, "El cliente esperó y no se le asignó nadie.")
 			return
 		case georoutes.BusquedaCancelado:
-			log.Printf("[busqueda] %s la busqueda %d quedo cancelada", from, res.IDBusqueda)
+			log.Printf("[busqueda] %s la busqueda %d quedo cancelada", from, idBusqueda)
 			a.store.ClearPendingWait(from)
 			return
 		}
 
+		// Sigue esperando: ¿aparecio, mientras, un conductor con un color equivalente?
+		a.revisarColorAlternoEnEspera(from, loc.Latitude, loc.Longitude, time.Now())
+
 		if time.Now().After(limite) {
-			log.Printf("[busqueda] %s se alcanzo el tope del bot para la busqueda %d", from, res.IDBusqueda)
+			log.Printf("[busqueda] %s se alcanzo el tope del bot para la busqueda %d", from, idBusqueda)
 			a.avisarEsperaVencida(from, w, "La búsqueda pasó el tope de tiempo del bot.")
 			return
 		}
 	}
+}
+
+// maxEsperaRetomable: una espera que nadie tocó en este tiempo no se retoma al arrancar. Es más
+// que el tope del bot (topeBusqueda): para entonces la búsqueda ya se cerró, y avisarle al cliente
+// horas después de que se rindió solo confunde.
+const maxEsperaRetomable = 2 * time.Hour
+
+// RetomarEsperas vuelve a seguir, al arrancar el bot, las esperas de repartidor que quedaron
+// guardadas. La goroutine que pregunta por la búsqueda vive en memoria y muere con el proceso:
+// el deploy de las 07:43 del 12/10 dejó a Jessi esperando una búsqueda que ya nadie consultaba
+// (ni el menú de la siguiente ronda ni el aviso de repartidor le iban a llegar). Devuelve cuántas.
+func (a *Agent) RetomarEsperas() int {
+	n := 0
+	for from, w := range a.store.PendingWaits(maxEsperaRetomable) {
+		log.Printf("[retomar] %s: se retoma la espera (busqueda %d, ronda %d)", from, w.IDBusqueda, w.RondaEspera)
+		a.startWaitForDriver(from, w)
+		n++
+	}
+	return n
 }
 
 // ofrecerEsperaAlCliente le manda el menú cuando la búsqueda no encontró a nadie.
@@ -152,6 +189,11 @@ func (a *Agent) esperaBackend(from string, w conversation.PendingWait) {
 func (a *Agent) ofrecerEsperaAlCliente(from string, estado *georoutes.BusquedaResult) {
 	w, ok := a.store.GetPendingWait(from)
 	if !ok || w.EsperandoRespuesta {
+		return
+	}
+	// Con la oferta de cambio de color sin contestar no se le manda el menu de esperar encima:
+	// dos menus a la vez y no se sabe a cual responde.
+	if _, hay := a.store.GetPendingColorSwap(from); hay {
 		return
 	}
 	// Y que haya pasado la ronda. Los dos frenos se SUMAN: el de arriba evita repetirle el menú
@@ -291,6 +333,10 @@ func (a *Agent) avisarRepartidorAsignado(from string, w conversation.PendingWait
 		Direccion: calle,
 	})
 	store.ClearPendingWait(from)
+	// La ficha del pedido a medio armar ya cumplió: el pedido existe. Sin esto quedaba viva y el
+	// candado del turno colgado creía que el cliente seguía armando uno: a John (06/10, #370,
+	// asignado tras la espera) le pegaba "¿Seguimos con tu pedido?" a cada respuesta.
+	store.ClearPedidoEnCurso(from)
 	// El enlace de seguimiento queda registrado como el VIVO de este pedido, igual que en el
 	// pedido normal: es lo que permite detectar despues un enlace de otro pedido.
 	if enlace := a.urlSeguimiento(res.SeguimientoToken); enlace != "" {
@@ -331,21 +377,16 @@ func mensajeAsignado(a *Agent, w conversation.PendingWait, res *georoutes.OrderR
 		b.WriteString(fmt.Sprintf("📦 %d x %s\n", l.Cantidad, nombre))
 	}
 
-	if res.ConductorAsignado != "" {
-		b.WriteString("🚚 Repartidor: " + res.ConductorAsignado)
-		// La placa solo si el backend la envió (conductor verificado: modos 'normal'/'sin_tracking').
-		if res.Placa != "" {
-			b.WriteString(" (placa " + res.Placa + ")")
-		}
-		b.WriteString("\n")
-	}
-	// El enlace de seguimiento en vivo SOLO existe en modo 'normal' (hay GPS real). En
-	// 'sin_tracking' y 'solo_nombre' el backend no manda token, así que aquí no se muestra mapa.
-	if enlace := a.urlSeguimiento(res.SeguimientoToken); enlace != "" {
-		b.WriteString("\n📍 Sigue tu pedido en vivo aquí:\n" + enlace + "\n")
+	// El mismo bloque que cualquier otra asignación (asignacion.go). La placa y el enlace solo
+	// vienen si el backend los mandó (conductor verificado / con GPS real); los minutos, solo si
+	// hubo una ruta real.
+	minutos, _ := res.MinutosEntregaConMargen(a.cfg.MargenEntregaMin)
+	if bloque := MensajeRepartidor(res.ConductorAsignado, res.Placa, minutos,
+		a.urlSeguimiento(res.SeguimientoToken)); bloque != "" {
+		b.WriteString("\n" + bloque + "\n")
 	}
 	b.WriteString("\nYa va en camino. ¡Gracias por tu paciencia!")
-	return b.String()
+	return ConInvitacionApp(b.String())
 }
 
 // avisarEsperaVencida cierra una espera sin repartidor: avisa al grupo, limpia el estado y le

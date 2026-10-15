@@ -27,12 +27,16 @@ func (a *Agent) construirSistema(from string) (fijo, volatil string) {
 	// mientras no esté registrado. Sin esto el modelo lo deducía del texto: el 10/09 Guillermo
 	// Pacheco escribió "Brito por favor 2 cilindros a la iglesia" y el bot lo saludó "¡Hola,
 	// Brito!" tres veces seguidas, con su nombre real llegando en el mismo mensaje.
-	if perfil, ok := a.store.GetProfile(from); ok && perfil.PerfilWhatsApp != "" {
-		fmt.Fprintf(&b, "\n\nNOMBRE DEL CLIENTE EN WHATSAPP: %s. Es el que él mismo puso en su "+
-			"perfil. Si lo saludas por su nombre, usa ESTE (o el nombre con el que se presente "+
-			"explícitamente). NUNCA deduzcas su nombre de otras palabras del mensaje: lo que "+
-			"escribe suele ser el pedido, un lugar o para quién es, no cómo se llama.",
-			perfil.PerfilWhatsApp)
+	if nombre := conversation.NombreUsable(a.store, from); nombre != "" {
+		fmt.Fprintf(&b, "\n\nNOMBRE DEL CLIENTE: %s. Si lo saludas por su nombre, usa ESTE (o el "+
+			"nombre con el que se presente explícitamente). NUNCA deduzcas su nombre de otras "+
+			"palabras del mensaje: lo que escribe suele ser el pedido, un lugar o para quién es, no "+
+			"cómo se llama.", nombre)
+	} else if perfil, ok := a.store.GetProfile(from); ok && strings.TrimSpace(perfil.PerfilWhatsApp) != "" {
+		// El perfil dice algo que no es un nombre ("@sd2", "😀"...): no se usa ni para saludar.
+		fmt.Fprintf(&b, "\n\nNOMBRE DEL CLIENTE: no lo sabemos (su perfil de WhatsApp dice %q, que no es "+
+			"un nombre: NO lo uses ni lo repitas). Salúdalo sin nombre. Al registrar el pedido el "+
+			"sistema te pedirá preguntárselo.", perfil.PerfilWhatsApp)
 	}
 
 	// Si ya conocemos al cliente (pidió antes), inyectamos sus datos para que el bot NO se
@@ -42,9 +46,12 @@ func (a *Agent) construirSistema(from string) (fijo, volatil string) {
 			"directamente al registrar el pedido):\n- Cédula/identificación: %s\n- Nombres: %s\n- Correo: %s\n"+
 			"Salúdalo por su nombre. Para un nuevo pedido solo necesitas: color/marca, cantidad y su ubicación de WhatsApp.",
 			perfil.Identificacion, perfil.Nombres, perfil.Correo)
+	}
 
-		// Si tiene un pedido anterior, ofrécele repetir lo mismo: es más amigable que
-		// preguntarle todo desde cero.
+	// Si tiene un pedido anterior, ofrécele repetir lo mismo: es más amigable que preguntarle todo
+	// desde cero. FUERA del bloque de la cédula (04/10): desde que el bot registra sin cédula, los
+	// clientes nuevos no la tienen, y quedaban sin esta oferta aunque ya nos hubieran comprado.
+	{
 		if last, ok := a.store.GetLastOrder(from); ok && last.Cantidad > 0 {
 			// Sin el destino: de eso habla el bloque de abajo, y repetirlo confunde al modelo.
 			resumen := describeItems(last.ItemsDelPedido())
@@ -163,13 +170,8 @@ func (a *Agent) construirSistema(from string) (fijo, volatil string) {
 	// Fecha y hora de Ecuador. Sin la fecha el modelo inventa el día y agenda mal (09/09: dijo
 	// "hoy es sábado" un miércoles). Va en la parte volátil: cambia cada mensaje.
 	ahora := time.Now().In(zonaEcuador)
-	// El horario sale del BACKEND (la tabla del panel, la misma que lee la app móvil), no del
-	// .env: si el negocio amplía a las 22:00, el modelo lo dice sin que haya que redesplegar el
-	// bot. Ver horarioatencion.go.
-	desdeHoy, hastaHoy := a.horarioDeHoy(ahora)
-	fmt.Fprintf(&b, "\n\nHOY ES: %s. HORA ACTUAL: %s (Ecuador). HORARIO DE ENTREGAS: %s de %s a %s.",
-		fechaEnEspanol(ahora), ahora.Format("15:04"), a.textoDiasLaborables(),
-		desdeHoy, hastaHoy)
+	fmt.Fprintf(&b, "\n\nHOY ES: %s. HORA ACTUAL: %s (Ecuador). HORARIO DE ENTREGAS: %s.",
+		fechaEnEspanol(ahora), ahora.Format("15:04"), a.textoHorario())
 	// El dia no laborable se avisa APARTE de la hora: son dos motivos distintos y al cliente hay
 	// que decirle el suyo. Un domingo, "a esta hora no hay repartidores" es falso -no es la hora,
 	// es el dia- y le hace pensar que mas tarde si habra.
@@ -177,17 +179,19 @@ func (a *Agent) construirSistema(from string) (fijo, volatil string) {
 		fmt.Fprintf(&b, " HOY NO SE TRABAJA: solo atendemos %s. NO llames a registrar_pedido. "+
 			"Dile con amabilidad que hoy no hay servicio, DILE QUE DÍAS Y EN QUÉ HORARIO "+
 			"atendemos, y PREGÚNTALE si quiere agendar su pedido para otro día. Si acepta, "+
-			"pídele color, cantidad, su ubicación de WhatsApp, cédula y nombre (si es cliente "+
-			"nuevo) y que ESCRIBA el día y la hora que prefiera dentro de ese horario; luego "+
+			"pídele color, cantidad y su ubicación de WhatsApp (NO pidas cédula) y que ESCRIBA "+
+			"el día y la hora que prefiera dentro de ese horario; luego "+
 			"llama a programar_entrega. NO le ofrezcas días ni horas como opciones ni uses "+
 			"mostrar_menu para eso.", a.textoDiasLaborables())
 	} else if !a.dentroDeHorario(ahora) {
 		b.WriteString(" ESTAMOS FUERA DE HORARIO: a esta hora NO hay conductores disponibles, así que NO llames " +
 			"a registrar_pedido. Explícaselo con amabilidad y ofrécele PROGRAMAR la entrega con la herramienta " +
-			"programar_entrega: pide color, cantidad, su ubicación de WhatsApp, cédula y nombre (si es cliente " +
-			"nuevo) y la hora deseada. Para la hora, DILE EL HORARIO DE ATENCIÓN y deja que el cliente escriba " +
+			"programar_entrega: pide color, cantidad, su ubicación de WhatsApp (NO pidas cédula) y la hora " +
+			"deseada. Para la hora, DILE EL HORARIO DE ATENCIÓN y deja que el cliente escriba " +
 			"la que prefiera (dentro de ese horario y de las próximas 24 horas): NO le ofrezcas horas como " +
-			"opciones ni uses mostrar_menu para eso.")
+			"opciones ni uses mostrar_menu para eso. Si el saludo de bienvenida del historial YA le dijo que " +
+			"no estamos atendiendo y que le agendamos el pedido, NO se lo vuelvas a explicar: sigue directo con lo que falta. " +
+			"NUNCA digas que ya quedó agendado hasta que programar_entrega responda bien.")
 	} else {
 		// Decirlo EN POSITIVO es necesario: si solo se avisa cuando estamos fuera, el modelo ve
 		// la hora cerca del cierre y deduce solo que "la jornada terminó". Paso en produccion el
@@ -224,13 +228,14 @@ func (a *Agent) loQueFalta(from string, p conversation.PedidoEnCurso) string {
 	if len(lineas) == 0 {
 		falta = append(falta, "color/marca del cilindro")
 	}
-	for _, l := range lineas {
-		if l.Cantidad < 1 {
-			if len(lineas) == 1 {
-				falta = append(falta, "cantidad")
-			} else {
-				falta = append(falta, "cantidad de cilindros "+l.Color)
-			}
+	// Con varios colores se nombra SOLO la primera línea sin cantidad: es la que llena el "2" que
+	// conteste el cliente (cantidadSuelta). Si el modelo pregunta por otra, el número cae donde
+	// no es (Alicia, 08/10).
+	if l, falta1 := p.PrimeraSinCantidad(); falta1 {
+		if len(lineas) == 1 {
+			falta = append(falta, "cantidad")
+		} else {
+			falta = append(falta, "cantidad de cilindros "+l.Color+" (pregunta SOLO por ese color ahora)")
 		}
 	}
 	if _, hayUbicacion := a.store.GetLocation(from); !hayUbicacion {

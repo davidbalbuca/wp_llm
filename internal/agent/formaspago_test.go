@@ -68,3 +68,20 @@ func TestSinFormasDePagoNoSaleLinea(t *testing.T) {
 		t.Errorf("sin datos de pago no debe salir la línea:\n%s", info)
 	}
 }
+
+// DeUna, transferencia y JEP Fast se le pagan AL REPARTIDOR, a su QR o cuenta (dueño, 12/10). El
+// bot tiene que poder decirlo, y no tiene números de cuenta que dar.
+func TestPagoDigitalAlRepartidorSinDatosBancarios(t *testing.T) {
+	ctx := &catalog.Context{
+		Products: []georoutes.Product{{Nombre: "GAS 15KG"}},
+		Payments: []georoutes.Payment{{ID: 1, Nombre: "Efectivo"}, {ID: 2, Nombre: "DeUna"},
+			{ID: 3, Nombre: "Transferencia"}, {ID: 4, Nombre: "JEP Fast"}},
+	}
+	info := renderServiceInfo(ctx, true)
+	for _, debe := range []string{"Efectivo, DeUna, Transferencia, JEP Fast", "AL REPARTIDOR", "QR",
+		"NUNCA des números de cuenta"} {
+		if !strings.Contains(info, debe) {
+			t.Errorf("falta %q en las formas de pago:\n%s", debe, info)
+		}
+	}
+}

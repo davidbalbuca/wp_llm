@@ -293,3 +293,40 @@ func TestElMensajeNoDisponibleNoDejaAlClienteSinSalida(t *testing.T) {
 		t.Errorf("sin alternativas se pierde el aviso del operador: %s", solo)
 	}
 }
+
+// CASO 04/10 (simulador): el cliente pidió azul por blanco (no configurado) y el bot contestó con
+// el cambio que SÍ existe ("te lo podemos cambiar por naranja"). Eso es verdad y no se toca: antes
+// el candado lo leía como azul->blanco, tapaba la respuesta y abría un ticket de más.
+func TestOfrecerElCambioQueSiExisteNoSeTapa(t *testing.T) {
+	const from = "593980787220"
+	store := conversation.NewMemStore()
+	original := "Ese cambio no lo hacemos 🙏 pero tu azul sí te lo podemos cambiar por un naranja, al mismo precio 😊"
+	fake := &modeloQueDice{respuestas: []string{original}}
+	ag := agentIncidente(fake, store)
+	ag.catalog = catalogoConEquivalencias()
+
+	res, err := ag.HandleMessage(context.Background(), from, "tengo azul y quiero blanco, se puede?")
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if res.Texto != original {
+		t.Errorf("el candado tapó una respuesta verdadera: %q", res.Texto)
+	}
+	if len(store.ListTickets(conversation.TicketAbierto, 10)) > 0 {
+		t.Error("se abrió un ticket por una respuesta correcta")
+	}
+}
+
+// Y si la respuesta promete un cambio que NO existe, el candado sigue actuando.
+func TestPrometerPorUnColorNoConfiguradoSigueTapado(t *testing.T) {
+	const from = "593980787221"
+	store := conversation.NewMemStore()
+	fake := &modeloQueDice{respuestas: []string{"¡Claro! Te los cambiamos por blanco sin problema 😊"}}
+	ag := agentIncidente(fake, store)
+	ag.catalog = catalogoConEquivalencias()
+
+	res, _ := ag.HandleMessage(context.Background(), from, "tengo azul y quiero blanco, se puede?")
+	if strings.Contains(strings.ToLower(res.Texto), "sin problema") {
+		t.Errorf("el candado dejó pasar azul->blanco, que no está configurado: %q", res.Texto)
+	}
+}

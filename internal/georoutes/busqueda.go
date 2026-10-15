@@ -38,8 +38,12 @@ type BusquedaResult struct {
 	// tiene ningún plazo escrito.
 	EsperaSegundos int `json:"espera_segundos"`
 	// Pedido llega SOLO con estado ASIGNADO, con la misma forma que el pedido normal.
-	Pedido  *OrderResult `json:"pedido"`
-	Mensaje string       `json:"mensaje"`
+	Pedido *OrderResult `json:"pedido"`
+	// AlternativaRespaldo llega con SIN_CONDUCTOR cuando el repartidor de respaldo (el camión de
+	// Ubi) no lleva el color pedido pero sí uno equivalente: se le ofrece al cliente ANTES de
+	// preguntarle si espera (dueño, 12/10). nil si no aplica.
+	AlternativaRespaldo *AlternativaRespaldo `json:"alternativa_respaldo"`
+	Mensaje             string               `json:"mensaje"`
 }
 
 // Terminada indica que ya no hay nada que esperar.
@@ -107,6 +111,20 @@ func (c *Client) DecisionBusqueda(jwt string, idbusqueda int, esperar bool) (*Bu
 		"idbusqueda": idbusqueda,
 		"esperar":    esperar,
 	}, jwt)
+}
+
+// AlternativaRespaldo es el color equivalente que lleva el repartidor de respaldo.
+type AlternativaRespaldo struct {
+	IDColor   int    `json:"idcolor"`
+	Color     string `json:"color"`
+	Minutos   int    `json:"minutos"`
+	Conductor string `json:"conductor"`
+}
+
+// RespaldoCambioColor: el cliente aceptó el color equivalente; el backend cambia el color de la
+// búsqueda y se la asigna al repartidor de respaldo. Endpoint: POST /respaldoCambioColor/.
+func (c *Client) RespaldoCambioColor(jwt string, idbusqueda, idcolor int) (*BusquedaResult, error) {
+	return c.busqueda("/respaldoCambioColor/", map[string]any{"idbusqueda": idbusqueda, "idcolor": idcolor}, jwt)
 }
 
 // CancelarBusqueda corta la búsqueda: fue decisión del cliente, así que NO queda en no asignados.

@@ -15,11 +15,12 @@ type memStore struct {
 	chatLeido          map[string]int64
 	direccionTexto     map[string]string
 	esperandoDireccion map[string][]ItemPedido
-	seguimiento        map[string]string // enlace de seguimiento del pedido ACTIVO
-	fueraCobertura     map[string]bool   // su ubicación se verificó y cayó fuera de zona
-	sectorCubierto     map[string]string // sector que devolvió la geocerca cuando SÍ hay cobertura
-	bienvenidaPend     map[string]string // presentación por entregar DENTRO del 1er mensaje
-	yaSePresento       map[string]bool   // el código se presentó en este turno (candado del saludo)
+	seguimiento        map[string]string    // enlace de seguimiento del pedido ACTIVO
+	fueraCobertura     map[string]bool      // su ubicación se verificó y cayó fuera de zona
+	sectorCubierto     map[string]string    // sector que devolvió la geocerca cuando SÍ hay cobertura
+	bienvenidaPend     map[string]string    // presentación por entregar DENTRO del 1er mensaje
+	invitacionApp      map[string]time.Time // última invitación a descargar la app
+	yaSePresento       map[string]bool      // el código se presentó en este turno (candado del saludo)
 	data               map[string][]*genai.Content
 	locations          map[string]Location
 	accounts           map[string]Account
@@ -741,6 +742,9 @@ func (s *memStore) SetPedidoEnCurso(phone string, p PedidoEnCurso) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p.UpdatedAt = time.Now()
+	// Copia de las líneas, como hace SQLite al serializar: si no, quien guardó y el store comparten
+	// el slice y un cambio posterior "se guarda solo" en memoria pero no en producción (08/10).
+	p.Items = append([]ItemPedido(nil), p.Items...)
 	s.pedidoEnCurso[phone] = p
 }
 
@@ -754,6 +758,7 @@ func (s *memStore) GetPedidoEnCurso(phone string) (PedidoEnCurso, bool) {
 		delete(s.pedidoEnCurso, phone)
 		return PedidoEnCurso{}, false
 	}
+	p.Items = append([]ItemPedido(nil), p.Items...)
 	return p, ok
 }
 
@@ -987,6 +992,18 @@ func (s *memStore) GetPendingWait(phone string) (PendingWait, bool) {
 	return w, ok
 }
 
+// PendingWaits en memoria devuelve todas: este store no sobrevive a un reinicio, así que no hay
+// esperas viejas que filtrar.
+func (s *memStore) PendingWaits(_ time.Duration) map[string]PendingWait {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]PendingWait, len(s.pendingWait))
+	for k, v := range s.pendingWait {
+		out[k] = v
+	}
+	return out
+}
+
 func (s *memStore) ClearPendingWait(phone string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1001,4 +1018,20 @@ func (s *memStore) MarcarAvisoSondeo(phone string, ventana time.Duration) bool {
 	}
 	s.tgSondeo[phone] = time.Now()
 	return true
+}
+
+func (s *memStore) MarcarInvitacionApp(phone string, cuando time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.invitacionApp == nil {
+		s.invitacionApp = map[string]time.Time{}
+	}
+	s.invitacionApp[phone] = cuando
+}
+
+func (s *memStore) UltimaInvitacionApp(phone string) (time.Time, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.invitacionApp[phone]
+	return t, ok
 }

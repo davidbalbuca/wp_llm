@@ -40,7 +40,7 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	if a.dentroDeHorario(time.Now().In(zonaEcuador)) && strings.TrimSpace(str(args["hora"])) == "" &&
 		!esperandoConductor {
 		desde, hasta := a.horarioDeHoy(time.Now().In(zonaEcuador))
-		return "ESTAMOS DENTRO DEL HORARIO (" + desde + " a " + hasta + "): " +
+		return "ESTAMOS DENTRO DEL HORARIO (hoy de " + desde + " a " + hasta + "): " +
 			"no se programa nada porque el servicio está ACTIVO ahora. Usa registrar_pedido para tomar el " +
 			"pedido de una vez. Solo programa si el cliente pidió EXPRESAMENTE otra hora."
 	}
@@ -55,17 +55,19 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	}
 
 	identificacion := strings.TrimSpace(str(args["identificacion"]))
-	nombres := strings.TrimSpace(str(args["nombres"]))
+	nombres := conversation.NombreSiSirve(str(args["nombres"]))
 	if perfil, ok := a.store.GetProfile(from); ok {
 		if identificacion == "" {
 			identificacion = perfil.Identificacion
 		}
-		if nombres == "" {
-			nombres = perfil.Nombres
-		}
 	}
-	if identificacion == "" || nombres == "" {
-		return "Para programar necesito la cédula y el nombre completo del cliente. Pídeselos."
+	// Cédula opcional (04/10). El nombre: el que dio, o el de su WhatsApp si sirve como nombre.
+	// Igual que en registrar_pedido.
+	if nombres == "" {
+		nombres = conversation.NombreUsable(a.store, from)
+	}
+	if nombres == "" {
+		return instruccionPedirNombre("NO se agendó todavía")
 	}
 
 	// COMPUERTA de protección de datos, igual que en registrar_pedido: agendar también guarda los
@@ -92,7 +94,6 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	//   3) si el modelo no pasó nada usable, se busca la hora que el CLIENTE ya escribió.
 	// Programar es un COMPROMISO, así que la hora tiene que venir del cliente: por eso el paso 3
 	// mira el message_log (lo que de verdad se recibió), no algo inventado por el modelo.
-	desdeTexto, hastaTexto := a.horarioDeHoy(time.Now().In(zonaEcuador))
 	horaTxt := strings.TrimSpace(str(args["hora"]))
 	mins := parseHoraHHMM(horaTxt)
 	if mins < 0 {
@@ -107,25 +108,36 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 	}
 	if mins < 0 {
 		return fmt.Sprintf("El cliente aún no ha dicho a qué hora quiere su entrega (no inventes una tú). "+
-			"Pregúntale si desea PROGRAMAR y dile que atendemos de %s a %s; apenas te diga una hora, "+
-			"agéndala sin volver a preguntar.", desdeTexto, hastaTexto)
+			"Pregúntale si desea PROGRAMAR y dile que atendemos %s; apenas te diga una hora, "+
+			"agéndala sin volver a preguntar.", a.textoHorario())
 	}
-	ini, fin := a.minutosDeHoy(time.Now().In(zonaEcuador))
+	ahora := time.Now().In(zonaEcuador)
+	dia := strings.ToLower(strings.TrimSpace(str(args["dia"])))
+	esManana := dia == "manana" || dia == "mañana"
+	// La hora de cierre es la del día de la ENTREGA: un domingo a las 19:30 se puede agendar para
+	// el lunes a las 20:00 aunque el domingo cierre a las 19:00.
+	diaEntrega := ahora
+	if esManana {
+		diaEntrega = ahora.Add(24 * time.Hour)
+	}
+	// Con el horario del BACKEND para ese día (14/10, Juan): si el panel cambia el domingo, esto
+	// lo sigue sin tocar el bot.
+	ini, fin := a.minutosDeHoy(diaEntrega)
+	desdeEntrega, finEntrega := minutosAHora(ini), minutosAHora(fin)
 	// Horario de entregas CERRADO en ambos extremos [ini, fin]: la hora de cierre es válida para
 	// AGENDAR. Antes era `mins >= fin` (exclusivo), así que "7 de la noche" == 19:00 == la hora de
 	// cierre que el bot anuncia ("atendemos de 07:00 a 19:00, apenas me digas una hora la agendo")
 	// se rechazaba por "fuera de horario": ofrecer un límite y negarlo al tomarlo (C6, 30-sep). El
 	// gate de pedidos INMEDIATOS (dentroDeHorario, `mins < fin`) sigue siendo exclusivo a propósito:
 	// mira la hora ACTUAL, y a las 19:00 en punto ya no hay margen para despachar ahora.
-	if mins < ini || mins > fin {
-		return fmt.Sprintf("Esa hora está fuera del horario de entregas (%s a %s). Pídele al cliente una hora "+
-			"dentro del horario.", desdeTexto, hastaTexto)
+	// Horas desconocidas (respaldo ilegible, ver minutosDeHoy): no se rechaza la hora del cliente.
+	if ini >= 0 && fin >= 0 && (mins < ini || mins > fin) {
+		return fmt.Sprintf("Esa hora está fuera del horario de entregas de ese día (%s a %s). Pídele al "+
+			"cliente una hora dentro del horario.", desdeEntrega, finEntrega)
 	}
 
-	ahora := time.Now().In(zonaEcuador)
 	target := time.Date(ahora.Year(), ahora.Month(), ahora.Day(), mins/60, mins%60, 0, 0, zonaEcuador)
-	dia := strings.ToLower(strings.TrimSpace(str(args["dia"])))
-	if dia == "manana" || dia == "mañana" {
+	if esManana {
 		target = target.Add(24 * time.Hour)
 	} else if !target.After(ahora) {
 		// Esa hora YA PASO hoy. Antes se saltaba a mañana en silencio, y asi un cliente que
@@ -157,7 +169,13 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 		return "No hay una forma de pago configurada en el sistema. Pídele al cliente que intente más tarde."
 	}
 
-	a.store.SetProfile(from, conversation.Profile{Identificacion: identificacion, Nombres: nombres})
+	// Se actualiza el perfil SIN perder lo que ya tenía (el nombre de su perfil de WhatsApp, por ejemplo).
+	perfilActual, _ := a.store.GetProfile(from)
+	if identificacion != "" {
+		perfilActual.Identificacion = identificacion
+	}
+	perfilActual.Nombres = nombres
+	a.store.SetProfile(from, perfilActual)
 
 	// El cliente se registra AL AGENDAR, no solo al confirmar. Antes sus datos vivian unicamente
 	// en la base del bot hasta que confirmara: si algo fallaba en el camino (paso el 27/08 con
@@ -251,6 +269,33 @@ func (a *Agent) dentroDeHorario(t time.Time) bool {
 	return mins >= f.desde && mins < f.hasta
 }
 
+// finDelDia es la hora de cierre ("HH:MM") del día de `t`, del horario del BACKEND (con el .env
+// de respaldo): el domingo puede cerrar antes que el resto. "" si ese día no hay horas conocidas.
+func (a *Agent) finDelDia(t time.Time) string {
+	_, hasta := a.horarioDeHoy(t)
+	return hasta
+}
+
+// rangoDeLaSemana es la apertura más temprana y el cierre más tarde de los días que se atiende,
+// en minutos; (-1, -1) si no se conocen. Para validar una hora que puede ser de otro día.
+func (a *Agent) rangoDeLaSemana() (int, int) {
+	ini, fin := -1, -1
+	ahora := time.Now().In(zonaEcuador)
+	for d := 0; d < 7; d++ {
+		f, _ := a.horarioDelDia(ahora.AddDate(0, 0, d))
+		if !f.abierto || f.desde < 0 || f.hasta < 0 {
+			continue
+		}
+		if ini < 0 || f.desde < ini {
+			ini = f.desde
+		}
+		if f.hasta > fin {
+			fin = f.hasta
+		}
+	}
+	return ini, fin
+}
+
 // diasEnEspanol traduce los numeros ISO de dia a su nombre, para poder decirselo al cliente.
 var diasEnEspanol = map[int]string{1: "lunes", 2: "martes", 3: "miércoles", 4: "jueves",
 	5: "viernes", 6: "sábado", 7: "domingo"}
@@ -315,7 +360,11 @@ func (a *Agent) textoDiasLaborables() string {
 
 // textoDiasLaborablesDelEnv es la version de respaldo, sobre BOT_DIAS_LABORABLES.
 func (a *Agent) textoDiasLaborablesDelEnv() string {
-	dias := a.diasLaborablesDelEnv()
+	return textoDeDias(a.diasLaborablesDelEnv())
+}
+
+// textoDeDias arma el texto de un conjunto de días ISO: "lunes a sábado" o la lista.
+func textoDeDias(dias map[int]bool) string {
 	var nombres []string
 	for i := 1; i <= 7; i++ {
 		if dias[i] {
@@ -344,6 +393,58 @@ func (a *Agent) textoDiasLaborablesDelEnv() string {
 		return diasEnEspanol[primero] + " a " + diasEnEspanol[ultimo]
 	}
 	return strings.Join(nombres, ", ")
+}
+
+// cierreMasTarde es la hora de cierre más tardía de la semana ("HH:MM"), del backend.
+func (a *Agent) cierreMasTarde() string {
+	if _, fin := a.rangoDeLaSemana(); fin >= 0 {
+		return minutosAHora(fin)
+	}
+	return a.cfg.BotHorarioFin
+}
+
+// textoHorario es el horario completo para decírselo al cliente: "lunes a domingo de 07:00 a
+// 20:30", o, si algún día tiene otro horario, "lunes a sábado de 07:00 a 20:30 y domingo de 07:00
+// a 19:00". Sale del horario del BACKEND, día por día (con el .env de respaldo).
+func (a *Agent) textoHorario() string {
+	ahora := time.Now().In(zonaEcuador)
+	lunes := ahora.AddDate(0, 0, -((int(ahora.Weekday()) + 6) % 7))
+	// Los días que se atiende, agrupados por su horario, en el orden de la semana.
+	var horarios []string
+	porHorario := map[string]map[int]bool{}
+	for i := 0; i < 7; i++ {
+		f, _ := a.horarioDelDia(lunes.AddDate(0, 0, i))
+		if !f.abierto {
+			continue
+		}
+		clave := ""
+		if f.desde >= 0 && f.hasta >= 0 {
+			clave = " de " + minutosAHora(f.desde) + " a " + minutosAHora(f.hasta)
+		}
+		if porHorario[clave] == nil {
+			porHorario[clave] = map[int]bool{}
+			horarios = append(horarios, clave)
+		}
+		porHorario[clave][i+1] = true
+	}
+	var partes []string
+	for _, h := range horarios {
+		partes = append(partes, textoDeDias(porHorario[h])+h)
+	}
+	if len(partes) == 0 {
+		desde, hasta := a.horarioDeHoy(ahora)
+		return "de " + desde + " a " + hasta
+	}
+	return strings.Join(partes, " y ")
+}
+
+func contiene(lista []string, x string) bool {
+	for _, v := range lista {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 // horaPedidaPorCliente busca en lo que el cliente escribió una hora del horario laboral y la

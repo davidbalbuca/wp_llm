@@ -123,3 +123,28 @@ func TestConUbicacionVerificadaElSiPasaIntacto(t *testing.T) {
 		t.Errorf("con ubicación ya verificada el sí debe pasar intacto:\n  entrada: %q\n  salida:  %q", reply, got)
 	}
 }
+
+// CASO 14/10 (593999614191, Pedro): preguntó "¿Lunes a sábados?" y el modelo contestó con el
+// horario ("Sí, atendemos de lunes a sábado..."); el candado tomó el "sí atendemos" por una promesa
+// de cobertura y le mandó la lista de parroquias. Hablar del horario no es prometer cobertura.
+func TestHablarDelHorarioNoEsPrometerCobertura(t *testing.T) {
+	ag, from := clienteQueSoloPregunto(t)
+	for _, reply := range []string{
+		"¡Sí, atendemos de lunes a sábado de 7 am a 8:30 pm! 😊",
+		"Sí atendemos todos los días, el domingo hasta las 7 pm.",
+		"Sí, atendemos hasta las 20:30 h 🙌",
+	} {
+		if got := ag.revisarCoberturaAfirmada(from, reply); got != reply {
+			t.Errorf("se tocó una respuesta de horario:\n  %q\n→ %q", reply, got)
+		}
+	}
+	// Pero si nombra un lugar, el candado sigue: el horario no lo vuelve una respuesta segura.
+	for _, reply := range []string{
+		"Sí, atendemos en tu zona de lunes a sábado 😊",
+		"Sí llegamos hasta allá de 7 am a 8 pm",
+	} {
+		if got := ag.revisarCoberturaAfirmada(from, reply); got == reply {
+			t.Errorf("una promesa de cobertura con horario debía corregirse: %q", reply)
+		}
+	}
+}

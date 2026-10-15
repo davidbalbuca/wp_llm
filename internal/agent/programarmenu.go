@@ -63,9 +63,8 @@ func (a *Agent) ResponderHoraProgramada(from, texto string) (string, bool) {
 	if normalizarRespuesta(texto) == normalizarRespuesta(BotonOtraHora) {
 		a.store.ClearEligiendoHora(from)
 		log.Printf("[programar-menu] %s pidió otra hora; se le pide escrita", from)
-		desde, hasta := a.horarioDeHoy(time.Now().In(zonaEcuador))
-		respuesta := "¡Sin problema! Atendemos de " + desde + " a " +
-			hasta + " ⏰ Dime a qué hora te viene bien y te la agendo 😊"
+		respuesta := "¡Sin problema! Atendemos " + a.textoHorario() +
+			" ⏰ Dime a qué hora te viene bien y te la agendo 😊"
 		a.store.AppendUser(from, texto)
 		a.store.AppendModel(from, respuesta)
 		return respuesta, true

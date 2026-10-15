@@ -18,7 +18,7 @@ func (a *Agent) limpiarSaludoDelCuerpoDeMenu(from, cuerpo string) string {
 	if !a.yaSePresentoElCodigo(from) {
 		return cuerpo // el código no se presentó: el modelo PUEDE saludar
 	}
-	limpio := quitarSaludoDuplicado(cuerpo)
+	limpio := quitarSaludoDuplicado(cuerpo, a.nombresDelCliente(from)...)
 	if limpio == cuerpo {
 		return cuerpo // el modelo no saludó en el cuerpo: perfecto
 	}

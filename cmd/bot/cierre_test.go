@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -139,5 +140,109 @@ func TestNoSeDespideDeQuienApenasSaludo(t *testing.T) {
 	}
 	if mereceCierre(store, chat, time.Now(), 7*minutos, 60*minutos) {
 		t.Fatal("escribió 'hola' y se fue: despedirse de eso no tiene sentido")
+	}
+}
+
+// ── DOS PASOS (06/10): recordatorio según dónde se quedó y, si no contesta, la despedida ──
+
+func TestQueLeFaltaSegunLaUltimaPregunta(t *testing.T) {
+	casos := map[string]string{
+		"📋 Cuéntame, ¿de qué color es tu cilindro? 👇 Así te busco a quien lo tenga más cerca [BLANCO / AMARILLO / NARANJA / AZUL]": faltaColor,
+		"📋 ¡Perfecto! ¿Cuántos cilindros de 15kg Azul necesitas? [1 / 2 / 3 / Más de 3]":                                           faltaCantidad,
+		"¡Listo, 2 cilindros blancos! 🙌 ¿Me ayudas con tu ubicación? Así el repartidor más cercano llega directo a tu casa 😊":      faltaUbicacion,
+		"¿Me ayudas con tu nombre para que el repartidor te pueda ubicar en la entrega?":                                           faltaNombre,
+		"Atendemos de 07:00 a 20:30 ¿A qué hora te gustaría que te llevemos tus 2 cilindros amarillos mañana? 😊":                   faltaHora,
+		"¡Hola! ¿En qué te ayudo?": faltaOtra,
+	}
+	for texto, want := range casos {
+		if got := queLeFalta(texto); got != want {
+			t.Errorf("queLeFalta(%q) = %s; quería %s", texto, got, want)
+		}
+	}
+}
+
+func TestElRecordatorioDiceLoQueFalta(t *testing.T) {
+	if got, want := textoRecordatorio("Ana", faltaUbicacion, ""),
+		"¿Sigues por ahí, Ana? 😊 Solo me falta tu ubicación para buscarte al repartidor más cercano. "+
+			"Cuando puedas, tocas el 📎 → *Ubicación* y listo."; got != want {
+		t.Errorf("ubicación\ngot  %q\nwant %q", got, want)
+	}
+	if got := textoRecordatorio("", faltaCantidad, "AMARILLO"); got != "¿Sigues por ahí? 😊 ¿Cuántos cilindros de amarillo te mando? Con el número me basta." {
+		t.Errorf("cantidad: %q", got)
+	}
+	if got := textoRecordatorio("Ana", faltaColor, ""); !strings.Contains(got, "de qué color es tu cilindro") {
+		t.Errorf("color: %q", got)
+	}
+}
+
+func TestLaDespedidaNoEsUnaPresentacion(t *testing.T) {
+	got := textoDespedida("Ana")
+	if got != "Te dejo por ahora, Ana 😊 Cuando necesites tu gas, escríbeme nomás: ¡*UbiGas* está aquísito no más! 🔥🚚" {
+		t.Errorf("despedida: %q", got)
+	}
+	// La marca del saludo (saludounico.go) no puede estar: haría creer que el bot ya se presentó.
+	if strings.Contains(got, "*UbiGas*, tu repartidor aquísito") {
+		t.Errorf("la despedida no puede llevar la marca de la presentación: %q", got)
+	}
+}
+
+func TestAlQueVinoDelAnuncioYNoEligioColorSeLeRecuerda(t *testing.T) {
+	// "Deseo pedir GAS 😄" -> saludo -> menú de colores -> silencio. Tres mensajes.
+	store := conversation.NewMemStore()
+	const tel = "593984000099"
+	store.LogMessage(tel, "user", "Deseo pedir GAS 😄")
+	store.LogMessage(tel, "system", "¡Buenos días! 👋 ¿Se te acabó el gas? …")
+	menu := "📋 Cuéntame, ¿de qué color es tu cilindro? 👇 [BLANCO / AMARILLO / NARANJA / AZUL]"
+	store.LogMessage(tel, "model", menu)
+	chat := conversation.ConversationSummary{Phone: tel, Mode: conversation.ChatModeBot, LastMessage: menu,
+		LastRole: "model", LastAt: time.Now().Add(-8 * minutos).Unix()}
+	if !mereceCierre(store, chat, time.Now(), 7*minutos, 60*minutos) {
+		t.Fatal("se quedó en el color: le toca el recordatorio")
+	}
+}
+
+func TestDespuesDelRecordatorioLaDespedidaYNadaMas(t *testing.T) {
+	store := conversation.NewMemStore()
+	chat := chatDe(store, "593984187615", 8*minutos)
+	recordatorio := textoRecordatorio("Ana", faltaUbicacion, "")
+	store.LogMessage(chat.Phone, "system", recordatorio)
+	chat.LastMessage, chat.LastRole = recordatorio, "system"
+
+	chat.LastAt = time.Now().Add(-5 * minutos).Unix()
+	if mereceDespedida(store, chat, time.Now(), 15*minutos, 60*minutos) {
+		t.Error("todavía no: hay que darle tiempo de contestar el recordatorio")
+	}
+	if mereceCierre(store, chat, time.Now(), 7*minutos, 60*minutos) {
+		t.Error("no se manda un segundo recordatorio")
+	}
+	chat.LastAt = time.Now().Add(-16 * minutos).Unix()
+	if !mereceDespedida(store, chat, time.Now(), 15*minutos, 60*minutos) {
+		t.Error("no contestó el recordatorio: ahora sí la despedida")
+	}
+
+	// Y después de la despedida, silencio.
+	despedida := textoDespedida("Ana")
+	store.LogMessage(chat.Phone, "system", despedida)
+	chat.LastMessage = despedida
+	chat.LastAt = time.Now().Add(-20 * minutos).Unix()
+	if mereceDespedida(store, chat, time.Now(), 15*minutos, 60*minutos) || mereceCierre(store, chat, time.Now(), 7*minutos, 60*minutos) {
+		t.Error("ya se despidió: no se le escribe más")
+	}
+}
+
+func TestSiContestaElRecordatorioNoHayDespedida(t *testing.T) {
+	store := conversation.NewMemStore()
+	chat := chatDe(store, "593984187615", 20*minutos)
+	chat.LastMessage, chat.LastRole = "📍 ubicación: -2.9, -79.0", "user"
+	if mereceDespedida(store, chat, time.Now(), 15*minutos, 60*minutos) {
+		t.Error("contestó: se sigue con su pedido, no se despide")
+	}
+}
+
+func TestPrimerNombreBonito(t *testing.T) {
+	for in, want := range map[string]string{"MARÍA JOSÉ PEREZ": "María", "ana": "Ana", "": ""} {
+		if got := primerNombreBonito(in); got != want {
+			t.Errorf("primerNombreBonito(%q) = %q; quería %q", in, got, want)
+		}
 	}
 }

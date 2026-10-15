@@ -3,6 +3,7 @@ package agent
 import (
 	"log"
 	"strings"
+	"time"
 )
 
 // LA PELOTA NO SE QUEDA DEL LADO DEL BOT.
@@ -102,6 +103,11 @@ func soloInstruccion(t *turno, texto string) string {
 // entrega, no la conversación. Lo que cuenta es el tramo en que el cliente está armando el
 // pedido y todavía no existe nada en el backend — justo donde se cayó Doris.
 func (a *Agent) clienteEstaAMedioPedir(from string) bool {
+	// Con un pedido EN CURSO no está a medio pedir, aunque quede una ficha vieja (el caso de John,
+	// 06/10): ahí la conversación la llevan el repartidor y los avisos de entrega.
+	if _, vivo := a.store.GetActivePedido(from); vivo {
+		return false
+	}
 	if p, hay := a.store.GetPedidoEnCurso(from); hay && !p.Vacio() {
 		return true // eligió color y/o cantidad: está armando su pedido
 	}
@@ -130,6 +136,12 @@ func (a *Agent) clienteEstaAMedioPedir(from string) bool {
 //     Nadie espera nada, así que la conversación no quedó a medias.
 func devuelveElTurno(texto string) bool {
 	if strings.ContainsAny(texto, "?¿") {
+		return true
+	}
+	// "Compárteme tu ubicación por WhatsApp 📎" ya le pasa el turno al cliente aunque no lleve
+	// signo de pregunta. Sin esto se le pegaba "¿Me compartes tu ubicación 📎 para enviártelo?" y
+	// el cliente recibía la misma petición dos veces en un mensaje (visto en prod el 04/10).
+	if pideLaUbicacion(texto) {
 		return true
 	}
 	return esUnCierre(texto)
@@ -268,4 +280,21 @@ func (a *Agent) preguntaQueFalta(from string) string {
 		return "¿Me compartes tu ubicación 📎 para enviártelo?"
 	}
 	return "¿Seguimos con tu pedido? 😊"
+}
+
+// listoParaRegistrar dice si el cliente ya dio todo lo necesario para el pedido inmediato: color
+// y cantidad en la ficha, y una ubicación de ESTA conversación, en horario y sin otro pedido vivo.
+//
+// El caso (05/10 al 07/10, 7 conversaciones): el cliente manda su ubicación con todo lo demás ya
+// dicho; el modelo solo confirma la cobertura ("¡Buenas noticias! Sí llegamos a tu zona") sin
+// registrar, y el turno colgado le pegaba "¿Seguimos con tu pedido?". El cliente tenía que decir
+// "Si" para que recién se registrara, y si no contestaba, el pedido nunca existía.
+func (a *Agent) listoParaRegistrar(from string) bool {
+	if _, ok := a.inferirLineas(from); !ok {
+		return false
+	}
+	if !a.ubicacionEsDeAhora(from) || a.tienePedidoVivo(from) || a.clienteQuiereProgramar(from) {
+		return false
+	}
+	return a.dentroDeHorario(time.Now().In(zonaEcuador))
 }

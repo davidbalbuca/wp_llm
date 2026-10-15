@@ -35,7 +35,7 @@ func TestConElMenuPendienteLaCedulaSueltaNoRegistraNada(t *testing.T) {
 	const from = "593986140905"
 	esp := nuevoBackendEspia(t)
 	store := conversation.NewMemStore()
-	ag := agentDePrueba(nil, store)
+	ag := agenteConConsentimiento(nil, store)
 	ag.gr = georoutes.NewClient(esp.servidor.URL)
 	store.SetLocation(from, -2.829392, -78.985058)
 	// Se le mandó el menú y NO ha respondido: ni aceptó ni negó.
@@ -68,7 +68,7 @@ func TestConElMenuPendienteLaCedulaNoSeConsulta(t *testing.T) {
 	const from = "593999900020"
 	esp := nuevoBackendEspia(t)
 	store := conversation.NewMemStore()
-	ag := agentDePrueba(nil, store)
+	ag := agenteConConsentimiento(nil, store)
 	ag.gr = georoutes.NewClient(esp.servidor.URL)
 	store.SetConsentimientoPendiente(from)
 
@@ -88,7 +88,7 @@ func TestConElConsentimientoDadoElPedidoSiPasa(t *testing.T) {
 	const from = "593999900021"
 	esp := nuevoBackendEspia(t)
 	store := conversation.NewMemStore()
-	ag := agentDePrueba(nil, store)
+	ag := agenteConConsentimiento(nil, store)
 	ag.gr = georoutes.NewClient(esp.servidor.URL)
 	store.SetConsentimiento(from, conversation.Consentimiento{Acepta: true})
 
@@ -106,7 +106,7 @@ func TestSinMenuNiRespuestaElClienteDeSiempreNoSeBloquea(t *testing.T) {
 	const from = "593999900022"
 	esp := nuevoBackendEspia(t)
 	store := conversation.NewMemStore()
-	ag := agentDePrueba(nil, store)
+	ag := agenteConConsentimiento(nil, store)
 	ag.gr = georoutes.NewClient(esp.servidor.URL)
 	// Ni consentimiento registrado ni menú pendiente: nunca pasó por aquí.
 
@@ -123,7 +123,7 @@ func TestSinMenuNiRespuestaElClienteDeSiempreNoSeBloquea(t *testing.T) {
 func TestAQuienNoRespondioNoSeLeDiceQueSeNego(t *testing.T) {
 	const from = "593999900023"
 	store := conversation.NewMemStore()
-	ag := agentDePrueba(nil, store)
+	ag := agenteConConsentimiento(nil, store)
 	store.SetConsentimientoPendiente(from)
 
 	instruccion := ag.instruccionSinConsentimiento(from, "NO se registró el pedido")
@@ -141,7 +141,7 @@ func TestAQuienNoRespondioNoSeLeDiceQueSeNego(t *testing.T) {
 func TestAQuienSeNegoSeLeDiceQueSeNego(t *testing.T) {
 	const from = "593999900024"
 	store := conversation.NewMemStore()
-	ag := agentDePrueba(nil, store)
+	ag := agenteConConsentimiento(nil, store)
 	store.SetConsentimiento(from, conversation.Consentimiento{Acepta: false})
 
 	instruccion := ag.instruccionSinConsentimiento(from, "NO se registró el pedido")
@@ -185,7 +185,7 @@ func TestUnSiQueContestaOtraCosaNoEsConsentimiento(t *testing.T) {
 	for _, c := range casos {
 		t.Run(c.dijo, func(t *testing.T) {
 			store := conversation.NewMemStore()
-			ag := agentDePrueba(nil, store)
+			ag := agenteConConsentimiento(nil, store)
 			elBotDijoOtraCosaDespues(store, c.telefono, c.aQue)
 
 			_, manejado := ag.ResponderConsentimiento(c.telefono, c.dijo)
@@ -210,7 +210,7 @@ func TestUnSiQueContestaOtraCosaNoEsConsentimiento(t *testing.T) {
 func TestElSiQueContestaAlMenuSiVale(t *testing.T) {
 	const from = "593969027308"
 	store := conversation.NewMemStore()
-	ag := agentDePrueba(nil, store)
+	ag := agenteConConsentimiento(nil, store)
 	store.SetConsentimientoPendiente(from)
 	store.AppendModel(from, "En unos 30 a 45 minutos aproximadamente 😊\n\n"+
 		"Ahora sí, ¿aceptas nuestras políticas de protección de datos?")
@@ -235,7 +235,7 @@ func TestElSiQueContestaAlMenuSiVale(t *testing.T) {
 func TestElSiEscritoConElMenuDelanteNoDejaAlClienteAtrapado(t *testing.T) {
 	const from = "593999900050"
 	store := conversation.NewMemStore()
-	ag := agentDePrueba(nil, store)
+	ag := agenteConConsentimiento(nil, store)
 	menuFueLoUltimo(store, from)
 
 	if _, manejado := ag.ResponderConsentimiento(from, "si"); !manejado {
@@ -262,7 +262,7 @@ func TestElBotonLiteralValeAunqueElHiloSeHayaMovido(t *testing.T) {
 		t.Run(caso.toco, func(t *testing.T) {
 			const from = "593999900051"
 			store := conversation.NewMemStore()
-			ag := agentDePrueba(nil, store)
+			ag := agenteConConsentimiento(nil, store)
 			// El bot dijo otra cosa después del menú: el sí/no suelto ya no valdría.
 			elBotDijoOtraCosaDespues(store, from, "¡Tu pedido quedó registrado!")
 
@@ -289,7 +289,7 @@ func TestElBotonLiteralValeAunqueElHiloSeHayaMovido(t *testing.T) {
 func TestLaEsperaDelMenuCaduca(t *testing.T) {
 	const from = "593999900052"
 	store := conversation.NewMemStore()
-	ag := agentDePrueba(nil, store)
+	ag := agenteConConsentimiento(nil, store)
 	store.SetConsentimientoPendiente(from)
 
 	if !ag.consentimientoNiega(from) {
@@ -311,7 +311,7 @@ func TestLaEsperaDelMenuCaduca(t *testing.T) {
 func TestElCierreDeCicloLimpiaLaEsperaPeroNoLaRespuesta(t *testing.T) {
 	const from = "593999900053"
 	store := conversation.NewMemStore()
-	ag := agentDePrueba(nil, store)
+	ag := agenteConConsentimiento(nil, store)
 	store.SetConsentimientoPendiente(from)
 
 	ag.cerrarCicloDeConversacion(from, "prueba")
