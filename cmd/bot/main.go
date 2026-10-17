@@ -605,6 +605,37 @@ func main() {
 		writeJSON(w, res)
 	})
 
+	// Entrega AGENDADA a mano por un operador desde el chat (16/10): queda como las que agenda el
+	// bot y, a la hora, el mismo reloj le pide confirmar al cliente.
+	mux.HandleFunc("POST /internal/pedido-operador-agendar", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			Phone          string                         `json:"phone"`
+			Items          []conversation.PendingWaitItem `json:"items"`
+			IDTipoPago     int                            `json:"idtipopago"`
+			FechaHora      string                         `json:"fecha_hora"`
+			Operador       string                         `json:"operador"`
+			Identificacion string                         `json:"identificacion"`
+			Nombres        string                         `json:"nombres"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Phone) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		res := ag.AgendarPedidoDeOperador(agent.AgendaDeOperador{
+			Phone: payload.Phone, Items: payload.Items, IDTipoPago: payload.IDTipoPago,
+			FechaHora: payload.FechaHora, Operador: payload.Operador,
+			Identificacion: payload.Identificacion, Nombres: payload.Nombres,
+		})
+		if !res.OK {
+			w.WriteHeader(http.StatusConflict)
+		}
+		writeJSON(w, res)
+	})
+
 	mux.HandleFunc("POST /internal/chat-control", func(w http.ResponseWriter, r *http.Request) {
 		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -968,6 +999,17 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	// En control HUMANO el bot NO responde: solo deja registrado el mensaje para que un humano
 	// conteste desde la web. (Las notificaciones de pedido llegó/entregado siguen igual.)
 	if humanControlled {
+		// Salvo el SÍ/NO de una entrega agendada (16/10): la agenda también el operador desde el
+		// chat, y ese chat suele seguir en sus manos a la hora de confirmar. Sin esto el "sí" del
+		// cliente se quedaba sin respuesta y la entrega no se creaba. Cualquier otra cosa sigue
+		// siendo para la persona.
+		if inc.IsText {
+			if reply, manejado := ag.ConfirmarProgramado(context.Background(), inc.From, inc.Text); manejado {
+				log.Printf("[webhook] confirmacion de entrega agendada resuelta en chat humano para %s", inc.From)
+				_ = replyClient(cfg, store, inc.From, reply)
+				return
+			}
+		}
 		log.Printf("[webhook] chat en control humano; el bot no responde a %s", inc.From)
 		return
 	}

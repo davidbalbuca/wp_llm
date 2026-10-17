@@ -68,55 +68,9 @@ func (a *Agent) CrearPedidoDeOperador(p PedidoDeOperador) ResultadoPedidoOperado
 		return noSePudo("faltan el teléfono o los productos")
 	}
 
-	// Datos del cliente. La cédula es opcional desde el 04/10: el cliente se registra por su
-	// número de WhatsApp. El nombre es el que escribió el operador en el formulario y, si no
-	// escribió nada, el que dio el cliente en el chat o el de su WhatsApp si sirve (05/10).
-	// Si dejó el nombre que venía prellenado, no se re-valida: el de un registro con cédula se
-	// usa tal cual aunque no pase el filtro de nombres (así lo hace NombreUsable).
-	usable := conversation.NombreUsable(a.store, from)
-	escrito := ""
-	if dado := strings.TrimSpace(p.Nombres); dado != "" && dado != usable {
-		if escrito = conversation.NombreSiSirve(dado); escrito == "" {
-			return noSePudo("el nombre escrito no parece un nombre (sin números ni símbolos): corrígelo")
-		}
-	}
-	nombres := escrito
-	if nombres == "" {
-		nombres = usable
-	}
-	account, hayCuenta := a.store.GetAccount(from)
-	if !hayCuenta {
-		// Sin cuenta se crea por el MISMO camino que el pedido del bot (get-or-create en el
-		// backend: si ya existe, no lo duplica).
-		identificacion := strings.TrimSpace(p.Identificacion)
-		if nombres == "" {
-			return noSePudo("falta el nombre del cliente: escríbelo en el formulario (su WhatsApp no muestra un nombre)")
-		}
-		nueva, err := a.gr.WppGetOrCreateClient(identificacion, nombres, from)
-		if err != nil {
-			log.Printf("[pedido-operador] %s no se pudo crear la cuenta: %v", from, err)
-			return noSePudo("no se pudo registrar al cliente: " + err.Error())
-		}
-		account = conversation.Account{Username: nueva.Username, Password: nueva.Password}
-		a.store.SetAccount(from, account)
-		perfil, _ := a.store.GetProfile(from)
-		perfil.Identificacion, perfil.Nombres = identificacion, nombres
-		a.store.SetProfile(from, perfil)
-	} else if escrito != "" && escrito != usable {
-		// Ya tenía cuenta y el operador corrigió el nombre (el de su perfil era "@sd2" o similar).
-		// Es un extra: si falla, el pedido sigue con la cuenta de siempre. El backend solo lo
-		// cambia en clientes sin cédula; el de un cliente registrado con cédula no se toca.
-		if nueva, err := a.gr.WppActualizarNombre(escrito, from); err == nil && nueva != nil {
-			account = conversation.Account{Username: nueva.Username, Password: nueva.Password}
-			a.store.SetAccount(from, account)
-			perfil, _ := a.store.GetProfile(from)
-			if strings.TrimSpace(perfil.Identificacion) == "" {
-				perfil.Nombres = escrito
-				a.store.SetProfile(from, perfil)
-			}
-		} else if err != nil {
-			log.Printf("[pedido-operador] %s no se pudo actualizar el nombre: %v", from, err)
-		}
+	account, motivo := a.cuentaParaOperador(from, p.Identificacion, p.Nombres)
+	if motivo != "" {
+		return noSePudo(motivo)
 	}
 	loc, hayUbicacion := a.store.GetLocation(from)
 	if !hayUbicacion {
@@ -242,4 +196,61 @@ func orderProductsDeItems(items []conversation.PendingWaitItem) []georoutes.Orde
 		})
 	}
 	return salida
+}
+
+// cuentaParaOperador resuelve la cuenta del cliente para lo que hace el operador desde el chat
+// (crear o agendar un pedido): la que ya tiene, o se crea por el mismo camino que el pedido del
+// bot. Devuelve el motivo si no se puede.
+func (a *Agent) cuentaParaOperador(from, identificacionEscrita, nombresEscritos string) (conversation.Account, string) {
+	// Datos del cliente. La cédula es opcional desde el 04/10: el cliente se registra por su
+	// número de WhatsApp. El nombre es el que escribió el operador en el formulario y, si no
+	// escribió nada, el que dio el cliente en el chat o el de su WhatsApp si sirve (05/10).
+	// Si dejó el nombre que venía prellenado, no se re-valida: el de un registro con cédula se
+	// usa tal cual aunque no pase el filtro de nombres (así lo hace NombreUsable).
+	usable := conversation.NombreUsable(a.store, from)
+	escrito := ""
+	if dado := strings.TrimSpace(nombresEscritos); dado != "" && dado != usable {
+		if escrito = conversation.NombreSiSirve(dado); escrito == "" {
+			return conversation.Account{}, "el nombre escrito no parece un nombre (sin números ni símbolos): corrígelo"
+		}
+	}
+	nombres := escrito
+	if nombres == "" {
+		nombres = usable
+	}
+	account, hayCuenta := a.store.GetAccount(from)
+	if !hayCuenta {
+		// Sin cuenta se crea por el MISMO camino que el pedido del bot (get-or-create en el
+		// backend: si ya existe, no lo duplica).
+		identificacion := strings.TrimSpace(identificacionEscrita)
+		if nombres == "" {
+			return conversation.Account{}, "falta el nombre del cliente: escríbelo en el formulario (su WhatsApp no muestra un nombre)"
+		}
+		nueva, err := a.gr.WppGetOrCreateClient(identificacion, nombres, from)
+		if err != nil {
+			log.Printf("[pedido-operador] %s no se pudo crear la cuenta: %v", from, err)
+			return conversation.Account{}, "no se pudo registrar al cliente: " + err.Error()
+		}
+		account = conversation.Account{Username: nueva.Username, Password: nueva.Password}
+		a.store.SetAccount(from, account)
+		perfil, _ := a.store.GetProfile(from)
+		perfil.Identificacion, perfil.Nombres = identificacion, nombres
+		a.store.SetProfile(from, perfil)
+	} else if escrito != "" && escrito != usable {
+		// Ya tenía cuenta y el operador corrigió el nombre (el de su perfil era "@sd2" o similar).
+		// Es un extra: si falla, el pedido sigue con la cuenta de siempre. El backend solo lo
+		// cambia en clientes sin cédula; el de un cliente registrado con cédula no se toca.
+		if nueva, err := a.gr.WppActualizarNombre(escrito, from); err == nil && nueva != nil {
+			account = conversation.Account{Username: nueva.Username, Password: nueva.Password}
+			a.store.SetAccount(from, account)
+			perfil, _ := a.store.GetProfile(from)
+			if strings.TrimSpace(perfil.Identificacion) == "" {
+				perfil.Nombres = escrito
+				a.store.SetProfile(from, perfil)
+			}
+		} else if err != nil {
+			log.Printf("[pedido-operador] %s no se pudo actualizar el nombre: %v", from, err)
+		}
+	}
+	return account, ""
 }
