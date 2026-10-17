@@ -1229,6 +1229,15 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 			_ = replyClient(cfg, store, inc.From, reply)
 			return
 		}
+		// "No deseo" con un pedido en camino: no se cancela solo, se PREGUNTA con el botón de
+		// cancelar (17/10, Blanca: el bot se despidió y el pedido siguió). Ver cancelacion_dudosa.go.
+		if ag.PreguntarSiCancela(inc.From, inc.Text) {
+			return
+		}
+		if reply, manejado := ag.ResponderLoEspero(inc.From, inc.Text); manejado {
+			_ = replyClient(cfg, store, inc.From, reply)
+			return
+		}
 		// CANCELAR LA ENTREGA AGENDADA, también en código. Va junto a su gemelo porque es el
 		// mismo problema: el inventario del 11/09 destapó que cancelar_programacion era la única
 		// acción que cambia estado sin interceptor ni candado. Si falla, el cliente no lo nota
