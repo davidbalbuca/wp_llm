@@ -17,6 +17,7 @@ package agent
 import (
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 
 	"wp-llm-gas/internal/conversation"
@@ -27,6 +28,17 @@ import (
 // 12 en adelante ("a las 15") tampoco, porque ya viene en formato de 24 horas.
 func horaAmbigua(texto string) (hora int, ambigua bool) {
 	t := strings.ToLower(texto)
+	// UN PRECIO NO ES UNA HORA (17/10, Blanca González 593984861856). Preguntó "Disculpe esta en
+	// 3.50" —el precio del cilindro— y este candado leyó "3.50" como las 3 y cincuenta (la forma
+	// "18.30" de marcaHoraria): tapó la respuesta del modelo con "¿3 de la mañana o 3 de la
+	// noche?". Si el mensaje habla de plata, no se toca. Y "3.50" A SECAS, con punto, se lee como
+	// número: para que cuente como hora tiene que venir con algo más ("a las 3.50", "3.50 pm").
+	if pareceDinero(t) {
+		return 0, false
+	}
+	if !marcaHoraria.MatchString(decimalConPunto.ReplaceAllString(t, "$1")) {
+		return 0, false
+	}
 	// PRIMERO: ¿el cliente está hablando de una HORA? Un número suelto NO es una hora, es casi
 	// siempre la respuesta a otro menú. El 26/09 este candado leyó el "1" del menú de CANTIDAD
 	// ([1 2 3 4]) como "la 1", preguntó mañana/noche dos veces —el cliente insistió "1
@@ -52,6 +64,24 @@ func horaAmbigua(texto string) (hora int, ambigua bool) {
 		return 0, false
 	}
 	return h, true
+}
+
+// decimalConPunto es "3.50": se reemplaza por su parte entera antes de buscar marcas de hora, así
+// "a las 3.50" sigue siendo una hora y "3.50" solo, no.
+var decimalConPunto = regexp.MustCompile(`(\d{1,2})\s*\.\s*\d{2}`)
+
+// palabrasDeDinero: si el mensaje trae alguna, está hablando de un precio, no de una hora.
+var palabrasDeDinero = []string{"$", "precio", "cuesta", "cuestan", "cuanto vale", "cuánto vale", "valor", "dolar",
+	"dólar", "usd", "ctv", "centavo", "cobra", "cobran", "esta en", "está en", "estan en", "están en",
+	"a cuanto", "a cuánto", "cuanto es", "cuánto es", "total"}
+
+func pareceDinero(t string) bool {
+	for _, p := range palabrasDeDinero {
+		if strings.Contains(t, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // opcionesDeHoraAmbigua son los dos botones. Llevan la hora en el texto para que el cliente vea
