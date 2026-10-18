@@ -434,6 +434,34 @@ func main() {
 		go notifyOrderSearching(cfg, store, payload.PedidoID, payload.Telefono)
 	})
 
+	// El pedido se quedó sin otro repartidor de su color cerca y hay uno con un color EQUIVALENTE
+	// (18/10, backend core/georoutes/color_alterno.py): se le pregunta al cliente si le sirve. Sin
+	// el nombre del repartidor: se le presenta recién cuando acepte.
+	mux.HandleFunc("POST /internal/order-color-offer", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			PedidoID       int    `json:"pedido_id"`
+			Telefono       string `json:"telefono"`
+			ColorActual    string `json:"color_actual"`
+			ColorAlterno   string `json:"color_alterno"`
+			IDColorAlterno int    `json:"idcolor_alterno"`
+			Minutos        int    `json:"minutos"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 ||
+			payload.IDColorAlterno <= 0 || strings.TrimSpace(payload.ColorAlterno) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		go notifyOrderColorOffer(store, ag, payload.Telefono, agent.OfertaColorPedido{
+			IDPedido: payload.PedidoID, ColorActual: payload.ColorActual, ColorAlterno: payload.ColorAlterno,
+			IDColorAlterno: payload.IDColorAlterno, Minutos: payload.Minutos,
+		})
+	})
+
 	// Aviso al grupo de Telegram de un pedido HECHO DESDE LA APP (no pasa por el bot, así que el
 	// grupo no se enteraba). El backend arma el texto (core/georoutes_admin/eventos_pedido.py) y
 	// aquí solo se publica en el hilo "📱 Pedidos de la App".
@@ -1013,6 +1041,13 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 				_ = replyClient(cfg, store, inc.From, reply)
 				return
 			}
+			// Y el SÍ/NO al color equivalente de su pedido (18/10, agent/colorpedido.go): la oferta la
+			// manda el backend aunque el chat lo tenga una persona, y el "sí" cambia el pedido.
+			if reply, manejado := ag.ResponderColorDelPedido(inc.From, inc.Text); manejado {
+				log.Printf("[webhook] cambio de color del pedido resuelto en chat humano para %s", inc.From)
+				_ = replyClient(cfg, store, inc.From, reply)
+				return
+			}
 		}
 		log.Printf("[webhook] chat en control humano; el bot no responde a %s", inc.From)
 		return
@@ -1223,6 +1258,14 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	// es un conjunto cerrado: no puede depender de que el modelo llame a la herramienta. Si el
 	// cliente contesta algo fuera de las opciones, estos devuelven false y sigue al modelo.
 	if inc.IsText {
+		// El SÍ/NO al color equivalente de un pedido que ya existe (18/10, agent/colorpedido.go). Va
+		// antes que la cancelación: su "No, espero AMARILLO" no es cancelar, y la cancelación dudosa
+		// lo tomaría por un "no deseo". "Cancelar" no lo toma: sigue a la cancelación.
+		if reply, manejado := ag.ResponderColorDelPedido(inc.From, inc.Text); manejado {
+			log.Printf("[webhook] cambio de color del pedido resuelto en código para %s", inc.From)
+			_ = replyClient(cfg, store, inc.From, reply)
+			return
+		}
 		// CANCELAR el pedido, en código. Va PRIMERO entre los menús: es la acción más urgente
 		// y la que más falló. En producción (11/09) el modelo llamó cancelar_pedido 0 veces de
 		// 6 cancelaciones reales — las seis las salvó el candado de frases, que se dispara
@@ -1418,6 +1461,7 @@ func notifyOrderFinished(cfg config.Config, store conversation.Store, pedidoID i
 	// limpiaba al cancelar), y el guard de idempotencia de registrarPedido impediría al cliente
 	// hacer su SIGUIENTE pedido — que es justo el cliente que ya nos compró.
 	store.ClearActivePedido(phone)
+	agent.OlvidarColorDelPedido(store, phone, pedidoID)
 	store.SetPendingRating(phone, conversation.PendingRating{PedidoID: pedidoID, Conductor: conductor})
 
 	// La tarjeta del grupo llega a su último paso y se cierra: el mensaje queda con "Entregado ✅"
@@ -1502,6 +1546,7 @@ func notifyOrderCancelled(cfg config.Config, store conversation.Store, pedidoID 
 	}
 	store.ClearActivePedido(phone)
 	agent.QuitarPorConfirmar(phone)
+	agent.OlvidarColorDelPedido(store, phone, pedidoID)
 	// El historial NO se borra: la memoria del chat dura la ventana de 24h (regla general).
 	msg := fmt.Sprintf("😔 Tu pedido #%d fue cancelado por el conductor. Disculpa las molestias. "+
 		"Cuando quieras, puedes hacer un nuevo pedido.", pedidoID)
@@ -1527,6 +1572,7 @@ func notifyOrderNoShow(cfg config.Config, store conversation.Store, pedidoID int
 		return
 	}
 	store.ClearActivePedido(phone)
+	agent.OlvidarColorDelPedido(store, phone, pedidoID)
 	// El historial NO se borra: la memoria del chat dura la ventana de 24h (regla general).
 	msg := "🚚 No se pudo completar la entrega de tu pedido 😔"
 	if strings.TrimSpace(motivo) != "" {
@@ -1536,6 +1582,22 @@ func notifyOrderNoShow(cfg config.Config, store conversation.Store, pedidoID int
 	if err := avisarCliente(cfg, store, phone, msg); err != nil {
 		reportarFallo(cfg, store, phone, "No se pudo avisar el cierre por AUSENCIA del cliente",
 			fmt.Sprintf("Pedido #%d. El mensaje no salió: %v", pedidoID, err))
+	}
+}
+
+// notifyOrderColorOffer le pregunta al cliente si le sirve el color equivalente (agent/colorpedido.go).
+// Usa el número real del pedido (order_phone) o el que mande el backend.
+func notifyOrderColorOffer(store conversation.Store, ag *agent.Agent, telefono string, oferta agent.OfertaColorPedido) {
+	phone := telefono
+	if p, ok := store.GetOrderPhone(oferta.IDPedido); ok && p != "" {
+		phone = p
+	}
+	if phone == "" {
+		log.Printf("[order-color-offer] pedido %d sin teléfono de contacto; se ignora", oferta.IDPedido)
+		return
+	}
+	if !ag.OfrecerColorDelPedido(phone, oferta) {
+		log.Printf("[order-color-offer] pedido %d: no se le preguntó a %s", oferta.IDPedido, phone)
 	}
 }
 

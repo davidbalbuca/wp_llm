@@ -181,3 +181,31 @@ func TestElWebhookDetectaAbusoAntesQueLosComandos(t *testing.T) {
 			"como comando y el intento nunca se reportaría")
 	}
 }
+
+// COLOR EQUIVALENTE DE UN PEDIDO (18/10, agent/colorpedido.go). Guard ESTRUCTURAL (processWebhook no
+// se puede ejecutar en un test): el sí / no a la oferta se resuelve también con el chat en manos de
+// una persona, y antes que la cancelación (su "No, espero AMARILLO" no es cancelar). Y el backend
+// tiene a dónde avisar.
+func TestElColorDelPedidoSeResuelveEnChatHumanoYAntesDeCancelar(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("no se pudo leer main.go: %v", err)
+	}
+	cuerpo := string(src)
+	if !strings.Contains(cuerpo, `"POST /internal/order-color-offer"`) {
+		t.Fatal("el bot no expone /internal/order-color-offer: la oferta del backend no llegaría")
+	}
+	ini := strings.Index(cuerpo, "func processWebhook(")
+	cuerpo = cuerpo[ini:]
+	humano := strings.Index(cuerpo, "if humanControlled {")
+	noResponde := strings.Index(cuerpo, "chat en control humano; el bot no responde")
+	enHumano := strings.Index(cuerpo[humano:], "ag.ResponderColorDelPedido(") + humano
+	if humano < 0 || noResponde < 0 || enHumano < humano || enHumano > noResponde {
+		t.Error("con el chat en manos de una persona el sí al color del pedido no se resolvería")
+	}
+	resto := cuerpo[noResponde:]
+	color, cancelar := strings.Index(resto, "ag.ResponderColorDelPedido("), strings.Index(resto, "ag.ResponderCancelacion(")
+	if color < 0 || cancelar < 0 || color > cancelar {
+		t.Error("ResponderColorDelPedido tiene que ir antes que la cancelación en el camino del bot")
+	}
+}
