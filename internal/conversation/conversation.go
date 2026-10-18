@@ -394,6 +394,12 @@ type PendingColorSwap struct {
 	Respaldo       bool `json:"respaldo,omitempty"`
 	IDColorAlterno int  `json:"id_color_alterno,omitempty"`
 	IDBusqueda     int  `json:"id_busqueda,omitempty"`
+	// IDPedido (18/10, backend core/georoutes/color_alterno.py): la oferta es para un pedido que YA
+	// EXISTE y se quedó sin otro repartidor de su color. "Sí" le pide al backend que cambie ESE
+	// pedido a IDColorAlterno (pedidoCambioColor); "no" es "sigo esperando el mío" y no se toca
+	// nada. OfrecidoAt es cuándo se le preguntó: pasado un rato la oferta ya no se intercepta.
+	IDPedido   int   `json:"id_pedido,omitempty"`
+	OfrecidoAt int64 `json:"ofrecido_at,omitempty"`
 }
 
 // PendingGuardarUbicacion es la oferta de guardar la ubicación recién compartida con un nombre

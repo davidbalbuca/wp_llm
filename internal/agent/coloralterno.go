@@ -149,6 +149,11 @@ func (a *Agent) ResponderCambioColor(from, texto string) (string, bool) {
 	if !hay {
 		return "", false
 	}
+	if sw.IDPedido > 0 {
+		// La oferta de un pedido que ya existe (colorpedido.go): su "sí" cambia ESE pedido, no
+		// registra otro. Normalmente ya la resolvió ResponderColorDelPedido, que va antes.
+		return a.responderColorDelPedido(from, texto, sw)
+	}
 	respuesta := normalizarRespuesta(texto)
 	if sw.Respaldo {
 		return a.responderColorDelRespaldo(from, respuesta, sw)

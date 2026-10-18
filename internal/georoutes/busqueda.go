@@ -127,6 +127,30 @@ func (c *Client) RespaldoCambioColor(jwt string, idbusqueda, idcolor int) (*Busq
 	return c.busqueda("/respaldoCambioColor/", map[string]any{"idbusqueda": idbusqueda, "idcolor": idcolor}, jwt)
 }
 
+// CambioColorPedido es lo que responde pedidoCambioColor. Estado: "ok" (el pedido quedó en el color
+// nuevo con el repartidor propuesto, que todavía tiene que aceptar), "ya_acepto" (su repartidor del
+// color original aceptó antes: no se cambió nada), "vencido" o "sin_repartidor" (la propuesta ya no
+// vale: tampoco se cambió nada).
+type CambioColorPedido struct {
+	IDPedido int    `json:"idpedido"`
+	Estado   string `json:"estado"`
+	Color    string `json:"color"`
+}
+
+// PedidoCambioColor: el cliente aceptó el color equivalente que se le ofreció para un pedido que
+// YA EXISTE (backend core/georoutes/color_alterno.py). Endpoint: POST /pedidoCambioColor/.
+func (c *Client) PedidoCambioColor(jwt string, idpedido, idcolor int) (*CambioColorPedido, error) {
+	res, err := c.post("/pedidoCambioColor/", map[string]any{"idpedido": idpedido, "idcolor": idcolor}, jwt)
+	if err != nil {
+		return nil, err
+	}
+	var out CambioColorPedido
+	if err := json.Unmarshal(res, &out); err != nil {
+		return nil, fmt.Errorf("respuesta de cambio de color no válida del backend: %w", err)
+	}
+	return &out, nil
+}
+
 // CancelarBusqueda corta la búsqueda: fue decisión del cliente, así que NO queda en no asignados.
 func (c *Client) CancelarBusqueda(jwt string, idbusqueda int) (*BusquedaResult, error) {
 	return c.busqueda("/cancelarBusquedaConductor/", map[string]any{"idbusqueda": idbusqueda}, jwt)
