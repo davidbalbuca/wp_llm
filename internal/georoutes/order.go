@@ -42,6 +42,12 @@ type OrderResult struct {
 	// wppOrder. Vacío o "00:00:00" cuando no hay conductor con posición (p. ej. aceptó por
 	// WhatsApp sin GPS): en ese caso no se le promete un tiempo al cliente.
 	Tiempo string `json:"tiempo"`
+	// PorConfirmar (18/10): el repartidor todavía NO aceptó. Al cliente no se le presenta (nombre,
+	// placa, tiempo, enlace) hasta que acepte; ese aviso llega por /internal/order-reassigned con
+	// primer_aviso. El backend viejo no lo manda: false, como siempre.
+	PorConfirmar bool `json:"por_confirmar"`
+	// TerminaOtraEntrega: no puede aceptar todavía porque está terminando otra entrega.
+	TerminaOtraEntrega bool `json:"termina_otra_entrega"`
 }
 
 // MinutosEntregaConMargen convierte el "HH:MM:SS" del backend en minutos y le SUMA margenMin.

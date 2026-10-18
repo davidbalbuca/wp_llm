@@ -358,13 +358,15 @@ func main() {
 			PedidoID  int    `json:"pedido_id"`
 			Telefono  string `json:"telefono"`
 			Conductor string `json:"conductor"`
+			// SinRepartidor (18/10): nadie aceptó; el cliente nunca conoció a un repartidor.
+			SinRepartidor bool `json:"sin_repartidor"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		go notifyOrderCancelled(cfg, store, payload.PedidoID, payload.Telefono)
+		go notifyOrderCancelled(cfg, store, payload.PedidoID, payload.Telefono, payload.SinRepartidor)
 	})
 
 	// Notificación INTERNA del backend: el pedido se cerró porque el CLIENTE NO SALIÓ a recibir
@@ -401,6 +403,8 @@ func main() {
 			Placa            string `json:"placa"`
 			Minutos          int    `json:"minutos"`
 			SeguimientoToken string `json:"seguimiento_token"`
+			// PrimerAviso (18/10): es el primer repartidor que conoce el cliente, recién aceptó.
+			PrimerAviso bool `json:"primer_aviso"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
 			w.WriteHeader(http.StatusBadRequest)
@@ -408,7 +412,7 @@ func main() {
 		}
 		w.WriteHeader(http.StatusOK)
 		go notifyOrderReassigned(cfg, store, payload.PedidoID, payload.Telefono, payload.Conductor,
-			payload.Placa, payload.Minutos, payload.SeguimientoToken)
+			payload.Placa, payload.Minutos, payload.SeguimientoToken, payload.PrimerAviso)
 	})
 
 	// El pedido perdio a su repartidor y el backend se lo esta ofreciendo a otros. El pedido
@@ -1477,7 +1481,7 @@ func notifyOrderArrived(cfg config.Config, store conversation.Store, pedidoID in
 
 // notifyOrderCancelled avisa al cliente por WhatsApp que el conductor CANCELÓ su pedido. Limpia el
 // historial para que la próxima conversación arranque fresca (sin arrastrar el pedido cancelado).
-func notifyOrderCancelled(cfg config.Config, store conversation.Store, pedidoID int, telefono string) {
+func notifyOrderCancelled(cfg config.Config, store conversation.Store, pedidoID int, telefono string, sinRepartidor bool) {
 	phone := telefono
 	if p, ok := store.GetOrderPhone(pedidoID); ok && p != "" {
 		phone = p
@@ -1497,9 +1501,14 @@ func notifyOrderCancelled(cfg config.Config, store conversation.Store, pedidoID 
 		return
 	}
 	store.ClearActivePedido(phone)
+	agent.QuitarPorConfirmar(phone)
 	// El historial NO se borra: la memoria del chat dura la ventana de 24h (regla general).
 	msg := fmt.Sprintf("😔 Tu pedido #%d fue cancelado por el conductor. Disculpa las molestias. "+
 		"Cuando quieras, puedes hacer un nuevo pedido.", pedidoID)
+	if sinRepartidor {
+		// Nunca conoció a un repartidor (nadie aceptó): no se le dice que "el conductor canceló".
+		msg = agent.MensajeSinRepartidor(pedidoID)
+	}
 	if err := avisarCliente(cfg, store, phone, msg); err != nil {
 		reportarFallo(cfg, store, phone, "No se pudo avisar la CANCELACIÓN del pedido",
 			fmt.Sprintf("Pedido #%d. El mensaje no salió: %v", pedidoID, err))
@@ -1554,7 +1563,7 @@ func notifyOrderSearching(cfg config.Config, store conversation.Store, pedidoID 
 // notifyOrderReassigned avisa al cliente por WhatsApp que su pedido fue REASIGNADO a un nuevo
 // repartidor (el anterior canceló). El pedido sigue vivo, así que NO se limpia el historial.
 func notifyOrderReassigned(cfg config.Config, store conversation.Store, pedidoID int, telefono, conductor,
-	placa string, minutosRuta int, token string) {
+	placa string, minutosRuta int, token string, primerAviso bool) {
 	phone := telefono
 	if p, ok := store.GetOrderPhone(pedidoID); ok && p != "" {
 		phone = p
@@ -1576,6 +1585,11 @@ func notifyOrderReassigned(cfg config.Config, store conversation.Store, pedidoID
 		store.SetSeguimientoActivo(phone, enlace)
 	}
 	msg := agent.ConInvitacionApp(agent.MensajeReasignado(conductor, placa, minutos, enlace))
+	if primerAviso {
+		// El repartidor recién aceptó y es el primero que conoce (18/10): no es un "nuevo repartidor".
+		msg = agent.ConInvitacionApp(agent.MensajeRepartidorAcepto(conductor, placa, minutos, enlace))
+	}
+	agent.QuitarPorConfirmar(phone)
 	if err := avisarCliente(cfg, store, phone, msg); err != nil {
 		reportarFallo(cfg, store, phone, "No se pudo avisar la REASIGNACIÓN a otro conductor",
 			fmt.Sprintf("Pedido #%d. El mensaje no salió: %v", pedidoID, err))
