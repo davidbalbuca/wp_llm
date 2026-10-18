@@ -307,6 +307,13 @@ func (a *Agent) avisarRepartidorAsignado(from string, w conversation.PendingWait
 		// preguntará al cliente por la entrega en ~30 min (chequeo_entrega.go).
 		a.programarChequeoEntrega(from, res.IDPedido, res.ConductorAsignado, res.ModoDatosConductor)
 	}
+	// Repartidor que todavía no aceptó (18/10, por_confirmar.go): pasa con el pedido que crea un
+	// operador desde el chat. No se le presenta hasta que acepte.
+	porConf, terminaOtra := res.PorConfirmar, res.TerminaOtraEntrega
+	if porConf {
+		marcarPorConfirmar(from, res.IDPedido)
+		ocultarRepartidor(res)
+	}
 	// Se guarda TAMBIÉN a dónde va, para que "repetir lo mismo" pueda decirlo.
 	// Aquí no se consultan las direcciones del backend (esto corre en una
 	// goroutine, minutos después): se usa lo que ya se sabe del cliente.
@@ -344,6 +351,9 @@ func (a *Agent) avisarRepartidorAsignado(from string, w conversation.PendingWait
 	}
 	// El historial NO se borra (memoria de 24h). El mensaje queda AUDITADO.
 	msg := mensajeAsignado(a, w, res)
+	if porConf {
+		msg = "¡Listo! 🎉 Tu pedido quedó registrado ✅. " + MensajePorConfirmar(terminaOtra)
+	}
 	// Si venia de una entrega agendada, deja de estar "buscando repartidor".
 	store.CerrarProgramadoEnEspera(from, true)
 	if err := whatsapp.SendText(cfg, from, msg); err == nil {

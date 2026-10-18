@@ -113,6 +113,9 @@ func (a *Agent) ConfirmarDireccion(from, texto string) (string, bool) {
 func (a *Agent) mensajeDelPedido(t *turno, from string) string {
 	res := t.ultimoPedido
 	switch {
+	case res.ok && res.PorConfirmar:
+		return fmt.Sprintf("¡Listo! 🎉 Tu pedido de %d x %s color %s quedó registrado ✅. %s",
+			res.Cantidad, res.Producto, res.Color, MensajePorConfirmar(res.TerminaOtraEntrega))
 	case res.ok:
 		mensaje := fmt.Sprintf("¡Listo! 🎉 Tu pedido de %d x %s color %s va en camino.",
 			res.Cantidad, res.Producto, res.Color)

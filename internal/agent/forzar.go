@@ -62,6 +62,9 @@ func (a *Agent) forzarRegistroSiHaceFalta(t *turno, from string) (string, bool) 
 			"El modelo iba a confirmar sin registrar; el código lo registró de verdad. Pedido #"+
 				strconv.Itoa(t.ultimoPedido.IDPedido))
 		msg := "¡Listo! 🎉 Tu pedido de " + describeItems(lineas) + " quedó registrado."
+		if t.ultimoPedido.PorConfirmar {
+			msg += " " + MensajePorConfirmar(t.ultimoPedido.TerminaOtraEntrega)
+		}
 		if t.ultimoPedido.Conductor != "" {
 			msg += " Tu repartidor es " + t.ultimoPedido.Conductor + " 🚚"
 			if t.ultimoPedido.Placa != "" {

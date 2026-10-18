@@ -41,6 +41,10 @@ type resultadoPedido struct {
 	// (tiempo de ruta OSRM del backend + BotMargenEntregaMin). 0 = el backend no calculó un tiempo
 	// real (sin conductor con GPS), y entonces NO se le promete un tiempo al cliente.
 	MinutosEntrega int
+	// PorConfirmar: el repartidor todavía no aceptó (ver por_confirmar.go). Conductor, Placa,
+	// Seguimiento y MinutosEntrega van vacíos a propósito.
+	PorConfirmar       bool
+	TerminaOtraEntrega bool
 	// Lineas es el pedido completo cuando tuvo varios colores (Fase C1). Con un solo color va
 	// vacía y valen Producto/Color/Cantidad, como siempre.
 	Lineas []lineaPedido
@@ -764,6 +768,16 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 		notify.Default.EstadoCliente(from, nombres, conversation.EtapaRegistrado,
 			describeLineas(lineas), resultado.IDPedido)
 	}
+	// El repartidor todavía no aceptó (18/10, ver por_confirmar.go): al cliente no se le presenta.
+	// Nombre, placa, tiempo y enlace llegan cuando acepte, con el aviso del backend.
+	porConfirmar, terminaOtra := resultado.PorConfirmar, resultado.TerminaOtraEntrega
+	if porConfirmar {
+		marcarPorConfirmar(from, resultado.IDPedido)
+		ocultarRepartidor(resultado)
+		a.store.SetSeguimientoActivo(from, "")
+	} else {
+		QuitarPorConfirmar(from)
+	}
 	// A dónde se entregó, para que "repetir lo mismo" diga "2 Blanco a Casa" y no solo
 	// "2 Blanco". Se reutiliza lo resuelto arriba (antes del pedido, para elegir la dirección)
 	// en vez de volver a preguntárselo al backend.
@@ -831,6 +845,9 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 		Seguimiento:    seguimiento,
 		MinutosEntrega: minutosEntrega,
 		Lineas:         lineas,
+
+		PorConfirmar:       porConfirmar,
+		TerminaOtraEntrega: terminaOtra,
 	}
 
 	// Confirmación COMPLETA para el modelo (conductor + placa + valor a pagar + seguimiento). Se le
@@ -868,6 +885,9 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 		mensaje += " (" + resultado.FormaPago + ")"
 	}
 	mensaje += "."
+	if porConfirmar {
+		mensaje += instruccionPorConfirmar(terminaOtra)
+	}
 	// Tiempo estimado de llegada (ruta OSRM del backend + margen de preparación). Solo se da si el
 	// backend calculó un tiempo real; si no, no se promete nada (mejor callar que inventar un ETA).
 	if minutosEntrega > 0 {

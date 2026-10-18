@@ -41,6 +41,12 @@ func (a *Agent) revisarRepartidorPrometido(from, reply string) string {
 	// del fantasma— o ya tiene conductor, y entonces la frase es cierta y tiene que salir.
 	espera, esperando := a.store.GetPendingWait(from)
 	if !esperando {
+		// Pedido creado pero su repartidor todavía no aceptó (18/10, por_confirmar.go): tampoco se
+		// lo puede presentar ni dar por en camino.
+		if estaPorConfirmar(from) && prometeAlRepartidorPorConfirmar(reply) {
+			log.Printf("[repartidor] %s: el modelo presentó al repartidor y todavía no aceptó; se corrige", from)
+			return MensajePorConfirmar(false)
+		}
 		return reply
 	}
 	if !prometeRepartidor(reply) {
