@@ -43,7 +43,7 @@ func (a *Agent) revisarRepartidorPrometido(from, reply string) string {
 	if !esperando {
 		// Pedido creado pero su repartidor todavía no aceptó (18/10, por_confirmar.go): tampoco se
 		// lo puede presentar ni dar por en camino.
-		if estaPorConfirmar(from) && prometeAlRepartidorPorConfirmar(reply) {
+		if estaPorConfirmar(a.cfg, from) && prometeAlRepartidorPorConfirmar(reply) {
 			log.Printf("[repartidor] %s: el modelo presentó al repartidor y todavía no aceptó; se corrige", from)
 			return MensajePorConfirmar(false)
 		}

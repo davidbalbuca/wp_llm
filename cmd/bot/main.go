@@ -227,6 +227,11 @@ func atoiDefault(s string, def int) int {
 func main() {
 	_ = godotenv.Load() // carga .env si existe
 	cfg := config.Load()
+	// El bot de bodegas es otro proceso con el mismo binario (ver bodegas.go).
+	if cfg.Canal == config.CanalOpenWA {
+		mainBodegas(cfg)
+		return
+	}
 
 	// Selección del almacén de estado: SQLite si hay DB_PATH, memoria en caso contrario.
 	var store conversation.Store
@@ -305,603 +310,11 @@ func main() {
 		go processWebhook(cfg, ag, store, grClient, body)
 	})
 
-	// Notificación INTERNA del backend: un conductor finalizó un pedido. El bot le manda al
-	// cliente un agradecimiento y le pide calificar al repartidor. Protegido por secreto
-	// compartido (BACKEND_CHANNEL_SECRET) para que solo el backend pueda dispararlo.
-	mux.HandleFunc("POST /internal/order-finished", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		var payload struct {
-			PedidoID  int    `json:"pedido_id"`
-			Telefono  string `json:"telefono"`
-			Conductor string `json:"conductor"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		go notifyOrderFinished(cfg, store, payload.PedidoID, payload.Telefono, payload.Conductor)
-	})
-
-	// Notificación INTERNA del backend: el conductor LLEGÓ a la ubicación (pulsó "Sí, llegué").
-	// El bot le avisa al cliente por WhatsApp que salga a recibir el pedido. Mismo secreto
-	// compartido que /internal/order-finished.
-	mux.HandleFunc("POST /internal/order-arrived", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		var payload struct {
-			PedidoID  int    `json:"pedido_id"`
-			Telefono  string `json:"telefono"`
-			Conductor string `json:"conductor"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		go notifyOrderArrived(cfg, store, payload.PedidoID, payload.Telefono)
-	})
-
-	// Notificación INTERNA del backend: el conductor CANCELÓ el pedido. El bot le avisa al
-	// cliente por WhatsApp. Mismo secreto compartido.
-	mux.HandleFunc("POST /internal/order-cancelled", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		var payload struct {
-			PedidoID  int    `json:"pedido_id"`
-			Telefono  string `json:"telefono"`
-			Conductor string `json:"conductor"`
-			// SinRepartidor (18/10): nadie aceptó; el cliente nunca conoció a un repartidor.
-			SinRepartidor bool `json:"sin_repartidor"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		go notifyOrderCancelled(cfg, store, payload.PedidoID, payload.Telefono, payload.SinRepartidor)
-	})
-
-	// Notificación INTERNA del backend: el pedido se cerró porque el CLIENTE NO SALIÓ a recibir
-	// (estado "no salió el cliente"). Mensaje específico; mismo secreto compartido.
-	mux.HandleFunc("POST /internal/order-no-show", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		var payload struct {
-			PedidoID int    `json:"pedido_id"`
-			Telefono string `json:"telefono"`
-			Motivo   string `json:"motivo"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		go notifyOrderNoShow(cfg, store, payload.PedidoID, payload.Telefono, payload.Motivo)
-	})
-
-	mux.HandleFunc("POST /internal/order-reassigned", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		// placa, minutos y seguimiento_token llegan desde el 05/10 (el backend viejo no los manda:
-		// sin ellos el mensaje sale igual, solo con el nombre).
-		var payload struct {
-			PedidoID         int    `json:"pedido_id"`
-			Telefono         string `json:"telefono"`
-			Conductor        string `json:"conductor"`
-			Placa            string `json:"placa"`
-			Minutos          int    `json:"minutos"`
-			SeguimientoToken string `json:"seguimiento_token"`
-			// PrimerAviso (18/10): es el primer repartidor que conoce el cliente, recién aceptó.
-			PrimerAviso bool `json:"primer_aviso"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		go notifyOrderReassigned(cfg, store, payload.PedidoID, payload.Telefono, payload.Conductor,
-			payload.Placa, payload.Minutos, payload.SeguimientoToken, payload.PrimerAviso)
-	})
-
-	// El pedido perdio a su repartidor y el backend se lo esta ofreciendo a otros. El pedido
-	// NO esta cancelado: sigue vivo, y de eso se trata el aviso.
-	mux.HandleFunc("POST /internal/order-searching", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		var payload struct {
-			PedidoID int    `json:"pedido_id"`
-			Telefono string `json:"telefono"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		go notifyOrderSearching(cfg, store, payload.PedidoID, payload.Telefono)
-	})
-
-	// El pedido se quedó sin otro repartidor de su color cerca y hay uno con un color EQUIVALENTE
-	// (18/10, backend core/georoutes/color_alterno.py): se le pregunta al cliente si le sirve. Sin
-	// el nombre del repartidor: se le presenta recién cuando acepte.
-	mux.HandleFunc("POST /internal/order-color-offer", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		var payload struct {
-			PedidoID       int    `json:"pedido_id"`
-			Telefono       string `json:"telefono"`
-			ColorActual    string `json:"color_actual"`
-			ColorAlterno   string `json:"color_alterno"`
-			IDColorAlterno int    `json:"idcolor_alterno"`
-			Minutos        int    `json:"minutos"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 ||
-			payload.IDColorAlterno <= 0 || strings.TrimSpace(payload.ColorAlterno) == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		go notifyOrderColorOffer(store, ag, payload.Telefono, agent.OfertaColorPedido{
-			IDPedido: payload.PedidoID, ColorActual: payload.ColorActual, ColorAlterno: payload.ColorAlterno,
-			IDColorAlterno: payload.IDColorAlterno, Minutos: payload.Minutos,
-		})
-	})
-
-	// Aviso al grupo de Telegram de un pedido HECHO DESDE LA APP (no pasa por el bot, así que el
-	// grupo no se enteraba). El backend arma el texto (core/georoutes_admin/eventos_pedido.py) y
-	// aquí solo se publica en el hilo "📱 Pedidos de la App".
-	mux.HandleFunc("POST /internal/aviso-pedido", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		var payload struct {
-			PedidoID int    `json:"pedido_id"`
-			Texto    string `json:"texto"`
-			Urgente  bool   `json:"urgente"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Texto) == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		log.Printf("[aviso-pedido] pedido %d: %.80q", payload.PedidoID, payload.Texto)
-		avisos.AvisoPedidoApp(payload.Texto, payload.Urgente)
-	})
+	b := &canalBot{cfg: cfg, store: store, ag: ag, gr: grClient}
+	registrarInternos(mux, botFijo(b))
+	arrancarSegundoPlano(b)
 
 	log.Printf("Servidor escuchando en http://localhost:%s", cfg.Port)
-	// --- Web/panel: revisar y controlar conversaciones (protegido por el secreto de canal) ---
-	// Lista de chats recientes (número, último mensaje, modo bot/humano).
-	mux.HandleFunc("GET /internal/conversations", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		convs := store.ListConversations(atoiDefault(r.URL.Query().Get("limit"), 100))
-		// Para el estado de cada chat en el panel (06/10): "Registrando pedido" mientras tenga un
-		// pedido a medio armar que no ha vencido (la misma vigencia que usa el agente).
-		for i := range convs {
-			if p, ok := store.GetPedidoEnCurso(convs[i].Phone); ok && !p.Vacio() &&
-				time.Since(p.UpdatedAt) < agent.VencimientoFicha {
-				convs[i].Armando = true
-			}
-		}
-		writeJSON(w, convs)
-	})
-	// Conversación completa de un número (para revisarla).
-	mux.HandleFunc("GET /internal/conversation", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		phone := strings.TrimSpace(r.URL.Query().Get("phone"))
-		if phone == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		writeJSON(w, map[string]any{
-			"phone":    phone,
-			"mode":     store.GetChatMode(phone),
-			"messages": store.GetConversation(phone, atoiDefault(r.URL.Query().Get("limit"), 300)),
-		})
-	})
-	// Cambiar el modo de un chat: "bot" (responde el bot) o "human" (respondes tú desde la web).
-	// El panel avisa que alguien ABRIO un chat, para dejar de marcarlo como no leido.
-	mux.HandleFunc("POST /internal/chat-read", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		var payload struct {
-			Phone string `json:"phone"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Phone) == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		store.MarcarChatLeido(payload.Phone)
-		writeJSON(w, map[string]any{"ok": true})
-	})
-
-	// Lo que el panel necesita para PRELLENAR el formulario del pedido a mano: la ubicacion y el
-	// ultimo pedido tal como los tiene EL BOT. Importa que salga de aqui y no de la base del
-	// backend: la disponibilidad se comprueba en el mismo punto donde despues se va a crear el
-	// pedido, asi no se verifica en un lugar y se crea en otro.
-	mux.HandleFunc("GET /internal/pedido-operador-datos", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		phone := strings.TrimSpace(r.URL.Query().Get("phone"))
-		if phone == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		salida := map[string]any{}
-		_, tieneCuenta := store.GetAccount(phone)
-		salida["tiene_cuenta"] = tieneCuenta
-		// El nombre con el que se va a crear el pedido (vacío si su WhatsApp no dice un nombre):
-		// el panel lo muestra para que el operador lo confirme o lo corrija.
-		salida["nombre"] = conversation.NombreUsable(store, phone)
-		if loc, ok := store.GetLocation(phone); ok {
-			salida["latitude"] = loc.Latitude
-			salida["longitude"] = loc.Longitude
-		}
-		if calle, ok := store.GetDireccionTexto(phone); ok {
-			salida["direccion"] = calle
-		}
-		if ult, ok := store.GetLastOrder(phone); ok {
-			lineas := []map[string]any{}
-			if len(ult.Items) > 0 {
-				for _, it := range ult.Items {
-					lineas = append(lineas, map[string]any{"color": it.Color, "cantidad": it.Cantidad})
-				}
-			} else if ult.Cantidad > 0 {
-				lineas = append(lineas, map[string]any{"color": ult.Color, "cantidad": ult.Cantidad})
-			}
-			salida["ultimo_pedido"] = map[string]any{
-				"producto": ult.Producto,
-				"fecha":    ult.Fecha,
-				"lineas":   lineas,
-			}
-		}
-		if ts, ok := store.LastClientMessageAt(phone); ok {
-			salida["ultimo_mensaje"] = ts
-			salida["horas_desde_ultimo_mensaje"] = time.Since(time.Unix(ts, 0)).Hours()
-		}
-		// ¿El cliente dejó un pedido A MEDIAS en el chat? (dijo color/cantidad y no llegó a
-		// confirmarse). Es una de las cosas que cuentan como "pendiente" para dejar crear el
-		// pedido a mano: sin nada pendiente, el botón no debe estar disponible.
-		if ficha, ok := store.GetPedidoEnCurso(phone); ok && (ficha.Cantidad > 0 || len(ficha.Items) > 0) {
-			salida["ficha_en_chat"] = true
-		}
-		writeJSON(w, salida)
-	})
-
-	// PEDIDO CREADO A MANO por un operador desde el chat (gestion manual: el cliente espero, no
-	// hubo repartidor, se lo llamo por telefono y sigue queriendo el gas). Lo crea el BOT para que
-	// sepa que ese pedido existe y pueda seguir el seguimiento. Ver internal/agent/pedido_operador.go:
-	// revisa la ventana de tiempo, la disponibilidad, crea el pedido, y SOLO si quedo con
-	// repartidor le escribe al cliente. Si algo falla, el cliente no recibe nada y el motivo se
-	// devuelve aqui para que el panel lo muestre.
-	mux.HandleFunc("POST /internal/pedido-operador", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		var payload struct {
-			Phone       string                         `json:"phone"`
-			Items       []conversation.PendingWaitItem `json:"items"`
-			IDTipoPago  int                            `json:"idtipopago"`
-			IDConductor int                            `json:"idconductor"`
-			Operador    string                         `json:"operador"`
-			MaxHoras    float64                        `json:"max_horas"`
-			// Los escribe el operador cuando el cliente no tiene cuenta todavia.
-			Identificacion string `json:"identificacion"`
-			Nombres        string `json:"nombres"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Phone) == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		res := ag.CrearPedidoDeOperador(agent.PedidoDeOperador{
-			Phone:       payload.Phone,
-			Items:       payload.Items,
-			IDTipoPago:  payload.IDTipoPago,
-			IDConductor: payload.IDConductor,
-			Operador:    payload.Operador,
-			MaxHoras:    payload.MaxHoras,
-
-			Identificacion: payload.Identificacion,
-			Nombres:        payload.Nombres,
-		})
-		if !res.OK {
-			// 409: no es un error del panel, es que el pedido no corresponde crearlo ahora.
-			w.WriteHeader(http.StatusConflict)
-		}
-		writeJSON(w, res)
-	})
-
-	// Entrega AGENDADA a mano por un operador desde el chat (16/10): queda como las que agenda el
-	// bot y, a la hora, el mismo reloj le pide confirmar al cliente.
-	mux.HandleFunc("POST /internal/pedido-operador-agendar", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		var payload struct {
-			Phone          string                         `json:"phone"`
-			Items          []conversation.PendingWaitItem `json:"items"`
-			IDTipoPago     int                            `json:"idtipopago"`
-			FechaHora      string                         `json:"fecha_hora"`
-			Operador       string                         `json:"operador"`
-			Identificacion string                         `json:"identificacion"`
-			Nombres        string                         `json:"nombres"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Phone) == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		res := ag.AgendarPedidoDeOperador(agent.AgendaDeOperador{
-			Phone: payload.Phone, Items: payload.Items, IDTipoPago: payload.IDTipoPago,
-			FechaHora: payload.FechaHora, Operador: payload.Operador,
-			Identificacion: payload.Identificacion, Nombres: payload.Nombres,
-		})
-		if !res.OK {
-			w.WriteHeader(http.StatusConflict)
-		}
-		writeJSON(w, res)
-	})
-
-	mux.HandleFunc("POST /internal/chat-control", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		var payload struct {
-			Phone string `json:"phone"`
-			Mode  string `json:"mode"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Phone) == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		store.SetChatMode(payload.Phone, payload.Mode)
-		if payload.Mode == conversation.ChatModeHuman {
-			store.TouchActivity(payload.Phone) // arranca el contador de inactividad del control humano
-		}
-		writeJSON(w, map[string]any{"phone": payload.Phone, "mode": store.GetChatMode(payload.Phone)})
-	})
-	// Enviar un mensaje al cliente desde la web (respuesta manual del humano). Lo registra en el audit.
-	mux.HandleFunc("POST /internal/send-message", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		var payload struct {
-			Phone string `json:"phone"`
-			Text  string `json:"text"`
-			// MaxHoras: si viene, el mensaje solo sale si el cliente escribio hace menos de esas
-			// horas. Lo usa el panel para avisar una entrega hecha por un repartidor externo: un
-			// "tu pedido fue entregado" que llega seis horas tarde no le informa nada al cliente
-			// -ya recibio su gas- y solo delata que alguien se olvido de marcarlo. Sin este
-			// campo el comportamiento es el de siempre (se manda y punto).
-			MaxHoras float64 `json:"max_horas"`
-			// Automatico marca los mensajes que manda el SISTEMA solo (el aviso de entrega, el de
-			// conductor asignado). Esos no apagan al bot; los de una persona sí. Ver
-			// tomarChatAlEscribir.
-			Automatico bool `json:"automatico"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Phone) == "" || strings.TrimSpace(payload.Text) == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		if payload.MaxHoras > 0 {
-			ultimo, hay := store.LastClientMessageAt(payload.Phone)
-			if !hay || time.Since(time.Unix(ultimo, 0)).Hours() > payload.MaxHoras {
-				// 409: no es un error del que llama, es que ya no corresponde mandarlo.
-				w.WriteHeader(http.StatusConflict)
-				writeJSON(w, map[string]any{"ok": false, "motivo": "fuera de la ventana de tiempo"})
-				return
-			}
-		}
-		store.TouchActivity(payload.Phone) // mantiene viva la sesión de control humano
-		store.LogMessage(payload.Phone, "human", payload.Text)
-		// Escribirle al cliente ES tomar la conversación. Hasta el 22/09 esto no se hacía: el
-		// panel registraba el mensaje de la persona pero dejaba el chat en modo bot, así que
-		// había dos voces contestando. Ver takeover.go y el caso de Doris.
-		if loEscribioUnaPersona(payload.Automatico, payload.MaxHoras) {
-			tomarChatAlEscribir(store, payload.Phone)
-		} else {
-			avisarSinTomarChat(store, payload.Phone)
-		}
-		if err := whatsapp.SendText(cfg, payload.Phone, payload.Text); err != nil {
-			log.Printf("[send-message] error enviando a %s: %v", payload.Phone, err)
-			w.WriteHeader(http.StatusBadGateway)
-			return
-		}
-		writeJSON(w, map[string]any{"ok": true})
-	})
-
-	// --- Tickets de soporte (panel web; secreto de canal) ---
-	// Lista de tickets: ?estado=abierto|cerrado (vacío = todos).
-	// Entregas AGENDADAS, para mostrarlas en el panel de Pedidos. Viven aqui (SQLite del bot)
-	// y no en la base del backend, porque hasta que se confirman no son pedidos todavia.
-	mux.HandleFunc("GET /internal/scheduled", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		writeJSON(w, store.ListScheduled(r.URL.Query().Get("estado"),
-			atoiDefault(r.URL.Query().Get("limit"), 200)))
-	})
-	mux.HandleFunc("GET /internal/tickets", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		writeJSON(w, store.ListTickets(r.URL.Query().Get("estado"), atoiDefault(r.URL.Query().Get("limit"), 200)))
-	})
-	// Cerrar un ticket con su solución.
-	// Crear un ticket DESDE EL BACKEND. Hoy lo usa el aviso de "pedido sin conductor": ese
-	// pedido es una venta que se pierde si nadie lo ve a tiempo, y antes solo quedaba esperando
-	// a que alguien mirara la pantalla de no asignados. Se crea el ticket y sale el correo, la
-	// misma via que ya usan las derivaciones.
-	mux.HandleFunc("POST /internal/ticket-create", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		var payload struct {
-			Phone   string `json:"phone"`
-			Motivo  string `json:"motivo"`
-			Resumen string `json:"resumen"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Motivo) == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		// Mismo camino único que los fallos internos: ticket + marca en el chat + correo + Telegram.
-		// Antes este endpoint (lo usa el BACKEND) creaba ticket y correo pero no avisaba al grupo.
-		id := reportarFallo(cfg, store, payload.Phone, payload.Motivo, payload.Resumen)
-		if id == 0 {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		log.Printf("[ticket] #%d creado desde el backend: %s", id, payload.Motivo)
-		writeJSON(w, map[string]any{"ok": true, "id": id})
-	})
-
-	// Cuando escribio el cliente por ultima vez. El panel lo consulta para mostrar la casilla de
-	// "avisar al cliente" desactivada CON el motivo, en vez de dejar marcarla y que no pase nada.
-	mux.HandleFunc("GET /internal/last-client-message", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		phone := strings.TrimSpace(r.URL.Query().Get("phone"))
-		if phone == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		ts, hay := store.LastClientMessageAt(phone)
-		if !hay {
-			writeJSON(w, map[string]any{"ok": true, "ts": nil})
-			return
-		}
-		writeJSON(w, map[string]any{"ok": true, "ts": ts})
-	})
-
-	mux.HandleFunc("POST /internal/ticket-close", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		var payload struct {
-			ID       int64  `json:"id"`
-			Solucion string `json:"solucion"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.ID <= 0 {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		ok := store.CloseTicket(payload.ID, strings.TrimSpace(payload.Solucion))
-		writeJSON(w, map[string]any{"ok": ok})
-	})
-
-	// Resumen para el TABLERO de control del panel (una sola llamada).
-	mux.HandleFunc("GET /internal/stats", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != cfg.ChannelSecret {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		corte := time.Now().Add(-24 * time.Hour).Unix()
-		convs := store.ListConversations(500)
-		activas, humanos := 0, 0
-		for _, c := range convs {
-			if c.LastAt >= corte {
-				activas++
-			}
-			if c.Mode == conversation.ChatModeHuman {
-				humanos++
-			}
-		}
-		writeJSON(w, map[string]any{
-			"tickets_abiertos":        len(store.ListTickets(conversation.TicketAbierto, 500)),
-			"conversaciones_activas":  activas,
-			"chats_humano":            humanos,
-			"programados_pendientes":  store.CountScheduled(conversation.SchedulePendiente),
-			"programados_confirmando": store.CountScheduled(conversation.ScheduleConfirmando),
-		})
-	})
-
-	// --- Scheduler de entregas PROGRAMADAS ---
-	// Ticker de 60s (simple y a prueba de reinicios: el estado vive en la tabla, no en memoria).
-	// A la hora propuesta le escribe al cliente para confirmar; solo dentro de la ventana de 24h
-	// de WhatsApp (desde el ÚLTIMO mensaje del cliente). Confirmaciones sin respuesta expiran en 1h.
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				// El scheduler es quien avisa de las entregas agendadas: si muere en silencio,
-				// nadie se entera hasta que un cliente reclama que no le llegó su gas.
-				log.Printf("[schedule] panic recuperado: %v", r)
-				reportarFallo(cfg, store, "", "Panic en el scheduler de entregas",
-					fmt.Sprintf("El bucle que avisa las entregas agendadas cayó: %v. Revisar que siga vivo.", r))
-			}
-		}()
-		ticker := time.NewTicker(60 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			now := time.Now().Unix()
-			store.ExpireConfirming(now - 3600)
-			for _, sch := range store.DueScheduled(now) {
-				lastMsg, ok := store.LastClientMessageAt(sch.Phone)
-				if !ok || now-lastMsg > 24*3600-300 {
-					// Ventana de 24h cerrada (o sin margen): ya no se le puede escribir. Expira.
-					store.SetScheduledEstado(sch.ID, conversation.ScheduleExpirado)
-					log.Printf("[schedule] programado #%d de %s expirado (ventana 24h cerrada)", sch.ID, sch.Phone)
-					continue
-				}
-				cuerpo := fmt.Sprintf("⏰ ¡Hola! Tenemos programada tu entrega de %d x %s color %s. "+
-					"¿La enviamos ahora? 🚚", sch.Cantidad, sch.ProductoNombre, sch.ColorNombre)
-				// Respaldo por si el menú interactivo no sale: el aviso no se puede perder.
-				respaldo := cuerpo + " Responde \"Sí\" para enviarlo."
-				if err := avisarClienteMenu(cfg, store, sch.Phone, cuerpo,
-					[]string{agent.BotonConfirmarEntrega, agent.BotonCancelarEntrega}, respaldo); err != nil {
-					// Se reporta aunque reintente en 1 min: si WhatsApp lo rechaza siempre (ventana
-					// de 24h cerrada, número bloqueado), el cliente NUNCA recibe su confirmación y
-					// nadie se entera. El dedup de tickets por (cliente, motivo) evita que el
-					// reintento por minuto inunde al equipo: el detalle se suma al mismo caso.
-					log.Printf("[schedule] error escribiendo a %s: %v (reintento en 1 min)", sch.Phone, err)
-					reportarFallo(cfg, store, sch.Phone, "No se pudo avisar de la entrega agendada",
-						fmt.Sprintf("Programado #%d (%d x %s %s): %v. El cliente no recibió la confirmación.",
-							sch.ID, sch.Cantidad, sch.ProductoNombre, sch.ColorNombre, err))
-					continue // sigue 'pendiente'; el próximo tick reintenta
-				}
-				store.MarkConfirmSent(sch.ID, now)
-				log.Printf("[schedule] confirmación enviada al cliente %s (programado #%d)", sch.Phone, sch.ID)
-			}
-		}
-	}()
-
-	// Cierre amable de las conversaciones que quedan a medias (ver cierre.go).
-	go cerrarConversacionesInactivas(cfg, store)
-
 	if cfg.LLMProvider == "anthropic" {
 		log.Printf("Modelo: anthropic %s (max_tokens=%d)", cfg.AnthropicModel, cfg.AnthropicMaxTokens)
 	} else {
@@ -911,6 +324,28 @@ func main() {
 }
 
 func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store, gr *georoutes.Client, body []byte) {
+	log.Printf("[webhook] payload recibido: %s", string(body))
+
+	inc, ok := whatsapp.ParseIncoming(body)
+	if !ok {
+		log.Printf("[webhook] sin mensaje (probable evento de estado); se ignora.")
+		return
+	}
+	procesarMensaje(cfg, ag, store, gr, inc)
+}
+
+// claveCliente: la cola y el anti-duplicados son por cliente DE UN CANAL. En el bot de bodegas el
+// mismo teléfono puede estar escribiéndole a dos bodegas a la vez: son dos conversaciones, no una.
+func claveCliente(cfg config.Config, phone string) string {
+	if cfg.OpenWASesion == "" {
+		return phone
+	}
+	return cfg.OpenWASesion + "|" + phone
+}
+
+// procesarMensaje atiende UN mensaje del cliente, venga de Meta (bot de Ubi) o de openwa (bot de
+// bodegas): todo lo que sale va por el canal de `cfg`.
+func procesarMensaje(cfg config.Config, ag *agent.Agent, store conversation.Store, gr *georoutes.Client, inc whatsapp.Incoming) {
 	// Blindaje: un panic inesperado NO debe tumbar el proceso; si sabemos el teléfono, le avisamos
 	// al cliente con un mensaje amable (nunca un error crudo).
 	var recoverPhone string
@@ -925,21 +360,18 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 		}
 	}()
 
-	log.Printf("[webhook] payload recibido: %s", string(body))
-
-	inc, ok := whatsapp.ParseIncoming(body)
-	if !ok {
-		log.Printf("[webhook] sin mensaje (probable evento de estado); se ignora.")
-		return
-	}
 	recoverPhone = inc.From
+	// openwa no tiene botones: "2" es la segunda opción del último menú (whatsapp.TraducirRespuestaMenu).
+	if inc.IsText {
+		inc.Text = whatsapp.TraducirRespuestaMenu(cfg, inc.From, inc.Text)
+	}
 
 	// Anti-duplicados: si el cliente manda el MISMO texto dos veces seguidas (doble-tap) o Meta
 	// reintenta el webhook, respondemos una sola vez. Va ANTES de la cola a propósito: si el
 	// segundo mensaje esperara su turno, la ventana de dedupWindow (6s) ya habría expirado
 	// cuando por fin lo evalúa, y un doble-tap en "Sí, la misma" registraría el pedido DOS
 	// VECES. msgDedup tiene su propio mutex: es seguro fuera del lock del cliente.
-	if inc.IsText && dedup.isDuplicate(inc.From, strings.TrimSpace(inc.Text)) {
+	if inc.IsText && dedup.isDuplicate(claveCliente(cfg, inc.From), strings.TrimSpace(inc.Text)) {
 		log.Printf("[webhook] mensaje duplicado de %s ignorado: %q", inc.From, inc.Text)
 		return
 	}
@@ -947,7 +379,7 @@ func processWebhook(cfg config.Config, ag *agent.Agent, store conversation.Store
 	// A partir de aquí, un solo turno a la vez POR CLIENTE (ver lockCliente). Se toma antes de
 	// leer o escribir el store: si no, dos mensajes del mismo cliente leerían el mismo estado
 	// viejo y el segundo pisaría lo que hizo el primero.
-	mu := lockCliente(inc.From)
+	mu := lockCliente(claveCliente(cfg, inc.From))
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -1545,7 +977,7 @@ func notifyOrderCancelled(cfg config.Config, store conversation.Store, pedidoID 
 		return
 	}
 	store.ClearActivePedido(phone)
-	agent.QuitarPorConfirmar(phone)
+	agent.QuitarPorConfirmar(cfg, phone)
 	agent.OlvidarColorDelPedido(store, phone, pedidoID)
 	// El historial NO se borra: la memoria del chat dura la ventana de 24h (regla general).
 	msg := fmt.Sprintf("😔 Tu pedido #%d fue cancelado por el conductor. Disculpa las molestias. "+
@@ -1651,9 +1083,703 @@ func notifyOrderReassigned(cfg config.Config, store conversation.Store, pedidoID
 		// El repartidor recién aceptó y es el primero que conoce (18/10): no es un "nuevo repartidor".
 		msg = agent.ConInvitacionApp(agent.MensajeRepartidorAcepto(conductor, placa, minutos, enlace))
 	}
-	agent.QuitarPorConfirmar(phone)
+	agent.QuitarPorConfirmar(cfg, phone)
 	if err := avisarCliente(cfg, store, phone, msg); err != nil {
 		reportarFallo(cfg, store, phone, "No se pudo avisar la REASIGNACIÓN a otro conductor",
 			fmt.Sprintf("Pedido #%d. El mensaje no salió: %v", pedidoID, err))
 	}
+}
+
+// registrarInternos expone los endpoints /internal/* que llama el backend. Cada uno pide su bot a
+// `elegir`: en el bot de Ubi es siempre el mismo (botFijo); en el de bodegas, el de la bodega de la
+// `sesion` que trae el aviso (cmd/bot/bodegas.go).
+func registrarInternos(mux *http.ServeMux, elegir elegirBot) {
+	// Notificación INTERNA del backend: un conductor finalizó un pedido. El bot le manda al
+	// cliente un agradecimiento y le pide calificar al repartidor. Protegido por secreto
+	// compartido (BACKEND_CHANNEL_SECRET) para que solo el backend pueda dispararlo.
+	mux.HandleFunc("POST /internal/order-finished", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			PedidoID  int    `json:"pedido_id"`
+			Telefono  string `json:"telefono"`
+			Conductor string `json:"conductor"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		go notifyOrderFinished(b.cfg, b.store, payload.PedidoID, payload.Telefono, payload.Conductor)
+	})
+
+	// Notificación INTERNA del backend: el conductor LLEGÓ a la ubicación (pulsó "Sí, llegué").
+	// El bot le avisa al cliente por WhatsApp que salga a recibir el pedido. Mismo secreto
+	// compartido que /internal/order-finished.
+	mux.HandleFunc("POST /internal/order-arrived", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			PedidoID  int    `json:"pedido_id"`
+			Telefono  string `json:"telefono"`
+			Conductor string `json:"conductor"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		go notifyOrderArrived(b.cfg, b.store, payload.PedidoID, payload.Telefono)
+	})
+
+	// Notificación INTERNA del backend: el conductor CANCELÓ el pedido. El bot le avisa al
+	// cliente por WhatsApp. Mismo secreto compartido.
+	mux.HandleFunc("POST /internal/order-cancelled", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			PedidoID  int    `json:"pedido_id"`
+			Telefono  string `json:"telefono"`
+			Conductor string `json:"conductor"`
+			// SinRepartidor (18/10): nadie aceptó; el cliente nunca conoció a un repartidor.
+			SinRepartidor bool `json:"sin_repartidor"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		go notifyOrderCancelled(b.cfg, b.store, payload.PedidoID, payload.Telefono, payload.SinRepartidor)
+	})
+
+	// Notificación INTERNA del backend: el pedido se cerró porque el CLIENTE NO SALIÓ a recibir
+	// (estado "no salió el cliente"). Mensaje específico; mismo secreto compartido.
+	mux.HandleFunc("POST /internal/order-no-show", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			PedidoID int    `json:"pedido_id"`
+			Telefono string `json:"telefono"`
+			Motivo   string `json:"motivo"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		go notifyOrderNoShow(b.cfg, b.store, payload.PedidoID, payload.Telefono, payload.Motivo)
+	})
+
+	mux.HandleFunc("POST /internal/order-reassigned", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		// placa, minutos y seguimiento_token llegan desde el 05/10 (el backend viejo no los manda:
+		// sin ellos el mensaje sale igual, solo con el nombre).
+		var payload struct {
+			PedidoID         int    `json:"pedido_id"`
+			Telefono         string `json:"telefono"`
+			Conductor        string `json:"conductor"`
+			Placa            string `json:"placa"`
+			Minutos          int    `json:"minutos"`
+			SeguimientoToken string `json:"seguimiento_token"`
+			// PrimerAviso (18/10): es el primer repartidor que conoce el cliente, recién aceptó.
+			PrimerAviso bool `json:"primer_aviso"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		go notifyOrderReassigned(b.cfg, b.store, payload.PedidoID, payload.Telefono, payload.Conductor,
+			payload.Placa, payload.Minutos, payload.SeguimientoToken, payload.PrimerAviso)
+	})
+
+	// El pedido perdio a su repartidor y el backend se lo esta ofreciendo a otros. El pedido
+	// NO esta cancelado: sigue vivo, y de eso se trata el aviso.
+	mux.HandleFunc("POST /internal/order-searching", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			PedidoID int    `json:"pedido_id"`
+			Telefono string `json:"telefono"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		go notifyOrderSearching(b.cfg, b.store, payload.PedidoID, payload.Telefono)
+	})
+
+	// El pedido se quedó sin otro repartidor de su color cerca y hay uno con un color EQUIVALENTE
+	// (18/10, backend core/georoutes/color_alterno.py): se le pregunta al cliente si le sirve. Sin
+	// el nombre del repartidor: se le presenta recién cuando acepte.
+	mux.HandleFunc("POST /internal/order-color-offer", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			PedidoID       int    `json:"pedido_id"`
+			Telefono       string `json:"telefono"`
+			ColorActual    string `json:"color_actual"`
+			ColorAlterno   string `json:"color_alterno"`
+			IDColorAlterno int    `json:"idcolor_alterno"`
+			Minutos        int    `json:"minutos"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.PedidoID <= 0 ||
+			payload.IDColorAlterno <= 0 || strings.TrimSpace(payload.ColorAlterno) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		go notifyOrderColorOffer(b.store, b.ag, payload.Telefono, agent.OfertaColorPedido{
+			IDPedido: payload.PedidoID, ColorActual: payload.ColorActual, ColorAlterno: payload.ColorAlterno,
+			IDColorAlterno: payload.IDColorAlterno, Minutos: payload.Minutos,
+		})
+	})
+
+	// Aviso al grupo de Telegram de un pedido HECHO DESDE LA APP (no pasa por el bot, así que el
+	// grupo no se enteraba). El backend arma el texto (core/georoutes_admin/eventos_pedido.py) y
+	// aquí solo se publica en el hilo "📱 Pedidos de la App".
+	mux.HandleFunc("POST /internal/aviso-pedido", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			PedidoID int    `json:"pedido_id"`
+			Texto    string `json:"texto"`
+			Urgente  bool   `json:"urgente"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Texto) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		log.Printf("[aviso-pedido] pedido %d: %.80q", payload.PedidoID, payload.Texto)
+		avisos.AvisoPedidoApp(payload.Texto, payload.Urgente)
+	})
+
+	// --- Web/panel: revisar y controlar conversaciones (protegido por el secreto de canal) ---
+	// Lista de chats recientes (número, último mensaje, modo bot/humano).
+	mux.HandleFunc("GET /internal/conversations", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		convs := b.store.ListConversations(atoiDefault(r.URL.Query().Get("limit"), 100))
+		// Para el estado de cada chat en el panel (06/10): "Registrando pedido" mientras tenga un
+		// pedido a medio armar que no ha vencido (la misma vigencia que usa el agente).
+		for i := range convs {
+			if p, ok := b.store.GetPedidoEnCurso(convs[i].Phone); ok && !p.Vacio() &&
+				time.Since(p.UpdatedAt) < agent.VencimientoFicha {
+				convs[i].Armando = true
+			}
+		}
+		writeJSON(w, convs)
+	})
+	// Conversación completa de un número (para revisarla).
+	mux.HandleFunc("GET /internal/conversation", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		phone := strings.TrimSpace(r.URL.Query().Get("phone"))
+		if phone == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{
+			"phone":    phone,
+			"mode":     b.store.GetChatMode(phone),
+			"messages": b.store.GetConversation(phone, atoiDefault(r.URL.Query().Get("limit"), 300)),
+		})
+	})
+	// Cambiar el modo de un chat: "bot" (responde el bot) o "human" (respondes tú desde la web).
+	// El panel avisa que alguien ABRIO un chat, para dejar de marcarlo como no leido.
+	mux.HandleFunc("POST /internal/chat-read", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			Phone string `json:"phone"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Phone) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		b.store.MarcarChatLeido(payload.Phone)
+		writeJSON(w, map[string]any{"ok": true})
+	})
+
+	// Lo que el panel necesita para PRELLENAR el formulario del pedido a mano: la ubicacion y el
+	// ultimo pedido tal como los tiene EL BOT. Importa que salga de aqui y no de la base del
+	// backend: la disponibilidad se comprueba en el mismo punto donde despues se va a crear el
+	// pedido, asi no se verifica en un lugar y se crea en otro.
+	mux.HandleFunc("GET /internal/pedido-operador-datos", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		phone := strings.TrimSpace(r.URL.Query().Get("phone"))
+		if phone == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		salida := map[string]any{}
+		_, tieneCuenta := b.store.GetAccount(phone)
+		salida["tiene_cuenta"] = tieneCuenta
+		// El nombre con el que se va a crear el pedido (vacío si su WhatsApp no dice un nombre):
+		// el panel lo muestra para que el operador lo confirme o lo corrija.
+		salida["nombre"] = conversation.NombreUsable(b.store, phone)
+		if loc, ok := b.store.GetLocation(phone); ok {
+			salida["latitude"] = loc.Latitude
+			salida["longitude"] = loc.Longitude
+		}
+		if calle, ok := b.store.GetDireccionTexto(phone); ok {
+			salida["direccion"] = calle
+		}
+		if ult, ok := b.store.GetLastOrder(phone); ok {
+			lineas := []map[string]any{}
+			if len(ult.Items) > 0 {
+				for _, it := range ult.Items {
+					lineas = append(lineas, map[string]any{"color": it.Color, "cantidad": it.Cantidad})
+				}
+			} else if ult.Cantidad > 0 {
+				lineas = append(lineas, map[string]any{"color": ult.Color, "cantidad": ult.Cantidad})
+			}
+			salida["ultimo_pedido"] = map[string]any{
+				"producto": ult.Producto,
+				"fecha":    ult.Fecha,
+				"lineas":   lineas,
+			}
+		}
+		if ts, ok := b.store.LastClientMessageAt(phone); ok {
+			salida["ultimo_mensaje"] = ts
+			salida["horas_desde_ultimo_mensaje"] = time.Since(time.Unix(ts, 0)).Hours()
+		}
+		// ¿El cliente dejó un pedido A MEDIAS en el chat? (dijo color/cantidad y no llegó a
+		// confirmarse). Es una de las cosas que cuentan como "pendiente" para dejar crear el
+		// pedido a mano: sin nada pendiente, el botón no debe estar disponible.
+		if ficha, ok := b.store.GetPedidoEnCurso(phone); ok && (ficha.Cantidad > 0 || len(ficha.Items) > 0) {
+			salida["ficha_en_chat"] = true
+		}
+		writeJSON(w, salida)
+	})
+
+	// PEDIDO CREADO A MANO por un operador desde el chat (gestion manual: el cliente espero, no
+	// hubo repartidor, se lo llamo por telefono y sigue queriendo el gas). Lo crea el BOT para que
+	// sepa que ese pedido existe y pueda seguir el seguimiento. Ver internal/agent/pedido_operador.go:
+	// revisa la ventana de tiempo, la disponibilidad, crea el pedido, y SOLO si quedo con
+	// repartidor le escribe al cliente. Si algo falla, el cliente no recibe nada y el motivo se
+	// devuelve aqui para que el panel lo muestre.
+	mux.HandleFunc("POST /internal/pedido-operador", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			Phone       string                         `json:"phone"`
+			Items       []conversation.PendingWaitItem `json:"items"`
+			IDTipoPago  int                            `json:"idtipopago"`
+			IDConductor int                            `json:"idconductor"`
+			Operador    string                         `json:"operador"`
+			MaxHoras    float64                        `json:"max_horas"`
+			// Los escribe el operador cuando el cliente no tiene cuenta todavia.
+			Identificacion string `json:"identificacion"`
+			Nombres        string `json:"nombres"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Phone) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		res := b.ag.CrearPedidoDeOperador(agent.PedidoDeOperador{
+			Phone:       payload.Phone,
+			Items:       payload.Items,
+			IDTipoPago:  payload.IDTipoPago,
+			IDConductor: payload.IDConductor,
+			Operador:    payload.Operador,
+			MaxHoras:    payload.MaxHoras,
+
+			Identificacion: payload.Identificacion,
+			Nombres:        payload.Nombres,
+		})
+		if !res.OK {
+			// 409: no es un error del panel, es que el pedido no corresponde crearlo ahora.
+			w.WriteHeader(http.StatusConflict)
+		}
+		writeJSON(w, res)
+	})
+
+	// Entrega AGENDADA a mano por un operador desde el chat (16/10): queda como las que agenda el
+	// bot y, a la hora, el mismo reloj le pide confirmar al cliente.
+	mux.HandleFunc("POST /internal/pedido-operador-agendar", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			Phone          string                         `json:"phone"`
+			Items          []conversation.PendingWaitItem `json:"items"`
+			IDTipoPago     int                            `json:"idtipopago"`
+			FechaHora      string                         `json:"fecha_hora"`
+			Operador       string                         `json:"operador"`
+			Identificacion string                         `json:"identificacion"`
+			Nombres        string                         `json:"nombres"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Phone) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		res := b.ag.AgendarPedidoDeOperador(agent.AgendaDeOperador{
+			Phone: payload.Phone, Items: payload.Items, IDTipoPago: payload.IDTipoPago,
+			FechaHora: payload.FechaHora, Operador: payload.Operador,
+			Identificacion: payload.Identificacion, Nombres: payload.Nombres,
+		})
+		if !res.OK {
+			w.WriteHeader(http.StatusConflict)
+		}
+		writeJSON(w, res)
+	})
+
+	mux.HandleFunc("POST /internal/chat-control", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			Phone string `json:"phone"`
+			Mode  string `json:"mode"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Phone) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		b.store.SetChatMode(payload.Phone, payload.Mode)
+		if payload.Mode == conversation.ChatModeHuman {
+			b.store.TouchActivity(payload.Phone) // arranca el contador de inactividad del control humano
+		}
+		writeJSON(w, map[string]any{"phone": payload.Phone, "mode": b.store.GetChatMode(payload.Phone)})
+	})
+	// Enviar un mensaje al cliente desde la web (respuesta manual del humano). Lo registra en el audit.
+	mux.HandleFunc("POST /internal/send-message", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			Phone string `json:"phone"`
+			Text  string `json:"text"`
+			// MaxHoras: si viene, el mensaje solo sale si el cliente escribio hace menos de esas
+			// horas. Lo usa el panel para avisar una entrega hecha por un repartidor externo: un
+			// "tu pedido fue entregado" que llega seis horas tarde no le informa nada al cliente
+			// -ya recibio su gas- y solo delata que alguien se olvido de marcarlo. Sin este
+			// campo el comportamiento es el de siempre (se manda y punto).
+			MaxHoras float64 `json:"max_horas"`
+			// Automatico marca los mensajes que manda el SISTEMA solo (el aviso de entrega, el de
+			// conductor asignado). Esos no apagan al bot; los de una persona sí. Ver
+			// tomarChatAlEscribir.
+			Automatico bool `json:"automatico"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Phone) == "" || strings.TrimSpace(payload.Text) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if payload.MaxHoras > 0 {
+			ultimo, hay := b.store.LastClientMessageAt(payload.Phone)
+			if !hay || time.Since(time.Unix(ultimo, 0)).Hours() > payload.MaxHoras {
+				// 409: no es un error del que llama, es que ya no corresponde mandarlo.
+				w.WriteHeader(http.StatusConflict)
+				writeJSON(w, map[string]any{"ok": false, "motivo": "fuera de la ventana de tiempo"})
+				return
+			}
+		}
+		b.store.TouchActivity(payload.Phone) // mantiene viva la sesión de control humano
+		b.store.LogMessage(payload.Phone, "human", payload.Text)
+		// Escribirle al cliente ES tomar la conversación. Hasta el 22/09 esto no se hacía: el
+		// panel registraba el mensaje de la persona pero dejaba el chat en modo bot, así que
+		// había dos voces contestando. Ver takeover.go y el caso de Doris.
+		if loEscribioUnaPersona(payload.Automatico, payload.MaxHoras) {
+			tomarChatAlEscribir(b.store, payload.Phone)
+		} else {
+			avisarSinTomarChat(b.store, payload.Phone)
+		}
+		if err := whatsapp.SendText(b.cfg, payload.Phone, payload.Text); err != nil {
+			log.Printf("[send-message] error enviando a %s: %v", payload.Phone, err)
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	})
+
+	// --- Tickets de soporte (panel web; secreto de canal) ---
+	// Lista de tickets: ?estado=abierto|cerrado (vacío = todos).
+	// Entregas AGENDADAS, para mostrarlas en el panel de Pedidos. Viven aqui (SQLite del bot)
+	// y no en la base del backend, porque hasta que se confirman no son pedidos todavia.
+	mux.HandleFunc("GET /internal/scheduled", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		writeJSON(w, b.store.ListScheduled(r.URL.Query().Get("estado"),
+			atoiDefault(r.URL.Query().Get("limit"), 200)))
+	})
+	mux.HandleFunc("GET /internal/tickets", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		writeJSON(w, b.store.ListTickets(r.URL.Query().Get("estado"), atoiDefault(r.URL.Query().Get("limit"), 200)))
+	})
+	// Cerrar un ticket con su solución.
+	// Crear un ticket DESDE EL BACKEND. Hoy lo usa el aviso de "pedido sin conductor": ese
+	// pedido es una venta que se pierde si nadie lo ve a tiempo, y antes solo quedaba esperando
+	// a que alguien mirara la pantalla de no asignados. Se crea el ticket y sale el correo, la
+	// misma via que ya usan las derivaciones.
+	mux.HandleFunc("POST /internal/ticket-create", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			Phone   string `json:"phone"`
+			Motivo  string `json:"motivo"`
+			Resumen string `json:"resumen"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || strings.TrimSpace(payload.Motivo) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		// Mismo camino único que los fallos internos: ticket + marca en el chat + correo + Telegram.
+		// Antes este endpoint (lo usa el BACKEND) creaba ticket y correo pero no avisaba al grupo.
+		id := reportarFallo(b.cfg, b.store, payload.Phone, payload.Motivo, payload.Resumen)
+		if id == 0 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		log.Printf("[ticket] #%d creado desde el backend: %s", id, payload.Motivo)
+		writeJSON(w, map[string]any{"ok": true, "id": id})
+	})
+
+	// Cuando escribio el cliente por ultima vez. El panel lo consulta para mostrar la casilla de
+	// "avisar al cliente" desactivada CON el motivo, en vez de dejar marcarla y que no pase nada.
+	mux.HandleFunc("GET /internal/last-client-message", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		phone := strings.TrimSpace(r.URL.Query().Get("phone"))
+		if phone == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		ts, hay := b.store.LastClientMessageAt(phone)
+		if !hay {
+			writeJSON(w, map[string]any{"ok": true, "ts": nil})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "ts": ts})
+	})
+
+	mux.HandleFunc("POST /internal/ticket-close", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			ID       int64  `json:"id"`
+			Solucion string `json:"solucion"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.ID <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		cerrado := b.store.CloseTicket(payload.ID, strings.TrimSpace(payload.Solucion))
+		writeJSON(w, map[string]any{"ok": cerrado})
+	})
+
+	// Resumen para el TABLERO de control del panel (una sola llamada).
+	mux.HandleFunc("GET /internal/stats", func(w http.ResponseWriter, r *http.Request) {
+		b, ok := elegir(w, r)
+		if !ok {
+			return
+		}
+		if b.cfg.ChannelSecret == "" || r.Header.Get("X-Channel-Secret") != b.cfg.ChannelSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		corte := time.Now().Add(-24 * time.Hour).Unix()
+		convs := b.store.ListConversations(500)
+		activas, humanos := 0, 0
+		for _, c := range convs {
+			if c.LastAt >= corte {
+				activas++
+			}
+			if c.Mode == conversation.ChatModeHuman {
+				humanos++
+			}
+		}
+		writeJSON(w, map[string]any{
+			"tickets_abiertos":        len(b.store.ListTickets(conversation.TicketAbierto, 500)),
+			"conversaciones_activas":  activas,
+			"chats_humano":            humanos,
+			"programados_pendientes":  b.store.CountScheduled(conversation.SchedulePendiente),
+			"programados_confirmando": b.store.CountScheduled(conversation.ScheduleConfirmando),
+		})
+	})
+
+}
+
+// arrancarSegundoPlano: lo que cada bot hace solo (entregas agendadas, cierre de conversaciones).
+func arrancarSegundoPlano(b *canalBot) {
+	// --- Scheduler de entregas PROGRAMADAS ---
+	// Ticker de 60s (simple y a prueba de reinicios: el estado vive en la tabla, no en memoria).
+	// A la hora propuesta le escribe al cliente para confirmar; solo dentro de la ventana de 24h
+	// de WhatsApp (desde el ÚLTIMO mensaje del cliente). Confirmaciones sin respuesta expiran en 1h.
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// El scheduler es quien avisa de las entregas agendadas: si muere en silencio,
+				// nadie se entera hasta que un cliente reclama que no le llegó su gas.
+				log.Printf("[schedule] panic recuperado: %v", r)
+				reportarFallo(b.cfg, b.store, "", "Panic en el scheduler de entregas",
+					fmt.Sprintf("El bucle que avisa las entregas agendadas cayó: %v. Revisar que siga vivo.", r))
+			}
+		}()
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			now := time.Now().Unix()
+			b.store.ExpireConfirming(now - 3600)
+			for _, sch := range b.store.DueScheduled(now) {
+				lastMsg, ok := b.store.LastClientMessageAt(sch.Phone)
+				if !ok || now-lastMsg > 24*3600-300 {
+					// Ventana de 24h cerrada (o sin margen): ya no se le puede escribir. Expira.
+					b.store.SetScheduledEstado(sch.ID, conversation.ScheduleExpirado)
+					log.Printf("[schedule] programado #%d de %s expirado (ventana 24h cerrada)", sch.ID, sch.Phone)
+					continue
+				}
+				cuerpo := fmt.Sprintf("⏰ ¡Hola! Tenemos programada tu entrega de %d x %s color %s. "+
+					"¿La enviamos ahora? 🚚", sch.Cantidad, sch.ProductoNombre, sch.ColorNombre)
+				// Respaldo por si el menú interactivo no sale: el aviso no se puede perder.
+				respaldo := cuerpo + " Responde \"Sí\" para enviarlo."
+				if err := avisarClienteMenu(b.cfg, b.store, sch.Phone, cuerpo,
+					[]string{agent.BotonConfirmarEntrega, agent.BotonCancelarEntrega}, respaldo); err != nil {
+					// Se reporta aunque reintente en 1 min: si WhatsApp lo rechaza siempre (ventana
+					// de 24h cerrada, número bloqueado), el cliente NUNCA recibe su confirmación y
+					// nadie se entera. El dedup de tickets por (cliente, motivo) evita que el
+					// reintento por minuto inunde al equipo: el detalle se suma al mismo caso.
+					log.Printf("[schedule] error escribiendo a %s: %v (reintento en 1 min)", sch.Phone, err)
+					reportarFallo(b.cfg, b.store, sch.Phone, "No se pudo avisar de la entrega agendada",
+						fmt.Sprintf("Programado #%d (%d x %s %s): %v. El cliente no recibió la confirmación.",
+							sch.ID, sch.Cantidad, sch.ProductoNombre, sch.ColorNombre, err))
+					continue // sigue 'pendiente'; el próximo tick reintenta
+				}
+				b.store.MarkConfirmSent(sch.ID, now)
+				log.Printf("[schedule] confirmación enviada al cliente %s (programado #%d)", sch.Phone, sch.ID)
+			}
+		}
+	}()
+
+	// Cierre amable de las conversaciones que quedan a medias (ver cierre.go).
+	go cerrarConversacionesInactivas(b.cfg, b.store)
+
 }

@@ -772,11 +772,11 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 	// Nombre, placa, tiempo y enlace llegan cuando acepte, con el aviso del backend.
 	porConfirmar, terminaOtra := resultado.PorConfirmar, resultado.TerminaOtraEntrega
 	if porConfirmar {
-		marcarPorConfirmar(from, resultado.IDPedido)
+		marcarPorConfirmar(a.cfg, from, resultado.IDPedido)
 		ocultarRepartidor(resultado)
 		a.store.SetSeguimientoActivo(from, "")
 	} else {
-		QuitarPorConfirmar(from)
+		QuitarPorConfirmar(a.cfg, from)
 	}
 	// A dónde se entregó, para que "repetir lo mismo" diga "2 Blanco a Casa" y no solo
 	// "2 Blanco". Se reutiliza lo resuelto arriba (antes del pedido, para elegir la dirección)

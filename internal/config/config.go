@@ -10,8 +10,35 @@ import (
 	"time"
 )
 
+// Canales por los que el bot habla con los clientes (18/10). Son DOS procesos distintos y no se
+// cruzan: el bot de Ubi (Meta, número oficial) y el bot de bodegas (openwa, un número por bodega).
+const (
+	CanalMeta   = "meta"
+	CanalOpenWA = "openwa"
+)
+
 // Config agrupa toda la configuración del servicio.
 type Config struct {
+	// Canal: CanalMeta (default, bot de Ubi) o CanalOpenWA (bot de bodegas). En el de bodegas las
+	// credenciales de Meta quedan VACÍAS a propósito: ese proceso no puede escribir por el número
+	// de Ubi aunque alguien se las ponga en el .env.
+	Canal string
+	// openwa (solo bot de bodegas).
+	OpenWABaseURL       string
+	OpenWAAPIKey        string
+	OpenWAWebhookSecret string
+	// OpenWASesionUbi es la sesión de openwa de Ubi (la de los conductores). El bot de bodegas la
+	// descarta siempre: ni recibe ni manda por ella.
+	OpenWASesionUbi string
+	// DBDir: carpeta de las bases SQLite del bot de bodegas, una por bodega (bodega-<id>.db).
+	DBDir string
+	// Por BODEGA: los pone el registro al armar el bot de cada una (cmd/bot/bodegas.go); vacíos en
+	// el bot de Ubi. OpenWASesion es la ÚNICA sesión por la que sale lo que manda ese bot.
+	OpenWASesion string
+	BodegaID     int
+	// Marca es el nombre con que el bot se presenta y firma ("Ubi" en el bot de Ubi).
+	Marca string
+
 	// LLMProvider: "gemini" (default) o "anthropic". Se cambia con una línea del .env sin borrar
 	// la config del otro proveedor.
 	LLMProvider string
@@ -199,7 +226,27 @@ func Load() Config {
 		log.Fatalf("LLM_PROVIDER no reconocido: %q (usa \"gemini\" o \"anthropic\")", proveedor)
 	}
 
+	canal := strings.ToLower(strings.TrimSpace(optional("BOT_CANAL", CanalMeta)))
+	var waToken, waPhoneID, waVerify string
+	switch canal {
+	case CanalMeta:
+		waToken, waPhoneID, waVerify = required("WHATSAPP_TOKEN"), required("WHATSAPP_PHONE_NUMBER_ID"), required("WEBHOOK_VERIFY_TOKEN")
+	case CanalOpenWA:
+		// Sin credenciales de Meta (ver Config.Canal). Y sin la sesión de Ubi no se puede descartar:
+		// se exige para arrancar.
+		required("OPENWA_SESION_UBI")
+	default:
+		log.Fatalf("BOT_CANAL no reconocido: %q (usa \"meta\" u \"openwa\")", canal)
+	}
+
 	return Config{
+		Canal:                canal,
+		OpenWABaseURL:        strings.TrimRight(os.Getenv("OPENWA_BASE_URL"), "/"),
+		OpenWAAPIKey:         os.Getenv("OPENWA_API_KEY"),
+		OpenWAWebhookSecret:  os.Getenv("OPENWA_WEBHOOK_SECRET"),
+		OpenWASesionUbi:      os.Getenv("OPENWA_SESION_UBI"),
+		DBDir:                optional("DB_DIR", "data"),
+		Marca:                "Ubi",
 		LLMProvider:          proveedor,
 		AnthropicAPIKey:      anthropicKey,
 		AnthropicModel:       optional("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
@@ -207,9 +254,9 @@ func Load() Config {
 		AnthropicCacheTTL:    optional("ANTHROPIC_CACHE_TTL", "5m"),
 		GoogleAPIKey:         googleKey,
 		GeminiModel:          optional("GEMINI_MODEL", "gemini-3.1-flash-lite"),
-		WhatsAppToken:        required("WHATSAPP_TOKEN"),
-		PhoneNumberID:        required("WHATSAPP_PHONE_NUMBER_ID"),
-		VerifyToken:          required("WEBHOOK_VERIFY_TOKEN"),
+		WhatsAppToken:        waToken,
+		PhoneNumberID:        waPhoneID,
+		VerifyToken:          waVerify,
 		Port:                 optional("PORT", "3000"),
 		GraphAPIVersion:      "v21.0",
 		WhatsAppAPIBase:      strings.TrimRight(optional("WHATSAPP_API_BASE", graphAPIBasePorDefecto), "/"),

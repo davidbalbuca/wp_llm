@@ -311,7 +311,7 @@ func (a *Agent) avisarRepartidorAsignado(from string, w conversation.PendingWait
 	// operador desde el chat. No se le presenta hasta que acepte.
 	porConf, terminaOtra := res.PorConfirmar, res.TerminaOtraEntrega
 	if porConf {
-		marcarPorConfirmar(from, res.IDPedido)
+		marcarPorConfirmar(a.cfg, from, res.IDPedido)
 		ocultarRepartidor(res)
 	}
 	// Se guarda TAMBIÉN a dónde va, para que "repetir lo mismo" pueda decirlo.

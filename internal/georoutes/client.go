@@ -51,6 +51,53 @@ type Client struct {
 
 	svcMu    sync.Mutex // protege svcToken (JWT de servicio cacheado)
 	svcToken string
+
+	// Bot de BODEGAS (18/10): la sesión de la bodega y el secreto del bot de bodegas. Con esto la
+	// cuenta del cliente se pide a /wppClienteBodega/ (un usuario aparte por bodega) y NUNCA a
+	// /wppGetOrCreateClient/, que es el del bot de Ubi y le regeneraría la contraseña.
+	bodegaSesion  string
+	bodegaSecreto string
+}
+
+// SetBodega pone al cliente en modo bodega (ver bodegaSesion).
+func (c *Client) SetBodega(sesion, secreto string) {
+	c.bodegaSesion = sesion
+	c.bodegaSecreto = secreto
+}
+
+// cuentaDeBodega: la cuenta del cliente para el bot de bodegas.
+func (c *Client) cuentaDeBodega(nombres, telefono string) (*Account, error) {
+	body, _ := json.Marshal(map[string]any{"sesion": c.bodegaSesion, "nombres": nombres, "telefono": telefono})
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/wppClienteBodega/", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Channel-Secret", c.bodegaSecreto)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var env envelope
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		return nil, fmt.Errorf("respuesta no válida del backend (HTTP %d)", resp.StatusCode)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("%s", firstNonEmptyStr(strings.TrimSpace(env.Mensaje), fmt.Sprintf("error del backend (HTTP %d)", resp.StatusCode)))
+	}
+	var acc Account
+	if err := json.Unmarshal(env.Resultado, &acc); err != nil {
+		return nil, fmt.Errorf("credenciales no válidas del backend: %w", err)
+	}
+	return &acc, nil
+}
+
+func firstNonEmptyStr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 // NewClient crea el cliente apuntando a {backendURL}/georoutes.
@@ -207,6 +254,9 @@ type Account struct {
 // backend lo deja YA VERIFICADO (sin OTP ni correo, correo placeholder). Endpoint exclusivo del
 // bot: POST /wppGetOrCreateClient/.
 func (c *Client) WppGetOrCreateClient(identificacion, nombres, telefono string) (*Account, error) {
+	if c.bodegaSesion != "" {
+		return c.cuentaDeBodega(nombres, telefono)
+	}
 	res, err := c.post("/wppGetOrCreateClient/", map[string]any{
 		"identificacion": identificacion,
 		"nombres":        nombres,
@@ -228,6 +278,10 @@ func (c *Client) WppGetOrCreateClient(identificacion, nombres, telefono string) 
 // quedó en el backend era el de su perfil de WhatsApp ("@sd2", "😀"...), que es el que ve el
 // repartidor (05/10). Al cliente con cédula el backend no le toca el nombre.
 func (c *Client) WppActualizarNombre(nombres, telefono string) (*Account, error) {
+	if c.bodegaSesion != "" {
+		// El nombre lo corrige el bot de Ubi; aquí solo se renueva la cuenta de la bodega.
+		return c.cuentaDeBodega(nombres, telefono)
+	}
 	res, err := c.post("/wppGetOrCreateClient/", map[string]any{
 		"identificacion":    "",
 		"nombres":           nombres,

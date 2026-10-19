@@ -17,21 +17,32 @@ import (
 	"strings"
 	"sync"
 
+	"wp-llm-gas/internal/config"
 	"wp-llm-gas/internal/georoutes"
 )
 
 // porConfirmar: teléfono → pedido que espera que su repartidor acepte. En memoria: si el bot se
 // reinicia en el medio, lo único que se pierde es el candado de abajo (el aviso de "aceptó" lo
 // manda el backend igual).
+//
+// La clave lleva la sesión del canal (18/10): en el bot de bodegas hay varias bodegas en el mismo
+// proceso, y el mismo cliente puede estar pidiendo en dos. Sin la sesión, el pedido de una
+// bodega le cambiaría el mensaje al cliente en la otra. En el bot de Ubi la sesión es "".
 var porConfirmar sync.Map
 
-func marcarPorConfirmar(from string, idpedido int) { porConfirmar.Store(from, idpedido) }
+func clavePorConfirmar(cfg config.Config, from string) string { return cfg.OpenWASesion + "|" + from }
+
+func marcarPorConfirmar(cfg config.Config, from string, idpedido int) {
+	porConfirmar.Store(clavePorConfirmar(cfg, from), idpedido)
+}
 
 // QuitarPorConfirmar se llama cuando el repartidor aceptó o el pedido terminó.
-func QuitarPorConfirmar(from string) { porConfirmar.Delete(from) }
+func QuitarPorConfirmar(cfg config.Config, from string) {
+	porConfirmar.Delete(clavePorConfirmar(cfg, from))
+}
 
-func estaPorConfirmar(from string) bool {
-	_, hay := porConfirmar.Load(from)
+func estaPorConfirmar(cfg config.Config, from string) bool {
+	_, hay := porConfirmar.Load(clavePorConfirmar(cfg, from))
 	return hay
 }
 

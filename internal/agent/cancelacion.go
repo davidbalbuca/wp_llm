@@ -118,7 +118,7 @@ func (a *Agent) cancelarPedidoVivoSiLoHay(from string) (string, bool) {
 	// El ciclo terminó: la próxima conversación arranca limpia, sin arrastrar el color, la
 	// cantidad ni la dirección del pedido que se acaba de cancelar (ver cierreciclo.go).
 	a.cerrarCicloDeConversacion(from, "el cliente canceló su pedido")
-	QuitarPorConfirmar(from)
+	QuitarPorConfirmar(a.cfg, from)
 	// Y la tarjeta del grupo queda en su final alternativo. Se avisa aunque no sea una venta:
 	// que el equipo vea las cancelaciones es justamente de lo que se aprende.
 	notify.Default.CerrarTarjeta(from, a.nombreDe(from), true)

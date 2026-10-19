@@ -69,7 +69,7 @@ func clienteConPedidoAmarillo(t *testing.T, srv *httptest.Server) (*Agent, conve
 		menus = append(menus, cuerpo+" ["+strings.Join(opciones, " / ")+"]")
 		return nil
 	}
-	t.Cleanup(func() { QuitarPorConfirmar(clienteAmarillo) })
+	t.Cleanup(func() { QuitarPorConfirmar(ag.cfg, clienteAmarillo) })
 	return ag, store, &menus
 }
 
@@ -121,7 +121,7 @@ func TestSiDiceQueSiSeCambiaElPedidoEnElBackend(t *testing.T) {
 	if _, hay := store.GetPendingColorSwap(clienteAmarillo); hay {
 		t.Error("la oferta quedó pendiente después de contestar")
 	}
-	if !estaPorConfirmar(clienteAmarillo) {
+	if !estaPorConfirmar(ag.cfg, clienteAmarillo) {
 		t.Error("el nuevo repartidor todavía no aceptó: tiene que quedar por confirmar")
 	}
 	if lo, _ := store.GetLastOrder(clienteAmarillo); lo.Color != "BLANCO" {
@@ -151,7 +151,7 @@ func TestSiYaNoSePuedeSigueBuscandoElSuyo(t *testing.T) {
 		if !manejado || reply != "Ese repartidor ya no está disponible; sigo buscando tu AMARILLO 🙏" {
 			t.Errorf("backend %q: respuesta = %q", estado, reply)
 		}
-		if estaPorConfirmar(clienteAmarillo) {
+		if estaPorConfirmar(ag.cfg, clienteAmarillo) {
 			t.Errorf("backend %q: no se cambió nada, no tiene por qué quedar por confirmar", estado)
 		}
 	}

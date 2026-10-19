@@ -186,6 +186,10 @@ func resolverURLFinal(finalURL, cuerpo string, refLat, refLng float64, geo Geoco
 
 // sendPayload envía un payload ya armado a la Graph API de Meta (POST /messages).
 func sendPayload(cfg config.Config, payload map[string]any) error {
+	// Candado (18/10): una config del bot de bodegas jamás sale por el número de Ubi.
+	if cfg.Canal == config.CanalOpenWA || cfg.OpenWASesion != "" {
+		return fmt.Errorf("whatsapp: config de bodega intentando mandar por Meta; no se envía")
+	}
 	// Sin credenciales no se sale a internet. En producción nunca faltan (config las exige al
 	// arrancar), así que esto solo se cumple en los TESTS: sin el corte, cada prueba que ejerce
 	// un menú dispara un POST real a la API de Meta —que no puede funcionar sin token, y que no
@@ -217,6 +221,9 @@ func sendPayload(cfg config.Config, payload map[string]any) error {
 
 // SendText envía un mensaje de texto por WhatsApp vía la Graph API de Meta.
 func SendText(cfg config.Config, to, body string) error {
+	if cfg.Canal == config.CanalOpenWA {
+		return sendTextOpenWA(cfg, to, body)
+	}
 	return sendPayload(cfg, map[string]any{
 		"messaging_product": "whatsapp",
 		"to":                to,
@@ -248,6 +255,9 @@ func trunc(s string, n int) string {
 // de cada opción lleva el texto completo (el título visible se trunca) y vuelve en el webhook al
 // elegir. Error si <1 o >10 opciones (el llamador cae a texto normal).
 func SendMenu(cfg config.Config, to, body string, opciones []string) error {
+	if cfg.Canal == config.CanalOpenWA {
+		return sendMenuOpenWA(cfg, to, body, opciones)
+	}
 	interactive, err := buildInteractiveMenu(body, opciones)
 	if err != nil {
 		return err
