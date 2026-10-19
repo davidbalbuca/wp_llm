@@ -81,6 +81,13 @@ func LineaApp() string {
 // fallaba (probado en el simulador el 05/10 a las 21:25).
 func (a *Agent) textoBienvenidaSegunHorario(nombre string, ahora time.Time) string {
 	cerrado := a.avisoFueraDeHorario(ahora)
+	// Bot de bodegas: si la bodega escribió su saludo en sus ajustes, va ese (y el aviso de horario).
+	if propio := a.saludoDeLaBodega(); propio != "" {
+		if cerrado == "" {
+			return propio
+		}
+		return propio + "\n\n" + cerrado
+	}
 	if cerrado == "" {
 		return textoBienvenidaA(nombre, ahora)
 	}
@@ -280,4 +287,17 @@ func franjaDeSaludo(ahora time.Time) string {
 	default:
 		return "¡Buenas noches"
 	}
+}
+
+// saludoDeLaBodega: el saludo que la bodega configuró (businessInfo.saludo), solo en el bot de
+// bodegas. "" = el de siempre.
+func (a *Agent) saludoDeLaBodega() string {
+	if a.cfg.Marca == "" || a.cfg.Marca == "Ubi" || a.catalog == nil {
+		return ""
+	}
+	contexto, ok := a.catalog.Get()
+	if !ok || contexto == nil {
+		return ""
+	}
+	return strings.TrimSpace(contexto.Business.Saludo)
 }

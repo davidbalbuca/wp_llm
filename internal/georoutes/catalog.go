@@ -50,6 +50,12 @@ func (c *Client) doGet(path, bearer string) (envelope, int, error) {
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
+	// Bot de bodegas (19/10): el catálogo, el horario y los datos del negocio son los de SU bodega
+	// (colores que vende, su precio, su horario, su saludo). Sin el secreto el backend lo ignora.
+	if c.bodegaSesion != "" {
+		req.Header.Set("X-Bodega-Sesion", c.bodegaSesion)
+		req.Header.Set("X-Channel-Secret", c.bodegaSecreto)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return envelope{}, 0, err
@@ -131,6 +137,8 @@ type Business struct {
 	TiemposEntrega string `json:"tiempos_entrega"`
 	Seguridad      string `json:"seguridad"`
 	Adicional      string `json:"adicional"`
+	// Saludo: el que configuró la bodega en sus ajustes (solo bot de bodegas; vacío = el de siempre).
+	Saludo string `json:"saludo"`
 }
 
 // GetBusinessInfo devuelve la configuración del negocio (businessInfo).

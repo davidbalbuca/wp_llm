@@ -31,3 +31,28 @@ func TestEnModoBodegaLaCuentaNoTocaLaDelBotDeUbi(t *testing.T) {
 		}
 	}
 }
+
+// El catálogo, el horario y los datos del negocio se piden COMO la bodega (sus colores, su precio,
+// su horario, su saludo); el bot de Ubi no manda nada de eso.
+func TestElCatalogoSePideComoLaBodega(t *testing.T) {
+	var sesiones, secretos []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sesiones = append(sesiones, r.Header.Get("X-Bodega-Sesion"))
+		secretos = append(secretos, r.Header.Get("X-Channel-Secret"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"codigo":200,"resultado":{"nombre":"Bodega Sur","saludo":"Hola"}}`))
+	}))
+	defer srv.Close()
+	bodega := NewClient(srv.URL)
+	bodega.SetBodega("sesion-bodega-sur", "secreto-bodegas")
+	info, err := bodega.GetBusinessInfo()
+	if err != nil || info.Saludo != "Hola" {
+		t.Fatalf("%v %+v", err, info)
+	}
+	if _, err := NewClient(srv.URL).GetBusinessInfo(); err != nil {
+		t.Fatal(err)
+	}
+	if sesiones[0] != "sesion-bodega-sur" || secretos[0] != "secreto-bodegas" || sesiones[1] != "" || secretos[1] != "" {
+		t.Fatalf("sesiones=%v secretos=%v", sesiones, secretos)
+	}
+}
