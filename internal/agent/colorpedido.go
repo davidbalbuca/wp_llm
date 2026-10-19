@@ -172,7 +172,7 @@ func (a *Agent) aceptarColorDelPedido(from string, sw conversation.PendingColorS
 	switch res.Estado {
 	case "ok":
 		// El nuevo todavía no aceptó: se le presenta cuando acepte (order-reassigned con primer_aviso).
-		marcarPorConfirmar(from, sw.IDPedido)
+		marcarPorConfirmar(a.cfg, from, sw.IDPedido)
 		a.recordarColorNuevo(from, sw)
 		return fmt.Sprintf("Listo, cambié tu pedido a %s ✅. Estoy confirmando con el repartidor 🚚", alterno)
 	case "ya_acepto":

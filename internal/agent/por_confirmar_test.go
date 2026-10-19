@@ -49,7 +49,7 @@ func TestPorConfirmarNoSePresentaAlRepartidor(t *testing.T) {
 	const from = "593999000901"
 	ag, store := backendPorConfirmar(t, false)
 	clienteListoParaPedir(store, from)
-	defer QuitarPorConfirmar(from)
+	defer QuitarPorConfirmar(ag.cfg, from)
 
 	tn := &turno{}
 	salida := ag.runTool(tn, from, "registrar_pedido", map[string]any{"color": "BLANCO", "cantidad": float64(1)})
@@ -83,7 +83,7 @@ func TestPorConfirmarTerminandoOtraEntrega(t *testing.T) {
 	const from = "593999000902"
 	ag, store := backendPorConfirmar(t, true)
 	clienteListoParaPedir(store, from)
-	defer QuitarPorConfirmar(from)
+	defer QuitarPorConfirmar(ag.cfg, from)
 	tn := &turno{}
 	ag.runTool(tn, from, "registrar_pedido", map[string]any{"color": "BLANCO", "cantidad": float64(1)})
 	if msg := ag.mensajeDelPedido(tn, from); !strings.Contains(msg, "terminando una entrega") {

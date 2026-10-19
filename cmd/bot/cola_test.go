@@ -194,16 +194,17 @@ func TestProcessWebhookTomaElLockAntesDeTocarElStore(t *testing.T) {
 		t.Fatalf("no se pudo leer main.go: %v", err)
 	}
 	cuerpo := string(src)
-	ini := strings.Index(cuerpo, "func processWebhook(")
+	// El cuerpo vive en procesarMensaje desde que hay dos canales (Meta y openwa, 18/10).
+	ini := strings.Index(cuerpo, "func procesarMensaje(")
 	if ini < 0 {
-		t.Fatal("no se encontró processWebhook en main.go")
+		t.Fatal("no se encontró procesarMensaje en main.go")
 	}
 	cuerpo = cuerpo[ini:]
 	if fin := strings.Index(cuerpo, "\nfunc "); fin > 0 {
 		cuerpo = cuerpo[:fin]
 	}
 
-	posLock := strings.Index(cuerpo, "lockCliente(inc.From)")
+	posLock := strings.Index(cuerpo, "lockCliente(claveCliente(cfg, inc.From))")
 	if posLock < 0 {
 		t.Fatal("processWebhook no toma el lock por cliente: dos mensajes del mismo cliente " +
 			"volverían a procesarse en paralelo y a pisarse el estado")

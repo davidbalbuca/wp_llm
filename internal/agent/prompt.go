@@ -10,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"wp-llm-gas/internal/config"
 	"wp-llm-gas/internal/conversation"
+	"wp-llm-gas/internal/whatsapp"
 )
 
 // construirSistema arma el prompt en DOS piezas: la FIJA (reglas de comportamiento + información
@@ -20,6 +22,7 @@ import (
 func (a *Agent) construirSistema(from string) (fijo, volatil string) {
 	contexto, disponible := a.catalog.Get()
 	fijo = strings.TrimSpace(behaviorPrompt) + "\n\nINFORMACIÓN DEL SERVICIO:\n" + renderServiceInfo(contexto, disponible)
+	fijo = conMarcaDeBodega(a.cfg, fijo)
 
 	var b strings.Builder
 
@@ -278,4 +281,15 @@ func fechaEnEspanol(t time.Time) string {
 		"agosto", "septiembre", "octubre", "noviembre", "diciembre"}
 	return fmt.Sprintf("%s %d de %s de %d",
 		dias[t.Weekday()], t.Day(), meses[t.Month()-1], t.Year())
+}
+
+// conMarcaDeBodega (18/10): en el bot de bodegas el asistente es el de la bodega, no "UbiGas". Mismo
+// cambio que en todo lo que sale por su WhatsApp (whatsapp.ConMarca), más una línea que lo deja claro.
+func conMarcaDeBodega(cfg config.Config, prompt string) string {
+	if cfg.Marca == "" || cfg.Marca == "Ubi" {
+		return prompt
+	}
+	prompt = strings.Replace(prompt, `(preséntate SIEMPRE así, nunca como "Ubi")`, "(preséntate SIEMPRE así)", 1)
+	return "Atiendes el WhatsApp de " + cfg.Marca + ", una distribuidora de gas de Cuenca. Habla siempre " +
+		"en su nombre: nunca menciones a Ubi ni a UbiGas.\n\n" + whatsapp.ConMarca(cfg, prompt)
 }
