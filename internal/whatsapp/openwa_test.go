@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"wp-llm-gas/internal/config"
 )
@@ -257,5 +258,54 @@ func TestAlClienteDeLaBodegaNoSeLePromocionaLaAppDeUbi(t *testing.T) {
 	}
 	if got := ConMarca(config.Config{Marca: "Ubi"}, in); got != in {
 		t.Fatal("en el bot de Ubi la app se sigue promocionando")
+	}
+}
+
+func TestNuncaSeLeContestaNiSeLeEscribeAlBotDeUbi(t *testing.T) {
+	openwa, porOpenWA := servidorFalso(t)
+	cfg := cfgBodega(openwa.URL, "")
+	cfg.NuncaTelefonos = map[string]bool{"593980000913": true}
+	_, inc, _ := ParseOpenWA(cfg, webhook("sesion-bodega-sur", map[string]any{"from": "593980000913@c.us", "body": "Soy UbiGas", "type": "text"}))
+	if AtenderEntrante(cfg, inc) {
+		t.Fatal("se atendió al número de Ubi")
+	}
+	if err := SendText(cfg, "593980000913", "hola"); err != ErrNoPermitido || len(*porOpenWA) != 0 {
+		t.Fatalf("se le escribió al número de Ubi: %v", err)
+	}
+}
+
+func TestLaFichaDeOpenWADiceSiEsContacto(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/sessions/s/contacts/111@lid":
+			_, _ = w.Write([]byte(`{"name":"UbiGas","isMyContact":true}`))
+		case "/api/sessions/s/contacts/222@lid":
+			_, _ = w.Write([]byte(`{"isMyContact":false}`))
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+	cfg := cfgBodega(srv.URL, "")
+	if !EsContactoGuardado(cfg, "s", "111@lid") || EsContactoGuardado(cfg, "s", "222@lid") {
+		t.Fatal("no se leyó la ficha del contacto")
+	}
+	if !EsContactoGuardado(cfg, "s", "333@lid") {
+		t.Fatal("si openwa falla, en modo prueba se asume contacto (no se contesta)")
+	}
+}
+
+func TestElTopePorChatFrenaAOtroBot(t *testing.T) {
+	ahora := time.Now()
+	for i := 0; i < TopeMensajesChat; i++ {
+		if !PasaElTope("s-tope", "593999", ahora.Add(time.Duration(i)*time.Second)) {
+			t.Fatalf("mensaje %d frenado antes del tope", i+1)
+		}
+	}
+	if PasaElTope("s-tope", "593999", ahora.Add(20*time.Second)) {
+		t.Fatal("pasó el tope y se siguió atendiendo")
+	}
+	if !PasaElTope("s-tope", "593888", ahora) || !PasaElTope("s-tope", "593999", ahora.Add(VentanaTopeChat+time.Minute)) {
+		t.Fatal("el tope es por chat y por ventana")
 	}
 }

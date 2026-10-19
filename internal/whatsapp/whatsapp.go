@@ -371,6 +371,8 @@ type Incoming struct {
 	// LID: solo openwa, cuando el remitente llegó con un identificador @lid sin teléfono; quien recibe
 	// lo resuelve con TelefonoDeLID y deja el teléfono en From.
 	LID string
+	// ChatID: el remitente tal cual lo mandó openwa ('...@lid' o '...@c.us'); para preguntarle si es contacto.
+	ChatID string
 }
 
 // ParseIncoming extrae el primer mensaje útil del payload de Meta.

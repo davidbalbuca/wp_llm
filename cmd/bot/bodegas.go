@@ -204,11 +204,23 @@ func mainBodegas(cfg config.Config) {
 			}
 		}
 		if !whatsapp.AtenderEntrante(cfg, inc) {
-			return // modos de prueba (BOT_SOLO_TELEFONOS / BOT_SOLO_NO_CONTACTOS): ni se lee el mensaje
+			return // BOT_NUNCA_TELEFONOS y modos de prueba: ni se lee el mensaje
+		}
+		if cfg.SoloNoContactos && whatsapp.EsContactoGuardado(cfg, sesion, inc.ChatID) {
+			return // el webhook no siempre dice si es contacto (remitentes @lid): se le pregunta a openwa
 		}
 		b, ok := rg.bot(sesion)
 		if !ok {
 			log.Printf("[bodegas] mensaje de la sesión %s, que no es de una bodega activa; se ignora", sesion)
+			return
+		}
+		if !whatsapp.PasaElTope(sesion, inc.From, time.Now()) {
+			// Probablemente otro bot. El chat queda para una persona (se ve en Conversaciones).
+			if b.store.GetChatMode(inc.From) != conversation.ChatModeHuman {
+				log.Printf("[bodegas] %s pasó %d mensajes en %s: el chat pasa a una persona (¿otro bot?)",
+					inc.From, whatsapp.TopeMensajesChat, whatsapp.VentanaTopeChat)
+				b.store.SetChatMode(inc.From, conversation.ChatModeHuman)
+			}
 			return
 		}
 		go procesarMensaje(b.cfg, b.ag, b.store, b.gr, inc)

@@ -88,7 +88,7 @@ var ErrNoPermitido = fmt.Errorf("openwa: número fuera de BOT_SOLO_TELEFONOS; no
 // BOT_SOLO_NO_CONTACTOS). Con el WhatsApp personal vinculado, a los contactos guardados no se les
 // contesta nada.
 func AtenderEntrante(cfg config.Config, inc Incoming) bool {
-	if cfg.SoloNoContactos && inc.EsContacto {
+	if cfg.NuncaTelefonos[inc.From] || (cfg.SoloNoContactos && inc.EsContacto) {
 		return false
 	}
 	return Permitido(cfg, inc.From)
@@ -96,7 +96,11 @@ func AtenderEntrante(cfg config.Config, inc Incoming) bool {
 
 // Permitido dice si el bot puede atender / escribirle a ese número (ver config.SoloTelefonos).
 func Permitido(cfg config.Config, telefono string) bool {
-	return len(cfg.SoloTelefonos) == 0 || cfg.SoloTelefonos[strings.TrimSuffix(chatID(telefono), "@c.us")]
+	t := strings.TrimSuffix(chatID(telefono), "@c.us")
+	if cfg.NuncaTelefonos[t] {
+		return false
+	}
+	return len(cfg.SoloTelefonos) == 0 || cfg.SoloTelefonos[t]
 }
 
 func enviarOpenWA(cfg config.Config, endpoint string, payload map[string]any) error {
@@ -265,7 +269,7 @@ func ParseOpenWA(cfg config.Config, body []byte) (sesion string, inc Incoming, o
 		return "", Incoming{}, false
 	}
 	inc = Incoming{From: telefono, PerfilNombre: firstNonEmpty(d.Contact.PushName, d.Contact.Name),
-		EsContacto: d.Contact.IsMyContact}
+		EsContacto: d.Contact.IsMyContact, ChatID: d.From}
 	if telefono == "" {
 		inc.LID = lid
 	}
@@ -308,4 +312,85 @@ func TelefonoDeLID(cfg config.Config, sesion, lid string) string {
 		return ""
 	}
 	return soloDigitos(r.Phone)
+}
+
+// --- ¿Es un contacto guardado? ---
+// El webhook no siempre trae contact.isMyContact: con remitentes @lid llega vacío (19/10: "UbiGas" estaba
+// guardado y el bot le contestó igual). La ficha del contacto en openwa sí lo sabe.
+
+type contactoCache struct {
+	guardado bool
+	en       time.Time
+}
+
+var (
+	contactosMu sync.Mutex
+	contactos   = map[string]contactoCache{}
+)
+
+const vigenciaContacto = 10 * time.Minute
+
+// EsContactoGuardado pregunta a openwa (GET .../contacts/{chatId}) si quien escribe está guardado en el
+// teléfono vinculado. Ante la duda (openwa no contesta) dice que SÍ: en modo prueba, mejor no contestarle
+// a alguien que contestarle a un contacto.
+func EsContactoGuardado(cfg config.Config, sesion, chatID string) bool {
+	if chatID == "" || cfg.OpenWABaseURL == "" {
+		return true
+	}
+	clave := sesion + "|" + chatID
+	contactosMu.Lock()
+	c, ok := contactos[clave]
+	contactosMu.Unlock()
+	if ok && time.Since(c.en) < vigenciaContacto {
+		return c.guardado
+	}
+	req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/api/sessions/%s/contacts/%s", cfg.OpenWABaseURL, sesion, chatID), nil)
+	req.Header.Set("X-API-Key", cfg.OpenWAAPIKey)
+	resp, err := clienteOpenWA.Do(req)
+	if err != nil {
+		return true
+	}
+	defer resp.Body.Close()
+	var r struct {
+		IsMyContact bool `json:"isMyContact"`
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		r.IsMyContact = false
+	} else if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&r) != nil {
+		return true
+	}
+	contactosMu.Lock()
+	contactos[clave] = contactoCache{guardado: r.IsMyContact, en: time.Now()}
+	contactosMu.Unlock()
+	return r.IsMyContact
+}
+
+// --- Tope por chat ---
+// Freno contra dos bots contestándose (el teléfono de una bodega habla con Ubi u otro asistente): más de
+// TopeMensajesChat mensajes de un mismo chat en VentanaTopeChat y el bot deja de atenderlo.
+
+const (
+	TopeMensajesChat = 12
+	VentanaTopeChat  = 10 * time.Minute
+)
+
+var (
+	topeMu sync.Mutex
+	tope   = map[string][]time.Time{}
+)
+
+// PasaElTope anota el mensaje y dice si todavía se atiende. false = se pasó del tope (ya no se atiende).
+func PasaElTope(sesion, telefono string, ahora time.Time) bool {
+	clave := sesion + "|" + telefono
+	topeMu.Lock()
+	defer topeMu.Unlock()
+	recientes := tope[clave][:0]
+	for _, t := range tope[clave] {
+		if ahora.Sub(t) < VentanaTopeChat {
+			recientes = append(recientes, t)
+		}
+	}
+	recientes = append(recientes, ahora)
+	tope[clave] = recientes
+	return len(recientes) <= TopeMensajesChat
 }
