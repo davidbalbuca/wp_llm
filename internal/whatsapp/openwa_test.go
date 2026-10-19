@@ -202,3 +202,25 @@ func TestConListaDePruebaSoloSeAtiendeYSeEscribeAEsosNumeros(t *testing.T) {
 		t.Fatal("sin lista se atiende a todos")
 	}
 }
+
+func TestSinContactosNoSeLeContestaAQuienEstaGuardado(t *testing.T) {
+	cfg := cfgBodega("", "")
+	cfg.SoloNoContactos = true
+	contacto := map[string]any{"from": "593999000111@c.us", "body": "hola", "type": "text",
+		"contact": map[string]any{"isMyContact": true}}
+	nuevo := map[string]any{"from": "593999000222@c.us", "body": "hola", "type": "text",
+		"contact": map[string]any{"isMyContact": false}}
+	_, inc, _ := ParseOpenWA(cfg, webhook("sesion-bodega-sur", contacto))
+	if AtenderEntrante(cfg, inc) {
+		t.Fatal("se atendió a un contacto guardado")
+	}
+	_, inc, _ = ParseOpenWA(cfg, webhook("sesion-bodega-sur", nuevo))
+	if !AtenderEntrante(cfg, inc) {
+		t.Fatal("no se atendió a un número nuevo")
+	}
+	cfg.SoloNoContactos = false
+	_, inc, _ = ParseOpenWA(cfg, webhook("sesion-bodega-sur", contacto))
+	if !AtenderEntrante(cfg, inc) {
+		t.Fatal("sin el modo, el contacto también se atiende")
+	}
+}

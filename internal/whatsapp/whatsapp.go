@@ -365,6 +365,9 @@ type Incoming struct {
 	// no viene en todos los eventos). Lo escribió la propia persona, así que se prefiere a
 	// deducirlo del mensaje.
 	PerfilNombre string
+	// EsContacto: quien escribe está guardado en los contactos del teléfono vinculado (solo openwa; en
+	// Meta siempre false). Lo usa BOT_SOLO_NO_CONTACTOS.
+	EsContacto bool
 }
 
 // ParseIncoming extrae el primer mensaje útil del payload de Meta.

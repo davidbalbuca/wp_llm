@@ -64,6 +64,16 @@ func ConMarca(cfg config.Config, texto string) string {
 // ErrNoPermitido: BOT_SOLO_TELEFONOS está puesto y el destino no está en la lista (pruebas en dev).
 var ErrNoPermitido = fmt.Errorf("openwa: número fuera de BOT_SOLO_TELEFONOS; no se envía")
 
+// AtenderEntrante: si el bot atiende este mensaje según los modos de prueba (BOT_SOLO_TELEFONOS y
+// BOT_SOLO_NO_CONTACTOS). Con el WhatsApp personal vinculado, a los contactos guardados no se les
+// contesta nada.
+func AtenderEntrante(cfg config.Config, inc Incoming) bool {
+	if cfg.SoloNoContactos && inc.EsContacto {
+		return false
+	}
+	return Permitido(cfg, inc.From)
+}
+
 // Permitido dice si el bot puede atender / escribirle a ese número (ver config.SoloTelefonos).
 func Permitido(cfg config.Config, telefono string) bool {
 	return len(cfg.SoloTelefonos) == 0 || cfg.SoloTelefonos[strings.TrimSuffix(chatID(telefono), "@c.us")]
@@ -187,8 +197,9 @@ type mensajeOpenWA struct {
 		IsLidSender       bool   `json:"isLidSender"`
 		SenderPhone       string `json:"senderPhone"`
 		Contact           struct {
-			PushName string `json:"pushName"`
-			Name     string `json:"name"`
+			PushName    string `json:"pushName"`
+			Name        string `json:"name"`
+			IsMyContact bool   `json:"isMyContact"`
 		} `json:"contact"`
 		Location *struct {
 			Latitude  float64 `json:"latitude"`
@@ -230,7 +241,8 @@ func ParseOpenWA(cfg config.Config, body []byte) (sesion string, inc Incoming, o
 	if telefono == "" || strings.Trim(telefono, "0123456789") != "" {
 		return "", Incoming{}, false
 	}
-	inc = Incoming{From: telefono, PerfilNombre: firstNonEmpty(d.Contact.PushName, d.Contact.Name)}
+	inc = Incoming{From: telefono, PerfilNombre: firstNonEmpty(d.Contact.PushName, d.Contact.Name),
+		EsContacto: d.Contact.IsMyContact}
 	switch {
 	case d.Location != nil && (d.Location.Latitude != 0 || d.Location.Longitude != 0):
 		inc.HasLocation, inc.Latitude, inc.Longitude = true, d.Location.Latitude, d.Location.Longitude

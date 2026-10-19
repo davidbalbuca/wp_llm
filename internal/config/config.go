@@ -42,6 +42,9 @@ type Config struct {
 	// esos y SOLO les escribe a ellos. Para probar en dev con un WhatsApp personal vinculado: el resto
 	// de sus contactos no recibe nada del bot.
 	SoloTelefonos map[string]bool
+	// SoloNoContactos (BOT_SOLO_NO_CONTACTOS, solo bot de bodegas): no se atiende a quien está guardado en
+	// los contactos del teléfono vinculado. Para probar con un WhatsApp personal.
+	SoloNoContactos bool
 
 	// LLMProvider: "gemini" (default) o "anthropic". Se cambia con una línea del .env sin borrar
 	// la config del otro proveedor.
@@ -252,6 +255,7 @@ func Load() Config {
 		DBDir:                optional("DB_DIR", "data"),
 		Marca:                "Ubi",
 		SoloTelefonos:        listaDeTelefonos(os.Getenv("BOT_SOLO_TELEFONOS")),
+		SoloNoContactos:      optionalBool("BOT_SOLO_NO_CONTACTOS", false),
 		LLMProvider:          proveedor,
 		AnthropicAPIKey:      anthropicKey,
 		AnthropicModel:       optional("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),

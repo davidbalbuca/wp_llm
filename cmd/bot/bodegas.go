@@ -197,8 +197,8 @@ func mainBodegas(cfg config.Config) {
 		if !ok {
 			return
 		}
-		if !whatsapp.Permitido(cfg, inc.From) {
-			return // BOT_SOLO_TELEFONOS (pruebas): a los demás ni se les lee el mensaje
+		if !whatsapp.AtenderEntrante(cfg, inc) {
+			return // modos de prueba (BOT_SOLO_TELEFONOS / BOT_SOLO_NO_CONTACTOS): ni se lee el mensaje
 		}
 		b, ok := rg.bot(sesion)
 		if !ok {
@@ -209,6 +209,9 @@ func mainBodegas(cfg config.Config) {
 	})
 	registrarInternos(mux, rg.elegir)
 
+	if cfg.SoloNoContactos {
+		log.Printf("Bot de BODEGAS en modo PRUEBA: no atiende a los contactos guardados (BOT_SOLO_NO_CONTACTOS)")
+	}
 	if len(cfg.SoloTelefonos) > 0 {
 		log.Printf("Bot de BODEGAS en modo PRUEBA: solo atiende y escribe a %d número(s) (BOT_SOLO_TELEFONOS)", len(cfg.SoloTelefonos))
 	}
