@@ -197,6 +197,12 @@ func mainBodegas(cfg config.Config) {
 		if !ok {
 			return
 		}
+		if inc.From == "" && inc.LID != "" {
+			if inc.From = whatsapp.TelefonoDeLID(cfg, sesion, inc.LID); inc.From == "" {
+				log.Printf("[bodegas] mensaje de un @lid que openwa no sabe a qué teléfono corresponde; se ignora")
+				return
+			}
+		}
 		if !whatsapp.AtenderEntrante(cfg, inc) {
 			return // modos de prueba (BOT_SOLO_TELEFONOS / BOT_SOLO_NO_CONTACTOS): ni se lee el mensaje
 		}

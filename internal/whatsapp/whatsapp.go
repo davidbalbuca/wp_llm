@@ -368,6 +368,9 @@ type Incoming struct {
 	// EsContacto: quien escribe está guardado en los contactos del teléfono vinculado (solo openwa; en
 	// Meta siempre false). Lo usa BOT_SOLO_NO_CONTACTOS.
 	EsContacto bool
+	// LID: solo openwa, cuando el remitente llegó con un identificador @lid sin teléfono; quien recibe
+	// lo resuelve con TelefonoDeLID y deja el teléfono en From.
+	LID string
 }
 
 // ParseIncoming extrae el primer mensaje útil del payload de Meta.

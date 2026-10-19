@@ -156,7 +156,6 @@ func TestLaEntradaDescartaLaSesionDeUbiYLoQueNoEsDeUnCliente(t *testing.T) {
 		"lo mandamos":   webhook("sesion-bodega-sur", map[string]any{"from": "593999000111@c.us", "fromMe": true, "type": "text"}),
 		"grupo":         webhook("sesion-bodega-sur", map[string]any{"from": "123@g.us", "isGroup": true, "type": "text"}),
 		"estado":        webhook("sesion-bodega-sur", map[string]any{"from": "593999000111@c.us", "isStatusBroadcast": true}),
-		"lid sin tel":   webhook("sesion-bodega-sur", map[string]any{"from": "2697841@lid", "isLidSender": true, "type": "text"}),
 	}
 	for nombre, body := range casos {
 		if _, _, ok := ParseOpenWA(cfg, body); ok {
@@ -222,5 +221,29 @@ func TestSinContactosNoSeLeContestaAQuienEstaGuardado(t *testing.T) {
 	_, inc, _ = ParseOpenWA(cfg, webhook("sesion-bodega-sur", contacto))
 	if !AtenderEntrante(cfg, inc) {
 		t.Fatal("sin el modo, el contacto también se atiende")
+	}
+}
+
+func TestUnLIDSinTelefonoSeEntregaParaResolverlo(t *testing.T) {
+	cfg := cfgBodega("", "")
+	_, inc, ok := ParseOpenWA(cfg, webhook("sesion-bodega-sur", map[string]any{
+		"from": "2697841@lid", "isLidSender": true, "type": "text", "body": "véndame dos gases"}))
+	if !ok || inc.From != "" || inc.LID != "2697841@lid" || inc.Text != "véndame dos gases" {
+		t.Fatalf("%v %+v", ok, inc)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/sessions/sesion-bodega-sur/contacts/2697841@lid/phone" || r.Header.Get("X-API-Key") != "k" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"contactId":"2697841@lid","phone":"+56942488602"}`))
+	}))
+	defer srv.Close()
+	cfg.OpenWABaseURL = srv.URL
+	if got := TelefonoDeLID(cfg, "sesion-bodega-sur", "2697841@lid"); got != "56942488602" {
+		t.Fatalf("got %q", got)
+	}
+	if got := TelefonoDeLID(cfg, "otra-sesion", "2697841@lid"); got != "" {
+		t.Fatalf("otra sesión: %q", got)
 	}
 }

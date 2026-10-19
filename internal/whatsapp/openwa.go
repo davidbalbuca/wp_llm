@@ -200,6 +200,7 @@ type mensajeOpenWA struct {
 			PushName    string `json:"pushName"`
 			Name        string `json:"name"`
 			IsMyContact bool   `json:"isMyContact"`
+			Number      string `json:"number"`
 		} `json:"contact"`
 		Location *struct {
 			Latitude  float64 `json:"latitude"`
@@ -231,18 +232,23 @@ func ParseOpenWA(cfg config.Config, body []byte) (sesion string, inc Incoming, o
 	if p.SessionID == "" || p.SessionID == cfg.OpenWASesionUbi || d.FromMe || d.IsGroup || d.IsStatusBroadcast {
 		return "", Incoming{}, false
 	}
-	telefono := ""
+	telefono, lid := "", ""
 	if d.IsLidSender || strings.HasSuffix(d.From, "@lid") {
-		telefono = d.SenderPhone
+		// WhatsApp migró a LID: el teléfono viene aparte (senderPhone) o, si no, se le pide a openwa
+		// (TelefonoDeLID). Sin esto el mensaje se perdía en silencio (19/10, primera prueba en dev).
+		telefono, lid = firstNonEmpty(d.SenderPhone, d.Contact.Number), d.From
 	} else {
 		telefono = strings.SplitN(d.From, "@", 2)[0]
 	}
-	telefono = strings.TrimPrefix(strings.TrimSpace(telefono), "+")
-	if telefono == "" || strings.Trim(telefono, "0123456789") != "" {
+	telefono = soloDigitos(telefono)
+	if telefono == "" && lid == "" {
 		return "", Incoming{}, false
 	}
 	inc = Incoming{From: telefono, PerfilNombre: firstNonEmpty(d.Contact.PushName, d.Contact.Name),
 		EsContacto: d.Contact.IsMyContact}
+	if telefono == "" {
+		inc.LID = lid
+	}
 	switch {
 	case d.Location != nil && (d.Location.Latitude != 0 || d.Location.Longitude != 0):
 		inc.HasLocation, inc.Latitude, inc.Longitude = true, d.Location.Latitude, d.Location.Longitude
@@ -250,4 +256,36 @@ func ParseOpenWA(cfg config.Config, body []byte) (sesion string, inc Incoming, o
 		inc.IsText, inc.Text = true, d.Body
 	}
 	return p.SessionID, inc, true
+}
+
+func soloDigitos(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, s)
+}
+
+// TelefonoDeLID le pide a openwa el teléfono de un remitente @lid (GET .../contacts/{lid}/phone). "" si
+// openwa todavía no lo sabe.
+func TelefonoDeLID(cfg config.Config, sesion, lid string) string {
+	if cfg.OpenWABaseURL == "" || sesion == "" || lid == "" {
+		return ""
+	}
+	req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/api/sessions/%s/contacts/%s/phone",
+		cfg.OpenWABaseURL, sesion, lid), nil)
+	req.Header.Set("X-API-Key", cfg.OpenWAAPIKey)
+	resp, err := clienteOpenWA.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	var r struct {
+		Phone string `json:"phone"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&r) != nil {
+		return ""
+	}
+	return soloDigitos(r.Phone)
 }
