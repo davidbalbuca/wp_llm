@@ -38,6 +38,10 @@ type Config struct {
 	BodegaID     int
 	// Marca es el nombre con que el bot se presenta y firma ("Ubi" en el bot de Ubi).
 	Marca string
+	// SoloTelefonos (BOT_SOLO_TELEFONOS, solo bot de bodegas): si tiene números, el bot SOLO atiende a
+	// esos y SOLO les escribe a ellos. Para probar en dev con un WhatsApp personal vinculado: el resto
+	// de sus contactos no recibe nada del bot.
+	SoloTelefonos map[string]bool
 
 	// LLMProvider: "gemini" (default) o "anthropic". Se cambia con una línea del .env sin borrar
 	// la config del otro proveedor.
@@ -247,6 +251,7 @@ func Load() Config {
 		OpenWASesionUbi:      os.Getenv("OPENWA_SESION_UBI"),
 		DBDir:                optional("DB_DIR", "data"),
 		Marca:                "Ubi",
+		SoloTelefonos:        listaDeTelefonos(os.Getenv("BOT_SOLO_TELEFONOS")),
 		LLMProvider:          proveedor,
 		AnthropicAPIKey:      anthropicKey,
 		AnthropicModel:       optional("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
@@ -329,4 +334,29 @@ func (c Config) HorarioFin(dia time.Weekday) string {
 		}
 	}
 	return c.BotHorarioFin
+}
+
+// listaDeTelefonos: "593999000111, 0999000222" -> {"593999000111", "593999000222"} (formato de WhatsApp).
+// Vacía = nil (sin restricción).
+func listaDeTelefonos(v string) map[string]bool {
+	var m map[string]bool
+	for _, t := range strings.Split(v, ",") {
+		d := strings.Map(func(r rune) rune {
+			if r >= '0' && r <= '9' {
+				return r
+			}
+			return -1
+		}, t)
+		if strings.HasPrefix(d, "0") && len(d) == 10 {
+			d = "593" + d[1:]
+		}
+		if d == "" {
+			continue
+		}
+		if m == nil {
+			m = map[string]bool{}
+		}
+		m[d] = true
+	}
+	return m
 }

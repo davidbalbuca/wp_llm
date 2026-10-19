@@ -184,3 +184,21 @@ func TestLaFirmaDelWebhookEsObligatoria(t *testing.T) {
 		t.Fatal("se aceptó una firma que no es del secreto de bodegas")
 	}
 }
+
+func TestConListaDePruebaSoloSeAtiendeYSeEscribeAEsosNumeros(t *testing.T) {
+	openwa, porOpenWA := servidorFalso(t)
+	cfg := cfgBodega(openwa.URL, "")
+	cfg.SoloTelefonos = map[string]bool{"593999000111": true}
+	if err := SendText(cfg, "593999000222", "hola"); err != ErrNoPermitido {
+		t.Fatalf("a un número fuera de la lista: %v", err)
+	}
+	if err := SendText(cfg, "593999000111", "hola"); err != nil {
+		t.Fatal(err)
+	}
+	if len(*porOpenWA) != 1 || !Permitido(cfg, "593999000111") || Permitido(cfg, "593999000222") {
+		t.Fatalf("envíos: %d", len(*porOpenWA))
+	}
+	if !Permitido(cfgBodega("", ""), "593999000222") {
+		t.Fatal("sin lista se atiende a todos")
+	}
+}

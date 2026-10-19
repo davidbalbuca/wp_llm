@@ -61,9 +61,20 @@ func ConMarca(cfg config.Config, texto string) string {
 	return marcaUbi.ReplaceAllString(texto, cfg.Marca)
 }
 
+// ErrNoPermitido: BOT_SOLO_TELEFONOS está puesto y el destino no está en la lista (pruebas en dev).
+var ErrNoPermitido = fmt.Errorf("openwa: número fuera de BOT_SOLO_TELEFONOS; no se envía")
+
+// Permitido dice si el bot puede atender / escribirle a ese número (ver config.SoloTelefonos).
+func Permitido(cfg config.Config, telefono string) bool {
+	return len(cfg.SoloTelefonos) == 0 || cfg.SoloTelefonos[strings.TrimSuffix(chatID(telefono), "@c.us")]
+}
+
 func enviarOpenWA(cfg config.Config, endpoint string, payload map[string]any) error {
 	if cfg.Canal != config.CanalOpenWA || !sesionValida(cfg) {
 		return ErrSesionAjena
+	}
+	if to, _ := payload["chatId"].(string); !Permitido(cfg, to) {
+		return ErrNoPermitido
 	}
 	b, _ := json.Marshal(payload)
 	url := fmt.Sprintf("%s/api/sessions/%s/messages/%s", cfg.OpenWABaseURL, cfg.OpenWASesion, endpoint)

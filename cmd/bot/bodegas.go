@@ -197,6 +197,9 @@ func mainBodegas(cfg config.Config) {
 		if !ok {
 			return
 		}
+		if !whatsapp.Permitido(cfg, inc.From) {
+			return // BOT_SOLO_TELEFONOS (pruebas): a los demás ni se les lee el mensaje
+		}
 		b, ok := rg.bot(sesion)
 		if !ok {
 			log.Printf("[bodegas] mensaje de la sesión %s, que no es de una bodega activa; se ignora", sesion)
@@ -206,6 +209,9 @@ func mainBodegas(cfg config.Config) {
 	})
 	registrarInternos(mux, rg.elegir)
 
+	if len(cfg.SoloTelefonos) > 0 {
+		log.Printf("Bot de BODEGAS en modo PRUEBA: solo atiende y escribe a %d número(s) (BOT_SOLO_TELEFONOS)", len(cfg.SoloTelefonos))
+	}
 	log.Printf("Bot de BODEGAS escuchando en :%s (openwa %s)", cfg.Port, cfg.OpenWABaseURL)
 	log.Fatal(http.ListenAndServe(":"+cfg.Port, mux))
 }
