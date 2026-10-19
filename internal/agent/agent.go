@@ -544,6 +544,15 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 			// Se le pide con amabilidad lo que falta y el modelo sigue con la programación.
 			log.Printf("[fantasma] %s: afirmó un pedido fuera de horario; no se fuerza, se pide lo que falta", from)
 			reply = a.loQueFaltaParaElPedido(from)
+		case !a.tieneUbicacion(from):
+			// Sin ubicación el pedido no puede existir: forzar el registro solo fallaba, el modelo
+			// reescribía "no pude completar tu pedido, ya avisé al equipo" y otro candado abría un
+			// ticket. Pasó el 19/10 16:49 (ticket #151): el cliente solo preguntó "hasta qué hora
+			// hacen las entregas sector el vergel" y el modelo, al contestar, dijo que su cilindro
+			// salía "en camino" apenas mandara la ubicación. Se quita SOLO la frase que afirma el
+			// pedido (el resto contestaba lo que preguntó) y se le pide lo que falta.
+			log.Printf("[fantasma] %s: afirmó un pedido sin ubicación; no se fuerza, se quita la afirmación", from)
+			reply = a.sinAfirmarElPedido(reply, from)
 		default:
 			log.Printf("[fantasma] %s: el modelo afirmó un pedido sin registrar_pedido; se fuerza el registro", from)
 			if forzado, ok := a.forzarRegistroSiHaceFalta(t, from); ok {
