@@ -553,3 +553,60 @@ func (a *Agent) loQueFaltaParaElPedido(from string) string {
 	}
 	return "Ya casi está 😊 ¿Me confirmas que te lo envío ahora?"
 }
+
+// tieneUbicacion: el cliente ya mandó dónde entregar (sin esto registrar_pedido no puede crear nada).
+func (a *Agent) tieneUbicacion(from string) bool {
+	_, hay := a.store.GetLocation(from)
+	return hay
+}
+
+// pideUbicacion: el texto le pide al cliente su ubicación ("¿me compartes tu ubicación?", "tocas el 📎").
+func pideUbicacion(texto string) bool {
+	t := normalizar(texto)
+	return strings.Contains(t, "ubicacion") || strings.Contains(texto, "📎")
+}
+
+// sinAfirmarElPedido quita del texto las frases que dan el pedido por hecho ("sale en camino",
+// "quedó confirmado") y, si después de eso no queda la pregunta de lo que falta, la agrega. Para el
+// caso en que el pedido todavía no puede existir (sin ubicación): lo demás de la respuesta -el
+// horario, el precio- es lo que el cliente preguntó y se queda.
+func (a *Agent) sinAfirmarElPedido(texto, from string) string {
+	var quedan []string
+	for _, f := range frases(texto) {
+		if !afirmaPedidoConfirmado(f) {
+			quedan = append(quedan, f)
+		}
+	}
+	limpio := strings.TrimSpace(strings.Join(quedan, " "))
+	falta := a.loQueFaltaParaElPedido(from)
+	if limpio == "" {
+		return falta
+	}
+	if !pideUbicacion(limpio) {
+		limpio += "\n\n" + falta
+	}
+	return limpio
+}
+
+// frases parte un mensaje en oraciones: en ., !, ?, saltos de línea y en el emoji que cierra una
+// frase (el bot escribe "Hasta las 20:00 😊 Apenas me compartas…").
+func frases(texto string) []string {
+	var out []string
+	var b strings.Builder
+	runas := []rune(texto)
+	for i, r := range runas {
+		b.WriteRune(r)
+		siguienteEsEspacio := i+1 < len(runas) && (runas[i+1] == ' ' || runas[i+1] == '\n')
+		cierra := r == '\n' || ((r == '.' || r == '!' || r == '?' || r >= 0x2190) && (siguienteEsEspacio || i+1 == len(runas)))
+		if cierra {
+			if f := strings.TrimSpace(b.String()); f != "" {
+				out = append(out, f)
+			}
+			b.Reset()
+		}
+	}
+	if f := strings.TrimSpace(b.String()); f != "" {
+		out = append(out, f)
+	}
+	return out
+}
