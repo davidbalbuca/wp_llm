@@ -46,7 +46,7 @@ import (
 // el conjunto de caracteres se limita a letras, espacios y comas: así no se come una frase como
 // "Hola, el precio es $3.25" más allá de su primera coma.
 var aperturaDeSaludo = regexp.MustCompile(
-	`^[¡!\s📋]*(?i:hola|buenos\s+d[íi]as|buenas\s+tardes|buenas\s+noches|qu[eé]\s+tal)` +
+	`^[¡!\s📋]*(?i:hola|buenos\s+d[íi]as|buenas\s+tardes|buenas\s+noches|buenas[,!]|qu[eé]\s+tal)` +
 		`(?:[,\s]+[\p{L}\p{M}'´]+){0,3}` + // ", Ana" / " Sergy" / ", Dra. Fanny"
 		`[!.…]*\s*(?:👋|🙌|😊|🔥|✨)?[\s,]*`)
 
@@ -60,7 +60,7 @@ var aperturaDeSaludo = regexp.MustCompile(
 // aquí atendemos solo gas" es la frase que LLEVA la respuesta. Al incluirla, el recorte dejaba el
 // mensaje vacío. Solo se quitan las fórmulas que no dicen nada por sí mismas.
 var saludoDeCortesia = regexp.MustCompile(
-	`^(?i:(qu[eé]\s+(gusto|bueno)|con\s+gusto\s+te\s+ayudo|soy\s+ubi)` +
+	`^(?i:(qu[eé]\s+(gusto|bueno)|con\s+gusto\s+te\s+ayudo|soy\s+ubi|soy\s+de\s)` +
 		`[^.!?\n😊🙌👋🚚🔥]{0,60}[.!…]*\s*)`)
 
 // emojiHuerfano: los emojis de cortesía que quedan al principio tras recortar el saludo. Solo los
@@ -69,7 +69,7 @@ var saludoDeCortesia = regexp.MustCompile(
 var emojiHuerfano = regexp.MustCompile(`^[\s😊🙌👋✨🔥📋]+`)
 
 // formulaDeSaludo es la apertura sin el nombre, para armar el recorte con el nombre EXACTO.
-const formulaDeSaludo = `^[¡!\s📋]*(?i:hola|buenos\s+d[íi]as|buenas\s+tardes|buenas\s+noches|qu[eé]\s+tal)`
+const formulaDeSaludo = `^[¡!\s📋]*(?i:hola|buenos\s+d[íi]as|buenas\s+tardes|buenas\s+noches|buenas[,!]|qu[eé]\s+tal)`
 
 // aperturaConNombre reconoce el saludo dirigido a ESTE nombre, escrito tal cual. El patrón genérico
 // solo acepta letras en el nombre, y los nombres de perfil de WhatsApp traen de todo. CASO 04/10

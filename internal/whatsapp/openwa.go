@@ -53,13 +53,33 @@ func chatID(to string) string {
 // Ubi". En minúsculas no se toca (enlaces como ubi.com.ec).
 var marcaUbi = regexp.MustCompile(`\bUbi(Gas)?\b`)
 
-// ConMarca cambia "Ubi" por la marca de la config (la bodega). En el bot de Ubi no cambia nada.
+// ConMarca cambia "Ubi" por la marca de la config (la bodega) y quita las líneas con enlaces de Ubi
+// (la app, la privacidad): al cliente de una bodega no se le promociona Ubi (19/10, primera prueba).
+// En el bot de Ubi no cambia nada.
 func ConMarca(cfg config.Config, texto string) string {
 	if cfg.Marca == "" || cfg.Marca == "Ubi" {
 		return texto
 	}
+	if strings.Contains(texto, enlaceUbi) || strings.Contains(texto, emojiApp) {
+		lineas := strings.Split(texto, "\n")
+		quedan := lineas[:0]
+		for _, l := range lineas {
+			// 📲 abre las cuatro invitaciones a la app (agent/bienvenida.go, guardarcontacto.go), y en
+			// la del saludo el enlace va en la línea de abajo.
+			if !strings.Contains(l, enlaceUbi) && !strings.HasPrefix(strings.TrimSpace(l), emojiApp) {
+				quedan = append(quedan, l)
+			}
+		}
+		texto = strings.TrimSpace(variasLineasEnBlanco.ReplaceAllString(strings.Join(quedan, "\n"), "\n\n"))
+	}
 	return marcaUbi.ReplaceAllString(texto, cfg.Marca)
 }
+
+const enlaceUbi = "ubi.ec/"
+
+const emojiApp = "📲"
+
+var variasLineasEnBlanco = regexp.MustCompile(`\n{3,}`)
 
 // ErrNoPermitido: BOT_SOLO_TELEFONOS está puesto y el destino no está en la lista (pruebas en dev).
 var ErrNoPermitido = fmt.Errorf("openwa: número fuera de BOT_SOLO_TELEFONOS; no se envía")

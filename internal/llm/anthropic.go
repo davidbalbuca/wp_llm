@@ -143,8 +143,19 @@ func (a *anthropicProvider) Generate(ctx context.Context, system System, history
 
 	var datos anthRespuesta
 	var ultimoErr error
+	vacias := 0
 	for intento := 1; intento <= anthropicIntentos; intento++ {
 		datos, ultimoErr = a.enviar(ctx, cuerpo)
+		// El proxy (claude -p) a veces contesta stop_reason=tool_use SIN el bloque de la herramienta:
+		// el turno salía solo con el texto ("Estos son los colores que manejamos 👇") y el menú nunca
+		// llegaba (19/10, bot de bodegas en dev). Se vuelve a pedir; el agente de operaciones (Python)
+		// ya lo hace con su "No such tool available".
+		if ultimoErr == nil && datos.StopReason == "tool_use" && !traeHerramienta(datos) && vacias < 2 {
+			vacias++
+			log.Printf("[llm] anthropic: tool_use sin herramienta en la respuesta; reintento %d/2", vacias)
+			intento--
+			continue
+		}
 		if ultimoErr == nil {
 			break
 		}
@@ -468,4 +479,13 @@ func textoResultado(fr *genai.FunctionResponse) string {
 		}
 	}
 	return "(sin resultado)"
+}
+
+func traeHerramienta(d anthRespuesta) bool {
+	for _, b := range d.Content {
+		if b.Type == "tool_use" {
+			return true
+		}
+	}
+	return false
 }

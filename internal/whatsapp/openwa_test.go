@@ -247,3 +247,15 @@ func TestUnLIDSinTelefonoSeEntregaParaResolverlo(t *testing.T) {
 		t.Fatalf("otra sesión: %q", got)
 	}
 }
+
+func TestAlClienteDeLaBodegaNoSeLePromocionaLaAppDeUbi(t *testing.T) {
+	cfg := config.Config{Marca: "Bodega Prueba"}
+	in := "¡Hola! Soy *UbiGas*.\n\n📲 Descarga nuestra app 👇\n👉 https://ubi.ec/app.html\n💬 O también te puedo ayudar por aquí 👇"
+	want := "¡Hola! Soy *Bodega Prueba*.\n\n💬 O también te puedo ayudar por aquí 👇"
+	if got := ConMarca(cfg, in); got != want {
+		t.Fatalf("got %q", got)
+	}
+	if got := ConMarca(config.Config{Marca: "Ubi"}, in); got != in {
+		t.Fatal("en el bot de Ubi la app se sigue promocionando")
+	}
+}
