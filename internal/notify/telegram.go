@@ -30,6 +30,10 @@ const ventanaAviso = conversation.SessionGap
 // tiempoLimite acota cada llamada a la API. Corto: un aviso que tarda no sirve.
 const tiempoLimite = 8 * time.Second
 
+// esperasReintento: cuánto se espera antes de cada reintento de un envío que falló por la red.
+// Variable para que los tests no esperen de verdad.
+var esperasReintento = []time.Duration{2 * time.Second, 5 * time.Second}
+
 // topeFallosIguales / ventanaTope: anti-inundación. Si Meta se cae, los avisos fallarían en
 // cadena y el grupo se llenaría de mensajes iguales (y se silenciaría). Se cuenta por MOTIVO.
 const (
@@ -56,6 +60,7 @@ type Notifier struct {
 	hiloSinRepartidor int64
 	hiloSondeo        int64
 	hiloPedidosApp    int64
+	pedidosRenombrado sync.Once
 	// vistos cuenta fallos por motivo dentro de ventanaTope, para el anti-inundación.
 	vistos map[string]*contador
 }
@@ -367,8 +372,28 @@ func (n *Notifier) hiloSondeoID() int64 {
 	return n.hiloFijo(&n.hiloSondeo, claveHiloSondeo, "🕵️ Posibles sondeos", 9367192) // morado
 }
 
+// nombreHiloPedidos: desde el 20/10 entran aquí TODOS los pedidos nuevos, de la app y del bot (el
+// backend arma el texto), con sonido. Antes se llamaba "📱 Pedidos de la App".
+const nombreHiloPedidos = "🛒 Pedidos nuevos (App y Bot)"
+
 func (n *Notifier) hiloPedidosAppID() int64 {
-	return n.hiloFijo(&n.hiloPedidosApp, claveHiloPedidosApp, "📱 Pedidos de la App", 7322096) // azul
+	hilo := n.hiloFijo(&n.hiloPedidosApp, claveHiloPedidosApp, nombreHiloPedidos, 7322096) // azul
+	// El hilo ya existía con el nombre viejo: se renombra una vez por arranque (Telegram contesta
+	// TOPIC_NOT_MODIFIED si ya lo tiene, inofensivo). Cosmético: si falla, el aviso sale igual.
+	if hilo != 0 {
+		n.pedidosRenombrado.Do(func() {
+			var resp struct {
+				OK          bool   `json:"ok"`
+				Description string `json:"description"`
+			}
+			if err := n.llamar("editForumTopic", map[string]any{
+				"chat_id": n.chatID, "message_thread_id": hilo, "name": nombreHiloPedidos,
+			}, &resp); err != nil || !resp.OK {
+				log.Printf("[telegram] hilo de pedidos sin renombrar: %v %s", err, resp.Description)
+			}
+		})
+	}
+	return hilo
 }
 
 // hiloFijo devuelve el hilo apuntado por destino, creándolo SOLO la primera vez. Orden: memoria
@@ -439,7 +464,19 @@ func (n *Notifier) enviar(hilo int64, texto string, silencioso bool) {
 		OK          bool   `json:"ok"`
 		Description string `json:"description"`
 	}
-	if err := n.llamar("sendMessage", cuerpo, &resp); err != nil {
+	// Reintento (20/10): un corte de red o Telegram lento (se pasa de tiempoLimite) perdía el aviso
+	// para siempre; el 19/10 se perdieron 3, entre ellos un "Nuevo pedido". Solo se reintenta el
+	// error de red: un rechazo (resp.OK=false) se repetiría igual. Si el primer intento llegó pero
+	// la respuesta no, puede salir repetido: mejor dos que ninguno.
+	var err error
+	for intento := 0; ; intento++ {
+		if err = n.llamar("sendMessage", cuerpo, &resp); err == nil || intento >= len(esperasReintento) {
+			break
+		}
+		log.Printf("[telegram] error enviando (intento %d), reintento: %v", intento+1, err)
+		time.Sleep(esperasReintento[intento])
+	}
+	if err != nil {
 		log.Printf("[telegram] error enviando: %v", err)
 		return
 	}
