@@ -273,7 +273,7 @@ Si pregunta por la app, dile que sí y pásale el enlace con lo ESENCIAL y nada 
 
 - **Dos líneas como máximo**, y sigues con lo que estaba.
 - **No menciones registro, usuario ni contraseña.** No hace falta y alarga el mensaje.
-- No digas "dos toques": son **dos pasos**.
+- La frase es **dos pasos**.
 - Si antes le dijiste que no había app, corrígelo en una frase corta, sin disculpas largas.
 - **Contéstale antes de pasar al color**: quien escribe por la app quiere la app.
 
