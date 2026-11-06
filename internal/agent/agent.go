@@ -132,6 +132,10 @@ func (a *Agent) ahora() time.Time {
 // del menú sí llega, así que la confirmación viaja con él.
 func (a *Agent) mandarMenu(from, cuerpo string, opciones []string) error {
 	cuerpo = a.conCoberturaConfirmada(from, cuerpo)
+	// La negativa de la app tambien, y por la misma razon que la cobertura: los cuatro
+	// casos reales del 06/11 llegaron al cliente como CUERPO del menu de colores, asi que
+	// un candado que solo mirara `reply` no los habria visto nunca.
+	cuerpo = a.revisarNegativaDeApp(from, cuerpo)
 	// Y la PRESENTACIÓN, por lo mismo: cuando el turno acaba en menú el texto de la respuesta no
 	// sale, así que la bienvenida tiene que viajar en el cuerpo o se queda sin entregar. Va DESPUÉS
 	// de la cobertura para que el orden sea "quién somos → tu zona → la pregunta".
@@ -597,6 +601,11 @@ func (a *Agent) HandleMessage(ctx context.Context, from, text string) (Resultado
 	// David el enlace del #233 (que él ya había cancelado) al confirmarle el #234. Solo puede
 	// salir el enlace del pedido VIVO; ver seguimientolink.go.
 	reply = a.revisarEnlaceDeSeguimiento(from, reply)
+
+	// Decir que no tenemos app es FALSO y el propio bot la promociona en la bienvenida.
+	// Caso del 06/11: un anuncio trajo gente pidiendo la app y el modelo les dijo que no
+	// existe. Ver app.go.
+	reply = a.revisarNegativaDeApp(from, reply)
 
 	// Y la CARA POSITIVA: si en este turno se confirmó un pedido que trae enlace en vivo y el
 	// modelo lo omitió al redactar, se anexa en código. El 01/10 el pedido #321 se creó bien y el
