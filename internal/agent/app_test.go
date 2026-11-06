@@ -1,8 +1,11 @@
 package agent
 
-import "strings"
+import (
+	"strings"
+	"testing"
 
-import "testing"
+	"wp-llm-gas/internal/conversation"
+)
 
 // Los seis mensajes REALES de produccion (message_log del bot, 23/10 al 06/11). Si el candado no
 // los agarra, no sirve: son exactamente lo que el cliente leyo.
@@ -79,5 +82,38 @@ func TestTextoSanoPasaIntacto(t *testing.T) {
 	sano := "¿De qué color es tu cilindro? 👇"
 	if got := a.revisarNegativaDeApp("593999", sano); got != sano {
 		t.Errorf("modifico un texto sano: %q", got)
+	}
+}
+
+// EL CASO REAL, y la razón de que el candado vaya también en mandarMenu: los cuatro mensajes del
+// 06/11 llegaron al cliente como CUERPO del menú de colores, no como texto de la respuesta.
+// Cuando el turno acaba en menú el texto NO se envía, así que un candado enganchado solo en la
+// cadena de `reply` habría pasado los tests y en producción no habría agarrado ni uno.
+func TestIncidente_LaNegativaDeAppSeTapaAunqueElTurnoAcabeEnMenu(t *testing.T) {
+	const from = "593999557515"
+	store := conversation.NewMemStore()
+
+	var cuerpoEnviado string
+	ag := agentIncidente(&modeloQueDice{respuestas: []string{"ok"}}, store)
+	ag.enviarMenu = func(_, cuerpo string, _ []string) error {
+		cuerpoEnviado = cuerpo
+		return nil
+	}
+
+	// Textual de produccion (cliente ...7515, 06/11 12:31).
+	cuerpo := "Por ahora no manejamos una aplicación para descargar: todo nuestro servicio es " +
+		"aquí mismo por WhatsApp 😊 ¿De qué color es tu cilindro?"
+	if err := ag.mandarMenu(from, cuerpo, []string{"BLANCO", "AMARILLO"}); err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+
+	if niegaLaApp(cuerpoEnviado) {
+		t.Fatalf("la negativa llegó al cliente en el cuerpo del menú: %q", cuerpoEnviado)
+	}
+	if !strings.Contains(cuerpoEnviado, LinkApp) {
+		t.Errorf("el menú salió sin el enlace de descarga: %q", cuerpoEnviado)
+	}
+	if !strings.Contains(cuerpoEnviado, "¿De qué color es tu cilindro?") {
+		t.Errorf("se perdió la pregunta del color, que estaba bien: %q", cuerpoEnviado)
 	}
 }
