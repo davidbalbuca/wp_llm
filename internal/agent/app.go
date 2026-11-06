@@ -44,11 +44,15 @@ func niegaLaApp(texto string) bool {
 	}, 2)
 }
 
-// MensajeLaAppSiExiste es la verdad, con el enlace. Lleva el VALOR concreto (ver al repartidor en
-// el mapa) porque es lo que el WhatsApp no le da; "descárgala" a secas no convence a nadie.
+// MensajeLaAppSiExiste es la verdad, con el enlace. Una sola linea, como las demas invitaciones
+// (guardarcontacto.go, bienvenida.go).
+//
+// Redaccion pedida por David el 06/11: "dos PASOS", no "toques"; y NADA de registro, usuario ni
+// contrasena -alarga el mensaje y no hace falta contarlo-. Lo esencial es que se la descargue y
+// que le busca al repartidor mas cercano en minutos.
 func MensajeLaAppSiExiste() string {
-	return "📲 ¡Sí tenemos app! Descárgala aquí 👉 " + LinkApp +
-		"\n\nDesde la app pides en dos toques y ves al repartidor llegar en el mapa 🚚"
+	return "📲 ¡Sí tenemos app! Pide tu gas en dos pasos y te busca al repartidor más cercano " +
+		"en minutos 👉 " + LinkApp
 }
 
 // sinLaNegacionDeLaApp quita SOLO las oraciones que niegan la app y deja el resto del mensaje.

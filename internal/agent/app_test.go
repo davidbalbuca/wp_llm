@@ -117,3 +117,31 @@ func TestIncidente_LaNegativaDeAppSeTapaAunqueElTurnoAcabeEnMenu(t *testing.T) {
 		t.Errorf("se perdió la pregunta del color, que estaba bien: %q", cuerpoEnviado)
 	}
 }
+
+// La redaccion que pidio David el 06/11, fijada aqui para que no se deshaga sin darse cuenta:
+// "dos PASOS" (no toques), nada de registro/usuario/contrasena, y corto.
+func TestElMensajeDeLaAppDiceLoEsencialYNadaMas(t *testing.T) {
+	m := MensajeLaAppSiExiste()
+
+	if !strings.Contains(m, "dos pasos") {
+		t.Errorf("David pidio 'dos pasos': %q", m)
+	}
+	if strings.Contains(strings.ToLower(m), "toque") {
+		t.Errorf("'toques' se cambio por 'pasos' a peticion de David: %q", m)
+	}
+	for _, prohibido := range []string{"registr", "usuario", "contrasena", "contraseña", "clave"} {
+		if strings.Contains(strings.ToLower(m), prohibido) {
+			t.Errorf("no se habla de %q: alarga el mensaje y no hace falta (%q)", prohibido, m)
+		}
+	}
+	if !strings.Contains(m, "más cercano") {
+		t.Errorf("falta lo esencial -que le busca al repartidor mas cercano-: %q", m)
+	}
+	if !strings.Contains(m, LinkApp) {
+		t.Errorf("falta el enlace: %q", m)
+	}
+	// Una sola linea, como las demas invitaciones del bot.
+	if n := strings.Count(strings.TrimSpace(m), "\n"); n != 0 {
+		t.Errorf("deberia ser una sola linea, tiene %d saltos: %q", n+1, m)
+	}
+}
