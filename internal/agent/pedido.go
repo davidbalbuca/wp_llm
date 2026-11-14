@@ -694,8 +694,30 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 			Cantidad:    l.Cantidad,
 		}
 	}
-	resultado, err := a.gr.WppOrderEnDireccion(tokens.Access, loc.Latitude, loc.Longitude, idtipopago,
-		orderProducts, aliasDestino)
+	// BROADCAST (14/11, #1022). wppOrder le asigna el pedido al más cercano, que tiene unos
+	// segundos para aceptar, y recién después se ofrece por anillos: Paul tuvo el #1022 35 s sin
+	// aceptarlo mientras otros cercanos ni lo veían. Primero se le pregunta al backend si va por
+	// anillos (como en la app): si sí, se ofrece a todos los cercanos a la vez y lo lleva el
+	// primero que acepte; si no hay a quién, el pedido sigue por aquí como siempre.
+	var resultado *georoutes.OrderResult
+	if a.cfg.UsarBusquedaBackend {
+		res, errB := a.gr.BuscarSoloBroadcast(tokens.Access, loc.Latitude, loc.Longitude, idtipopago,
+			orderProducts, aliasDestino)
+		switch {
+		case errB != nil:
+			log.Printf("[broadcast] %s: no se pudo abrir (%v); sigue el pedido de siempre", from, errB)
+		case res.Estado == georoutes.BusquedaAsignado && res.Pedido != nil:
+			// El pedido ya existe (un backend sin solo_broadcast que asignó en el acto, o la
+			// búsqueda que ya tenía): se cierra como cualquier pedido. Pedir otro sería duplicarlo.
+			resultado = res.Pedido
+		case res.IDBusqueda > 0 && !res.Terminada():
+			return a.esperarBroadcast(t, from, res.IDBusqueda, lineas, idtipopago, identificacion, nombres)
+		}
+	}
+	if resultado == nil {
+		resultado, err = a.gr.WppOrderEnDireccion(tokens.Access, loc.Latitude, loc.Longitude, idtipopago,
+			orderProducts, aliasDestino)
+	}
 	if err != nil {
 		// Sin repartidores / fuera de cobertura NO es error técnico: guardamos el pedido a la
 		// espera y le ofrecemos al cliente esperar hasta 5 min (reintento de asignación).
@@ -711,29 +733,7 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 					return menu
 				}
 			}
-			var waitItems []conversation.PendingWaitItem
-			if len(lineas) > 1 {
-				waitItems = make([]conversation.PendingWaitItem, len(lineas))
-				for i, l := range lineas {
-					waitItems[i] = conversation.PendingWaitItem{
-						IDCategoria: l.Producto.IDCategoria, IDProducto: l.Producto.IDProducto,
-						IDColor: l.Color.ID, Cantidad: l.Cantidad,
-						ProductoNombre: l.Producto.Nombre, ColorNombre: l.Color.Nombre,
-					}
-				}
-			}
-			a.store.SetPendingWait(from, conversation.PendingWait{
-				IDCategoria:    producto.IDCategoria,
-				IDProducto:     producto.IDProducto,
-				IDColor:        color.ID,
-				Cantidad:       cantidad,
-				IDTipoPago:     idtipopago,
-				ProductoNombre: producto.Nombre,
-				ColorNombre:    color.Nombre,
-				Identificacion: identificacion,
-				Nombres:        nombres,
-				Items:          waitItems,
-			})
+			a.store.SetPendingWait(from, esperaDe(lineas, idtipopago, identificacion, nombres))
 			t.ultimoPedido = resultadoPedido{
 				enEspera: true,
 				Producto: producto.Nombre,
