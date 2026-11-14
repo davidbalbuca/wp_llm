@@ -32,6 +32,16 @@ func (a *Agent) programarEntrega(from string, args map[string]any) string {
 			"a programar, ya esperó su turno. Usa registrar_pedido. Si no hay repartidor disponible, " +
 			"ofrécele ESPERAR o CANCELAR, pero NUNCA reagendar para otro día."
 	}
+	// Una sola entrega agendada viva por cliente. El 14/11 Pao agendó 2 BLANCO a las 07:00, dijo
+	// "Gracias" y el modelo volvió a llamar programar_entrega: quedaron #64 y #65 iguales, a las
+	// 07:00 le llegaron dos avisos, y la segunda siguió pidiéndole confirmación con el pedido ya
+	// en camino.
+	if a.store.TieneProgramacionViva(from) {
+		log.Printf("[schedule] %s ya tiene una entrega agendada viva; no se crea otra", from)
+		return "El cliente YA tiene una entrega programada pendiente: NO se creó otra. Confírmale la " +
+			"que ya tiene. Si quiere cambiar la hora, el color o la cantidad, primero cancélala con " +
+			"cancelar_programacion y después vuelve a programar."
+	}
 
 	// Excepcion: si el pedido quedo en espera por FALTA DE CONDUCTORES, programar SI es valido
 	// aunque estemos dentro del horario (lo pidio el jefe el 26/08): se puede reagendar para mas
@@ -267,6 +277,20 @@ func (a *Agent) dentroDeHorario(t time.Time) bool {
 	}
 	mins := t.Hour()*60 + t.Minute()
 	return mins >= f.desde && mins < f.hasta
+}
+
+// antesDelCierre indica si hoy se trabaja y `t` es anterior a la hora de cierre, aunque todavía
+// no hayamos abierto. Es lo que mira la confirmación de una entrega agendada: su hora ya pasó el
+// control de horario al agendarla, así que solo la frena que el día haya terminado.
+func (a *Agent) antesDelCierre(t time.Time) bool {
+	f, _ := a.horarioDelDia(t)
+	if !f.abierto {
+		return false
+	}
+	if f.hasta < 0 {
+		return true
+	}
+	return t.Hour()*60+t.Minute() < f.hasta
 }
 
 // finDelDia es la hora de cierre ("HH:MM") del día de `t`, del horario del BACKEND (con el .env

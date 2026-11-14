@@ -134,7 +134,7 @@ func (a *Agent) confirmarYRegistrar(from string, sch conversation.ScheduledOrder
 		from, sch.ID)
 
 	// Punto de entrada propio (lo llama cmd/bot, no HandleMessage): su turno nace aquí.
-	t := &turno{}
+	t := &turno{confirmandoAgendado: true}
 	// Se reutiliza tal cual la herramienta de siempre: mismo camino, mismas validaciones, mismo
 	// backend. Lo único que cambia es quién decide llamarla.
 	a.runTool(t, from, "registrar_pedido", map[string]any{
@@ -179,6 +179,34 @@ func (a *Agent) confirmarYRegistrar(from string, sch conversation.ScheduledOrder
 		return "¡Confirmado! 🎉 Tu pedido ya quedó registrado. Estoy buscando al repartidor más " +
 			"cercano para ti 🚚. Te confirmo en unos minutos; no tienes que hacer nada. Si " +
 			"prefieres cancelar, escríbeme \"cancelar\"."
+
+	case res.yaActivo > 0:
+		// Ya tiene su gas en camino (14/11, Pao: el operador le creó el #1013 desde el panel y
+		// el "Ok" con que ella respondió se tomó como un segundo "sí" a la agendada). Las
+		// agendadas que queden en confirmación se dan por atendidas: si no, cada "ok" volvía a
+		// entrar aquí y le contestaba "inconveniente técnico".
+		for i := 0; i < 5; i++ {
+			s, hay := a.store.GetConfirmingSchedule(from)
+			if !hay {
+				break
+			}
+			a.store.SetScheduledEstado(s.ID, conversation.ScheduleConfirmado)
+		}
+		log.Printf("[confirmacion] %s confirmó #%d pero ya tiene el pedido #%d en curso; no se crea otro",
+			from, sch.ID, res.yaActivo)
+		return fmt.Sprintf("Tu pedido #%d ya está en curso 🚚, así que no hace falta registrar otro. "+
+			"Te aviso apenas esté llegando 😊", res.yaActivo)
+
+	case res.cerrado:
+		// Hoy no se trabaja o ya cerramos: no hay a quién mandarle el pedido. No es un error
+		// técnico y no se le dice que lo es. La agendada se cierra para que el próximo "ok" no
+		// vuelva a intentarlo, y el equipo se entera para contactarlo.
+		a.store.SetScheduledEstado(sch.ID, conversation.ScheduleExpirado)
+		a.crearTicketSoporte(from, "Entrega agendada fuera de horario",
+			fmt.Sprintf("El cliente confirmó la entrega agendada #%d (%d x %s %s) pero hoy ya no hay "+
+				"atención. Contactarlo para reprogramar.", sch.ID, sch.Cantidad, sch.ProductoNombre, sch.ColorNombre))
+		return "Recibí tu confirmación ✅, pero a esta hora ya no tenemos repartidores en ruta 🙏. " +
+			"Atendemos " + a.textoHorario() + ". Ya avisé a nuestro equipo para coordinar tu entrega."
 
 	default:
 		// Falló el registro (backend caído, credenciales, etc.). La entrega NO se marca como
