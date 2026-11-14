@@ -23,6 +23,7 @@ const (
 	BusquedaAsignado     = "ASIGNADO"      // hay conductor: el pedido está hecho
 	BusquedaNoAsignado   = "NO_ASIGNADO"   // se agotó; el backend lo dejó en gestión manual
 	BusquedaCancelado    = "CANCELADO"     // lo canceló el cliente, o no contestó
+	BusquedaSinBroadcast = "SIN_BROADCAST" // BuscarSoloBroadcast sin a quién ofrecerlo: no se creó nada
 )
 
 // BusquedaResult es la respuesta de todas las APIs de búsqueda.
@@ -84,7 +85,22 @@ func (c *Client) busqueda(path string, cuerpo map[string]any, jwt string) (*Busq
 // BUSCANDO, y el backend sigue intentando. Endpoint: POST /buscarConductor/.
 func (c *Client) BuscarConductor(jwt string, latitude, longitude float64, idtipopago int,
 	productos []OrderProduct, alias string) (*BusquedaResult, error) {
+	return c.busqueda("/buscarConductor/", cuerpoBusqueda(latitude, longitude, idtipopago, productos, alias), jwt)
+}
 
+// BuscarSoloBroadcast abre la búsqueda SOLO si va por anillos: hay repartidores en línea a quienes
+// ofrecérselo y el broadcast está encendido en el panel (14/11). Si no, devuelve
+// BusquedaSinBroadcast y el backend NO crea nada: el pedido sigue por su camino de siempre.
+// Un backend que no conoce la marca la ignora y responde como BuscarConductor (ASIGNADO o BUSCANDO).
+func (c *Client) BuscarSoloBroadcast(jwt string, latitude, longitude float64, idtipopago int,
+	productos []OrderProduct, alias string) (*BusquedaResult, error) {
+	cuerpo := cuerpoBusqueda(latitude, longitude, idtipopago, productos, alias)
+	cuerpo["solo_broadcast"] = true
+	return c.busqueda("/buscarConductor/", cuerpo, jwt)
+}
+
+func cuerpoBusqueda(latitude, longitude float64, idtipopago int, productos []OrderProduct,
+	alias string) map[string]any {
 	cuerpo := map[string]any{
 		"latitude":   latitude,
 		"longitude":  longitude,
@@ -95,7 +111,7 @@ func (c *Client) BuscarConductor(jwt string, latitude, longitude float64, idtipo
 	if alias != "" {
 		cuerpo["alias_direccion"] = alias
 	}
-	return c.busqueda("/buscarConductor/", cuerpo, jwt)
+	return cuerpo
 }
 
 // EstadoBusqueda consulta cómo va. Cada consulta hace avanzar la búsqueda en el backend
