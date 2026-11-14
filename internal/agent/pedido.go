@@ -28,7 +28,14 @@ type resultadoPedido struct {
 	// cobertura" o "el catalogo no responde" y contestaba "Disculpa, no pude completar tu
 	// pedido. Ya avise al equipo" — una disculpa por un problema inexistente y un aviso que
 	// nadie habia dado. Paso con Edison el 25/09 (ticket #51) y con otros dos clientes.
-	faltaDato   string
+	faltaDato string
+	// yaActivo es el pedido que el cliente YA tenía en curso cuando se intentó registrar otro
+	// (0 si no). No es un fallo: el cliente ya tiene su gas en camino, muchas veces porque un
+	// operador lo creó desde el panel.
+	yaActivo int
+	// cerrado: no se registró porque hoy no se trabaja o ya pasó la hora. Tampoco es un fallo
+	// técnico, y decirle al cliente "inconveniente técnico" es mentirle.
+	cerrado     bool
 	IDPedido    int
 	Conductor   string
 	Placa       string
@@ -436,12 +443,17 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 	// conductores). El prompt también lo dice; esto es la garantía en código.
 	ahoraEc := time.Now().In(zonaEcuador)
 	if !a.esDiaLaborable(ahoraEc) {
+		t.ultimoPedido = resultadoPedido{cerrado: true}
 		return "HOY NO SE TRABAJA (solo atendemos " + a.textoHorario() + "): NO se registró el pedido porque " +
 			"hoy no hay conductores. Díselo al cliente con amabilidad, DILE QUE DÍAS Y EN QUÉ HORARIO " +
 			"atendemos, y PREGÚNTALE si quiere agendar su pedido para otro día; si acepta, usa la " +
 			"herramienta programar_entrega."
 	}
-	if !a.dentroDeHorario(ahoraEc) {
+	// Una entrega agendada que el cliente confirma solo se rechaza si ya CERRAMOS: antes de abrir
+	// vale, porque su hora se validó al agendarla y el panel pudo mover la apertura después.
+	agendadoAntesDelCierre := t.confirmandoAgendado && a.antesDelCierre(ahoraEc)
+	if !a.dentroDeHorario(ahoraEc) && !agendadoAntesDelCierre {
+		t.ultimoPedido = resultadoPedido{cerrado: true}
 		desde, hasta := a.horarioDeHoy(ahoraEc)
 		return "FUERA DE HORARIO (hoy de " + desde + " a " + hasta + "): NO se registró " +
 			"el pedido porque a esta hora no hay conductores. Explícaselo al cliente con amabilidad y ofrécele " +
@@ -496,6 +508,7 @@ func (a *Agent) registrarPedido(t *turno, from string, args map[string]any) stri
 			// chat con el pedido ya entregado (Raúl, 12/10: tras el #440 creado por el operador,
 			// el modelo llamó registrar_pedido en cada mensaje y la ficha volvía a quedar llena).
 			a.store.ClearPedidoEnCurso(from)
+			t.ultimoPedido = resultadoPedido{yaActivo: idPrevio}
 			return fmt.Sprintf("El cliente YA tiene el pedido #%d en curso: NO se creó otro. "+
 				"Confírmale que su pedido sigue en camino. Si quiere cambiarlo o pedir más, primero "+
 				"hay que cancelar el actual con cancelar_pedido.", idPrevio)

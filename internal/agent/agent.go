@@ -167,6 +167,12 @@ type turno struct {
 	// herramienta..."), no para el cliente, asi que el flujo determinista de confirmacion
 	// (confirmacion.go) necesita el resultado en limpio y no adivinarlo del texto.
 	ultimoPedido resultadoPedido
+	// confirmandoAgendado: este registrar_pedido es el "sí" a una entrega AGENDADA
+	// (confirmacion.go). Su hora ya se validó contra el horario al agendarla, así que la hora
+	// actual no la vuelve a rechazar: el 14/11 alguien movió en el panel la apertura del sábado
+	// entre que Pao agendó para las 07:00 y que confirmó, y el bot le contestó "inconveniente
+	// técnico" a un pedido que él mismo le había aceptado.
+	confirmandoAgendado bool
 	// cancelo se pone en true si en este turno se ejecutó cancelar_pedido. Sirve para
 	// el candado que fuerza la cancelación cuando el modelo la AFIRMA sin llamar a la herramienta.
 	cancelo bool
